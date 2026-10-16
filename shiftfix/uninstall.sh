@@ -162,7 +162,13 @@ if ((!yes)); then
     fi
     echo
     read -r -p "Удалить? [y/N] " answer || answer=
-    if [[ ! $answer =~ ^[YyДд] ]]; then
+    # Через case, а не [YyДд]: без UTF-8 локали скобка сравнивает байты, и «н»
+    # (тот же первый байт, что у «Д») сошло бы за «да».
+    case $answer in
+    [Yy]* | Д* | д*) ;;
+    *) answer= ;;
+    esac
+    if [[ -z $answer ]]; then
         echo "Ничего не удалено."
         exit 0
     fi

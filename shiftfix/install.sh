@@ -118,6 +118,14 @@ package_field() {
         pkg && $1 ~ "^" key " *= *$" { print $2; exit }' Cargo.toml
 }
 
+# «Да»: y, yes, д, да. Через case, а не [YyДд]: без UTF-8 локали скобка сравнивает
+# байты, и «н» (тот же первый байт, что у «Д») сошло бы за «да».
+is_yes() {
+    case $1 in
+    [Yy]* | Д* | д*) return 0 ;;
+    *) return 1 ;;
+    esac
+}
 # Спросить да/нет; $2 — ответ по умолчанию (y|n). Без терминала нужен --yes.
 ask() {
     local answer
@@ -128,10 +136,10 @@ ask() {
     fi
     if [[ $2 == y ]]; then
         read -r -p "    $1 [Y/n] " answer || answer=n
-        [[ ${answer:-y} =~ ^[YyДд] ]]
+        [[ -z $answer ]] || is_yes "$answer"
     else
         read -r -p "    $1 [y/N] " answer || answer=
-        [[ $answer =~ ^[YyДд] ]]
+        is_yes "$answer"
     fi
 }
 
@@ -171,6 +179,14 @@ installed_version() {
     printf '%s' "$out"
 }
 status_ok() { "$BIN/shiftfix" --status >/dev/null 2>&1; }
+# Файлы совпадают; cmp (diffutils) есть не везде — тогда по sha256.
+same_file() {
+    if have cmp; then
+        cmp -s -- "$1" "$2"
+    else
+        [[ -f $2 && "$(sha256sum <"$1")" == "$(sha256sum <"$2")" ]]
+    fi
+}
 # Автозапуск сеанса есть и не выключен (KDE и GNOME выключают его строкой в файле).
 autostart_on() {
     [[ -e $AUTOSTART ]] && ! grep -Eqs '^(Hidden=true|X-GNOME-Autostart-enabled=false)' "$AUTOSTART"
@@ -194,22 +210,32 @@ put_text() { # $1 — куда, $2 — текст
 }
 
 # Если скрипт оборвётся после остановки службы, запустить её снова — старую или новую.
-was_active=0 was_proc=0 gui_was=0 stopped=0 restarted=0
+# Сначала запуск, потом сообщение: терминал может быть уже закрыт, а tee — убит тем же
+# Ctrl+C. Повторный Ctrl+C и ошибки записи здесь уже ничего не прерывают.
+was_active=0 was_proc=0 gui_was=0 stopped=0 restarted=0 gui_back=0
 cleanup() {
-    if ((${#temps[@]})); then rm -f -- "${temps[@]}"; fi
-    if ((stopped && !restarted)); then
+    trap '' INT TERM HUP PIPE
+    set +e
+    if ((stopped && !restarted && (was_active || was_proc))); then
         restarted=1
-        echo "install.sh: прервано — запускаю службу снова" >&2
         if ((was_active)); then
-            systemctl --user start shiftfix.service >/dev/null 2>&1 || true
-        elif ((was_proc)); then
-            launch "$BIN/shiftfix" || true
+            systemctl --user start shiftfix.service >/dev/null 2>&1
+        else
+            wait_for 30 not held "$RUNTIME/shiftfix.lock"
+            launch "$BIN/shiftfix"
         fi
-        if ((gui_was)); then launch "$BIN/shiftfix-gui" || true; fi
+        { echo "install.sh: прервано — служба запущена снова"; } >&2 2>/dev/null
     fi
+    if ((stopped && gui_was && !gui_back)) && [[ -n ${WAYLAND_DISPLAY:-}${DISPLAY:-} ]]; then
+        gui_back=1
+        wait_for 30 not held "$RUNTIME/shiftfix-gui.lock"
+        launch "$BIN/shiftfix-gui"
+    fi
+    if ((${#temps[@]})); then rm -f -- "${temps[@]}"; fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM HUP
+trap 'exit 141' PIPE # вывод шёл в tee или head, и тот закрылся
 
 # Два install.sh одновременно поставили бы файлы наперегонки.
 if have flock && { exec 9>"$RUNTIME/shiftfix-install.lock"; } 2>/dev/null; then
@@ -306,6 +332,9 @@ done
 if [[ $pm == pacman ]] && ! rust_ok && ! have rustup; then pkgs+=(rust); fi
 if ((${#pkgs[@]} == 0)); then
     note "всё на месте"
+elif [[ $pm =~ ^(pacman|apt-get|dnf|zypper)$ ]] && ! have sudo; then
+    echo "Нет sudo, чтобы поставить пакеты. Поставьте от root: ${pkgs[*]} — и запустите install.sh снова." >&2
+    exit 1
 else
     case $pm in
     pacman) sudo pacman -S --needed --noconfirm "${pkgs[@]}" ;;
@@ -327,7 +356,7 @@ fi
 if ! rust_ok && have rustup; then
     if ! version_ok "$(rustup run stable rustc --version 2>/dev/null | awk '{print $2}')" "$MIN_RUST"; then
         note "Ставлю свежий Rust через rustup — только для сборки shiftfix"
-        rustup toolchain install stable --profile minimal
+        rustup toolchain install stable --profile minimal 9>&-
     fi
     # Версию по умолчанию не трогаем: у других проектов она может быть выбрана нарочно.
     export RUSTUP_TOOLCHAIN=stable
@@ -339,7 +368,7 @@ if ! rust_ok; then
         exit 1
     fi
     if ! ask "Установить свежий Rust через rustup в ~/.cargo?" y; then exit 1; fi
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs 9>&- | sh -s -- -y --profile minimal 9>&-
     # shellcheck source=/dev/null
     source "$HOME/.cargo/env"
 fi
@@ -347,7 +376,8 @@ fi
 # ─── Сборка — до того, как что-то трогать ───────────────────────────────────
 
 step "Сборка (первый раз — несколько минут)"
-if ! cargo build --release --locked; then
+# Без fd 9: сервер сборки (sccache) живёт дольше скрипта и держал бы блокировку install.sh.
+if ! cargo build --release --locked 9>&-; then
     echo >&2
     if [[ $mode == install ]]; then
         echo "Сборка не удалась — ничего не установлено." >&2
@@ -434,7 +464,9 @@ dsts=("$BIN/shiftfix" "$BIN/shiftfix-gui" "$ICONS/shiftfix.svg" "$ICONS/shiftfix
 perms=(755 755 644 644 644)
 changed=()
 for i in "${!srcs[@]}"; do
-    if ! cmp -s -- "${srcs[i]}" "${dsts[i]}" || { ((perms[i] == 755)) && [[ ! -x ${dsts[i]} ]]; }; then
+    # Ссылка (например, на target/release) — тоже замена: иначе сравнили бы сборку саму с собой.
+    if [[ -L ${dsts[i]} ]] || ! same_file "${srcs[i]}" "${dsts[i]}" ||
+        { ((perms[i] == 755)) && [[ ! -x ${dsts[i]} ]]; }; then
         changed+=("$i")
     fi
 done
@@ -504,7 +536,7 @@ if ((menu_changed)); then
     # Меню приложений и значки: иначе там ещё повисит старое.
     if have update-desktop-database; then update-desktop-database "$APPS" 2>/dev/null || true; fi
     if have gtk-update-icon-cache; then gtk-update-icon-cache -q "$DATA/icons/hicolor" 2>/dev/null || true; fi
-    if have kbuildsycoca6; then kbuildsycoca6 >/dev/null 2>&1 || true; fi
+    if have kbuildsycoca6; then kbuildsycoca6 >/dev/null 2>&1 9>&- || true; fi
 fi
 
 # Конфиг пользователя не перезаписываем: новых параметров в нём нет — берутся по умолчанию.
@@ -519,6 +551,7 @@ fi
 
 # ─── Автозапуск — выбор пользователя не трогаем ─────────────────────────────
 
+enabled=0
 if user_systemd; then
     new_unit="$("$BIN/shiftfix" --print-unit)"
     old_unit='' old_wanted='' new_wanted=''
@@ -553,10 +586,19 @@ if user_systemd; then
             fi
         fi
     elif ((enabled)) && [[ $old_wanted != "$new_wanted" ]]; then
-        systemctl --user reenable shiftfix.service >/dev/null 2>&1 || true
+        # Не reenable: он снял бы и ссылки, добавленные вручную (add-wants).
+        # Убираем только ссылки целей, которых больше нет, и добавляем новые.
+        for target in $old_wanted; do
+            if [[ " $new_wanted " != *" $target "* ]]; then
+                rm -f -- "$(dirname "$UNIT")/$target.wants/shiftfix.service"
+            fi
+        done
+        systemctl --user enable shiftfix.service >/dev/null 2>&1 || true
+        systemctl --user daemon-reload
     fi
     # Службу запускает юнит — второй запуск из автозапуска сеанса не нужен.
-    rm -f -- "$AUTOSTART"
+    # Если юнит не включился, автозапуск сеанса оставляем: иначе не останется никакого.
+    if ((enabled || unit_existed)); then rm -f -- "$AUTOSTART"; fi
     if ((enabled)); then
         autostart_state="юнит systemd $(pretty "$UNIT") — включён"
     else
@@ -584,11 +626,12 @@ start=
 if ((was_active)); then
     start=systemd
 elif ((was_proc)); then
-    start=process
+    # Служба работала сама по себе (автозапуск сеанса), а теперь есть включённый
+    # юнит — пусть ею управляет systemd, как и окно.
+    if user_systemd && ((enabled)); then start=systemd; else start=process; fi
 elif [[ $mode == install ]] && ((!relogin)); then
     if user_systemd; then start=systemd; else start=process; fi
 fi
-restarted=1
 if [[ -n $start ]]; then
     step "Запуск"
     if [[ $start == systemd ]]; then
@@ -597,6 +640,9 @@ if [[ -n $start ]]; then
         wait_for 30 not held "$RUNTIME/shiftfix.lock" || true
         launch "$BIN/shiftfix"
     fi
+fi
+restarted=1
+if [[ -n $start ]]; then
     if wait_for 50 status_ok; then
         if ((stopped)); then service_state="перезапущена"; else service_state="запущена"; fi
         line="$("$BIN/shiftfix" --status 2>/dev/null)" || line=
@@ -627,6 +673,7 @@ if ((gui_was)); then
         gui_state="было открыто — откройте снова из меню приложений"
     fi
 fi
+gui_back=1
 
 # ─── Итог ───────────────────────────────────────────────────────────────────
 
