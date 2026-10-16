@@ -3,11 +3,12 @@
 //! В режиме «авто» окружение определяется при первом обращении и заново —
 //! если оно сменилось или служба стартовала раньше сессии.
 
+use std::cmp::Reverse;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use evdev::KeyCode;
-use log::info;
+use log::{info, warn};
 use serde_json::Value;
 
 use crate::config::{BackendKind, Config};
@@ -197,30 +198,58 @@ impl Backend for Hyprland {
 
 pub struct Sway {
     swaymsg: String,
+    /// О раскладках виртуальной клавиатуры уже предупредили.
+    warned: bool,
 }
 
 impl Default for Sway {
     fn default() -> Self {
-        Sway {
-            swaymsg: "swaymsg".into(),
-        }
+        Sway::with_swaymsg("swaymsg")
     }
 }
 
 impl Sway {
-    fn keyboard(&self) -> Result<Value> {
+    fn with_swaymsg(swaymsg: &str) -> Self {
+        Sway {
+            swaymsg: swaymsg.into(),
+            warned: false,
+        }
+    }
+
+    /// Клавиатура, у которой берём раскладки. «Power Button», «Video Bus» и т. п.
+    /// в sway тоже клавиатуры и обычно идут первыми, а раскладки, заданные для
+    /// конкретной клавиатуры, есть только у неё, — берём ту, где их больше.
+    fn keyboard(&mut self) -> Result<Value> {
         let out = run_text(&self.swaymsg, &["-t", "get_inputs", "-r"])?;
         let inputs: Value = serde_json::from_str(&out).context("swaymsg: неожиданный ответ")?;
-        inputs
+        let keyboards: Vec<&Value> = inputs
             .as_array()
             .into_iter()
             .flatten()
-            .find(|i| {
-                i["type"] == "keyboard"
-                    && !i["name"].as_str().unwrap_or_default().contains("shiftfix")
-            })
-            .cloned()
-            .ok_or_else(|| anyhow!("swaymsg: клавиатуры не найдены"))
+            .filter(|i| i["type"] == "keyboard")
+            .collect();
+        let count = |kb: &Value| kb["xkb_layout_names"].as_array().map_or(0, Vec::len);
+        let ours = |kb: &Value| kb["name"].as_str().unwrap_or_default().contains("shiftfix");
+        let main = keyboards
+            .iter()
+            .filter(|kb| !ours(kb))
+            .min_by_key(|kb| Reverse(count(kb)))
+            .copied()
+            .ok_or_else(|| anyhow!("swaymsg: клавиатуры не найдены"))?;
+        // Слово перенабирается через виртуальную клавиатуру shiftfix: без тех же
+        // раскладок она напечатает его в своей.
+        if !self.warned
+            && keyboards
+                .iter()
+                .any(|kb| ours(kb) && count(kb) < count(main))
+        {
+            self.warned = true;
+            warn!(
+                "в sway раскладки заданы не для всех клавиатур, и виртуальная клавиатура \
+                 shiftfix их не получила — задайте их через input type:keyboard {{ xkb_layout … }}"
+            );
+        }
+        Ok(main.clone())
     }
 }
 
@@ -357,39 +386,39 @@ impl Gnome {
         run_text(&self.gsettings, &["get", schema, key])
     }
 
-    /// Пары (тип, id): `('xkb', 'us')`, `('ibus', 'mozc-jp')`.
-    fn pairs(&self, key: &str) -> Result<Vec<(String, String)>> {
-        let text = self.get("org.gnome.desktop.input-sources", key)?;
-        let strings = gvariant_strings(&text);
-        Ok(strings
-            .chunks_exact(2)
-            .map(|pair| (pair[0].clone(), pair[1].clone()))
-            .collect())
+    fn pairs(&self, key: &str) -> Result<Vec<Source>> {
+        Ok(source_pairs(
+            &self.get("org.gnome.desktop.input-sources", key)?,
+        ))
     }
 
-    fn sources(&self) -> Result<Vec<(String, String)>> {
-        let sources = self.pairs("sources")?;
-        if sources.is_empty() {
-            bail!("в GNOME не настроены источники ввода");
-        }
-        Ok(sources)
+    fn sources(&self) -> Result<Vec<Source>> {
+        non_empty(self.pairs("sources")?)
     }
 
-    /// Порядок, в котором GNOME перебирает источники: недавние первыми, текущий — нулевой.
-    fn mru_order(&self, sources: &[(String, String)]) -> Vec<usize> {
-        let mut order: Vec<usize> = self
-            .pairs("mru-sources")
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|m| sources.iter().position(|s| s == m))
-            .collect();
-        order.dedup();
-        for i in 0..sources.len() {
-            if !order.contains(&i) {
-                order.push(i);
+    /// `sources` и `mru-sources` одним запуском gsettings: `current()` нужен
+    /// в начале каждого слова.
+    fn sources_and_mru(&self) -> Result<(Vec<Source>, Vec<Source>)> {
+        let text = run_text(
+            &self.gsettings,
+            &["list-recursively", "org.gnome.desktop.input-sources"],
+        )?;
+        let (mut sources, mut mru) = (Vec::new(), Vec::new());
+        for line in text.lines() {
+            // «org.gnome.desktop.input-sources sources [('xkb', 'us'), …]»
+            let mut parts = line.splitn(3, ' ');
+            match (parts.next(), parts.next(), parts.next()) {
+                (Some(_), Some("sources"), Some(value)) => sources = source_pairs(value),
+                (Some(_), Some("mru-sources"), Some(value)) => mru = source_pairs(value),
+                _ => {}
             }
         }
-        order
+        Ok((non_empty(sources)?, mru))
+    }
+
+    /// Порядок источников по `mru-sources` прямо сейчас.
+    fn order_now(&self, sources: &[Source]) -> Vec<usize> {
+        mru_order(sources, &self.pairs("mru-sources").unwrap_or_default())
     }
 
     fn hotkey(&self) -> Option<(Vec<KeyCode>, KeyCode)> {
@@ -420,16 +449,16 @@ impl Backend for Gnome {
     }
 
     fn current(&mut self) -> Result<Option<usize>> {
-        let sources = self.sources()?;
-        Ok(self.mru_order(&sources).first().copied())
+        let (sources, mru) = self.sources_and_mru()?;
+        Ok(mru_order(&sources, &mru).first().copied())
     }
 
     fn set(&mut self, index: usize, keys: &mut dyn Keys) -> Result<()> {
-        let sources = self.sources()?;
+        let (sources, mru) = self.sources_and_mru()?;
         if index >= sources.len() {
             bail!("GNOME: нет источника ввода №{}", index + 1);
         }
-        let order = self.mru_order(&sources);
+        let order = mru_order(&sources, &mru);
         let steps = order.iter().position(|&i| i == index).unwrap_or(1);
         if steps == 0 {
             return Ok(());
@@ -445,7 +474,7 @@ impl Backend for Gnome {
         keys.chord(&hold, tap, steps)?;
         let deadline = Instant::now() + Duration::from_millis(700);
         loop {
-            if self.mru_order(&sources).first() == Some(&index) {
+            if self.order_now(&sources).first() == Some(&index) {
                 return Ok(());
             }
             if Instant::now() >= deadline {
@@ -459,10 +488,42 @@ impl Backend for Gnome {
     }
 
     fn toggle(&mut self, keys: &mut dyn Keys) -> Result<()> {
-        let count = self.sources()?.len();
-        let current = self.current()?.unwrap_or(0);
-        self.set((current + 1) % count.max(1), keys)
+        let (sources, mru) = self.sources_and_mru()?;
+        let current = mru_order(&sources, &mru).first().copied().unwrap_or(0);
+        self.set((current + 1) % sources.len(), keys)
     }
+}
+
+/// Источник ввода GNOME: (тип, id) — `('xkb', 'us')`, `('ibus', 'mozc-jp')`.
+type Source = (String, String);
+
+fn source_pairs(gvariant: &str) -> Vec<Source> {
+    gvariant_strings(gvariant)
+        .chunks_exact(2)
+        .map(|pair| (pair[0].clone(), pair[1].clone()))
+        .collect()
+}
+
+fn non_empty(sources: Vec<Source>) -> Result<Vec<Source>> {
+    if sources.is_empty() {
+        bail!("в GNOME не настроены источники ввода");
+    }
+    Ok(sources)
+}
+
+/// Порядок, в котором GNOME перебирает источники: недавние первыми, текущий — нулевой.
+fn mru_order(sources: &[Source], mru: &[Source]) -> Vec<usize> {
+    let mut order: Vec<usize> = mru
+        .iter()
+        .filter_map(|m| sources.iter().position(|s| s == m))
+        .collect();
+    order.dedup();
+    for i in 0..sources.len() {
+        if !order.contains(&i) {
+            order.push(i);
+        }
+    }
+    order
 }
 
 // ─── Хоткей ─────────────────────────────────────────────────────────────────
@@ -734,19 +795,84 @@ fi"#,
 
     #[test]
     fn sway_over_swaymsg() {
+        // Как в sway: Power Button — тоже клавиатура и идёт первой, а раскладки
+        // заданы только настоящей (input "1:1:AT_…" { xkb_layout us,ru }).
         let (dir, swaymsg) = script(
             "swaymsg",
             r#"if [ "$1 $2" = "-t get_inputs" ]; then
-  echo '[{"name":"Power Button","type":"switch"},
-         {"name":"AT Keyboard","type":"keyboard","xkb_layout_names":["English (US)","Russian"],"xkb_active_layout_index":0}]'
+  echo '[{"name":"Power Button","type":"keyboard","xkb_layout_names":["English (US)"],"xkb_active_layout_index":0},
+         {"name":"Lid Switch","type":"switch"},
+         {"name":"AT Keyboard","type":"keyboard","xkb_layout_names":["English (US)","Russian"],"xkb_active_layout_index":1},
+         {"name":"shiftfix virtual keyboard","type":"keyboard","xkb_layout_names":["English (US)"],"xkb_active_layout_index":0}]'
 else
   echo '[{"success":true}]'
 fi"#,
         );
-        let mut sway = Sway { swaymsg };
+        let mut sway = Sway::with_swaymsg(&swaymsg);
         assert_eq!(sway.layouts().unwrap(), ["us", "ru"]);
-        assert_eq!(sway.current().unwrap(), Some(0));
+        assert_eq!(sway.current().unwrap(), Some(1));
+        assert!(sway.warned, "у виртуальной клавиатуры одна раскладка");
         sway.set(1, &mut NoKeys).unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn gnome_over_gsettings() {
+        let (dir, gsettings) = script(
+            "gsettings",
+            r#"d=$(dirname "$0")
+src="[('xkb', 'us'), ('xkb', 'ru+phonetic')]"
+mru=$(cat "$d/mru")
+if [ "$1" = list-recursively ]; then
+  echo list >>"$d/calls"
+  echo "org.gnome.desktop.input-sources current uint32 0"
+  echo "org.gnome.desktop.input-sources mru-sources $mru"
+  echo "org.gnome.desktop.input-sources per-window false"
+  echo "org.gnome.desktop.input-sources sources $src"
+elif [ "$3" = sources ]; then echo "$src"
+elif [ "$3" = mru-sources ]; then echo "$mru"
+elif [ "$3" = switch-input-source ]; then echo "['<Super>space', 'XF86Keyboard']"
+fi"#,
+        );
+        fs::write(dir.join("mru"), "[('xkb', 'ru+phonetic'), ('xkb', 'us')]").unwrap();
+        let mut gnome = Gnome {
+            gsettings,
+            fallback: Vec::new(),
+        };
+        assert_eq!(gnome.layouts().unwrap(), ["us", "ru"]);
+        assert_eq!(gnome.current().unwrap(), Some(1));
+        assert_eq!(
+            fs::read_to_string(dir.join("calls")).unwrap(),
+            "list\n",
+            "current() — один запуск gsettings"
+        );
+
+        /// Как GNOME Shell: Super+Space делает текущим следующий по MRU источник.
+        struct Shell(PathBuf);
+        impl Keys for Shell {
+            fn backspace(&mut self, _: usize) -> Result<()> {
+                Ok(())
+            }
+            fn type_strokes(&mut self, _: &[Stroke]) -> Result<()> {
+                Ok(())
+            }
+            fn combo(&mut self, _: &[KeyCode]) -> Result<()> {
+                Ok(())
+            }
+            fn chord(&mut self, hold: &[KeyCode], tap: KeyCode, times: usize) -> Result<()> {
+                assert_eq!(
+                    (hold, tap, times),
+                    (&[KeyCode::KEY_LEFTMETA][..], KeyCode::KEY_SPACE, 1)
+                );
+                fs::write(
+                    self.0.join("mru"),
+                    "[('xkb', 'us'), ('xkb', 'ru+phonetic')]",
+                )?;
+                Ok(())
+            }
+        }
+        gnome.set(0, &mut Shell(dir.clone())).unwrap();
+        assert_eq!(gnome.current().unwrap(), Some(0));
         fs::remove_dir_all(dir).unwrap();
     }
 

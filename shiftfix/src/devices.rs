@@ -203,6 +203,21 @@ struct Entry {
     shared: Arc<Shared>,
 }
 
+impl Entry {
+    /// Запись всё ещё описывает устройство на этом узле.
+    fn still_valid(&self, path: &Path) -> bool {
+        if self.reading {
+            // Отключение поток чтения замечает сам (ENODEV). По ctime тут судить
+            // нельзя: udev обновляет время узла на каждом событии change
+            // (`udevadm trigger`), и второй поток слал бы каждое событие повторно.
+            self.shared.alive.load(Ordering::Relaxed)
+        } else {
+            // Без потока замену устройства на том же узле видно только по ctime.
+            fs::metadata(path).is_ok_and(|m| (m.ctime(), m.ctime_nsec()) == self.stamp)
+        }
+    }
+}
+
 struct Rules {
     overrides: HashMap<String, Role>,
     ignore_names: Vec<String>,
@@ -245,6 +260,9 @@ pub struct ScanStats {
 /// Все устройства ввода и потоки их чтения.
 pub struct Registry {
     entries: Mutex<HashMap<PathBuf, Entry>>,
+    /// Проходы из потока hotplug и из apply() не пересекаются: иначе оба увидят,
+    /// что записи нет, и оба откроют устройство.
+    scanning: Mutex<()>,
     rules: Mutex<Rules>,
     start: Instant,
     tx: Sender<Msg>,
@@ -254,6 +272,7 @@ impl Registry {
     pub fn new(cfg: &Config, tx: Sender<Msg>) -> Arc<Registry> {
         Arc::new(Registry {
             entries: Mutex::default(),
+            scanning: Mutex::default(),
             rules: Mutex::new(Rules::from_config(cfg)),
             start: Instant::now(),
             tx,
@@ -268,15 +287,12 @@ impl Registry {
 
     /// Найти новые устройства, забыть отключённые.
     pub fn scan(self: &Arc<Self>) -> ScanStats {
+        let _scanning = self.scanning.lock().expect("scan");
         let nodes = event_nodes();
-        {
-            let mut entries = self.entries.lock().expect("devices");
-            entries.retain(|path, e| {
-                let present =
-                    fs::metadata(path).is_ok_and(|m| (m.ctime(), m.ctime_nsec()) == e.stamp);
-                present && (!e.reading || e.shared.alive.load(Ordering::Relaxed))
-            });
-        }
+        self.entries
+            .lock()
+            .expect("devices")
+            .retain(|path, e| e.still_valid(path));
         let mut stats = ScanStats::default();
         for path in nodes {
             if self.entries.lock().expect("devices").contains_key(&path) {
@@ -581,6 +597,64 @@ mod tests {
         let mut keys = LETTERS.to_vec();
         keys.push(KeyCode::KEY_SPACE);
         keys
+    }
+
+    fn entry(stamp: (i64, i64), reading: bool, alive: bool) -> Entry {
+        Entry {
+            name: "test".into(),
+            key: "0000:0000 test".into(),
+            detected: Role::Keyboard,
+            overridden: false,
+            virtual_device: false,
+            stamp,
+            reading,
+            shared: Arc::new(Shared {
+                role: AtomicU8::new(Role::Keyboard.to_u8()),
+                last_event: AtomicU64::new(0),
+                alive: AtomicBool::new(alive),
+            }),
+        }
+    }
+
+    fn stamp(path: &Path) -> (i64, i64) {
+        let meta = fs::metadata(path).unwrap();
+        (meta.ctime(), meta.ctime_nsec())
+    }
+
+    #[test]
+    fn live_reader_survives_udev_touching_node() {
+        let path = std::env::temp_dir().join(format!("shiftfix-node-{}", std::process::id()));
+        fs::write(&path, b"").unwrap();
+        let before = stamp(&path);
+        // Так udev обновляет время узла на событии change: ctime меняется,
+        // а устройство то же самое.
+        thread::sleep(std::time::Duration::from_millis(20));
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now()))
+            .unwrap();
+        assert_ne!(stamp(&path), before);
+
+        assert!(
+            entry(before, true, true).still_valid(&path),
+            "поток жив — второй не нужен"
+        );
+        assert!(
+            !entry(before, true, false).still_valid(&path),
+            "поток завершился — открыть заново"
+        );
+        assert!(
+            !entry(before, false, true).still_valid(&path),
+            "без потока узел сменился по ctime"
+        );
+        assert!(entry(stamp(&path), false, true).still_valid(&path));
+        fs::remove_file(&path).unwrap();
+        assert!(
+            !entry(before, false, true).still_valid(&path),
+            "узла больше нет"
+        );
     }
 
     #[test]

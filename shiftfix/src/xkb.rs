@@ -331,8 +331,15 @@ pub fn spawn_watcher(on_change: impl Fn(Keymap) + Send + 'static) {
         loop {
             if let Some(conn) = connect() {
                 watch(&conn, &on_change);
+            } else if crate::env::wayland_display().is_none() && crate::env::x11_display().is_some()
+            {
+                // Сеанс X11: keymap строится из свойства корневого окна — и тогда,
+                // когда выделение не исправляется.
+                if let Err(err) = crate::x11::watch_keymap(&on_change) {
+                    debug!("keymap X11: {err:#}");
+                }
             }
-            thread::sleep(Duration::from_secs(10)); // сессии ещё нет или композитор перезапущен
+            thread::sleep(Duration::from_secs(10)); // сессии ещё нет или она перезапущена
         }
     });
     if let Err(err) = spawned {

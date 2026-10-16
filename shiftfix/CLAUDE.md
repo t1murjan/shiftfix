@@ -17,7 +17,7 @@
 - `ipc.rs` — сокет `$XDG_RUNTIME_DIR/shiftfix.sock` (JSON-строки).
 - `install.sh` — сборка и установка для пользователя.
 - `uninstall.sh` — полное удаление: откатывает всё, что ставят install.sh и GUI (параметры `--yes`, `--keep-config`, `--keep-group`, `--keep-build`).
-- `BUGS.md` — отчёт о найденных и пока не исправленных ошибках, с местами в коде и способами исправить.
+- `BUGS.md` — найденные при ревью ошибки: место в коде, сценарий и как исправлено.
 
 ## Состояние (версия 0.3.0)
 
@@ -34,7 +34,8 @@
 - выделение выбирается в `selection.rs`: `Msg::Selection(Ok(чем) | Err(почему))`, в `Status` — `selection_via`;
 - `--print-unit` (`service.rs`) и `--check` с сеансом и источником выделения;
 - GUI: бэкенды gnome и x11, один экземпляр окна, ошибки (в том числе паника winit) — через notify-send;
-- install.sh: без root, rustup на Arch, ostree и `/usr/lib/group`, NixOS, проверка `cc`, xclip, юнит через `--print-unit`.
+- install.sh: без root, rustup на Arch, ostree и `/usr/lib/group`, NixOS, проверка `cc`, xclip, юнит через `--print-unit`;
+- `uninstall.sh` и исправления 12 ошибок из ревью — что было и как исправлено, в `BUGS.md`.
 
 Проверяется только на машине автора: реальный ввод и uinput в композиторе, трей на панели, PRIMARY в живых KDE, Hyprland и GNOME, logind.
 

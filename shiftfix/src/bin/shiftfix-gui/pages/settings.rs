@@ -176,25 +176,24 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
                 ui,
                 p,
                 "Как заменять",
-                "Вставка надёжнее; набор не трогает буфер обмена.",
+                "Вставка надёжнее. Набор обходится без буфера обмена, но переводы строк и символы, которых нет на клавиатуре, всё равно вставляются через него.",
                 220.0,
                 |ui| {
                     ui.radio_value(&mut s.selection_method, "type".to_owned(), "Набором");
                     ui.radio_value(&mut s.selection_method, "paste".to_owned(), "Вставкой");
                 },
             );
-            if s.selection_method == "paste" {
-                row(ui, p, "Сочетание вставки", "", 280.0, |ui| {
-                    combo(ui, "paste_keys", &mut s.paste_keys, &PASTE_KEYS);
-                });
-                toggle_row(
-                    ui,
-                    p,
-                    &mut s.restore_clipboard,
-                    "Возвращать буфер обмена",
-                    "После вставки прежнее содержимое буфера обмена возвращается.",
-                );
-            }
+            // Нужны и при наборе: текст, который клавишами не набрать, вставляется.
+            row(ui, p, "Сочетание вставки", "", 280.0, |ui| {
+                combo(ui, "paste_keys", &mut s.paste_keys, &PASTE_KEYS);
+            });
+            toggle_row(
+                ui,
+                p,
+                &mut s.restore_clipboard,
+                "Возвращать буфер обмена",
+                "После вставки прежнее содержимое буфера обмена возвращается.",
+            );
         });
     });
     ui.add_space(12.0);

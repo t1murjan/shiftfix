@@ -242,9 +242,7 @@ fn x11_keymap() -> Option<String> {
     if env::wayland_display().is_some() {
         return None;
     }
-    let names = x11::rules_names(&x11::connect().ok()?).ok()?;
-    let part = |i: usize| names.get(i).map(String::as_str).unwrap_or_default();
-    let keymap = xkb::keymap_from_names(part(2), part(3), part(4))?;
+    let keymap = x11::keymap(&x11::connect().ok()?)?;
     let list: Vec<&str> = keymap.layouts.iter().map(|l| l.name.as_str()).collect();
     Some(list.join(", "))
 }

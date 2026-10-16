@@ -28,6 +28,9 @@ const TOUCH_TAP_MAX: f64 = 0.3;
 const SELF_CHANGE_GRACE: f64 = 2.0;
 /// Сколько последних исправлений показывать в GUI.
 const ACTIONS_MAX: usize = 30;
+/// Сколько секунд GUI получает сведения о раскладках из кеша: в GNOME и Hyprland
+/// каждое обращение к переключателю — запуск процесса, а GUI спрашивает часто.
+const LAYOUT_INFO_TTL: f64 = 1.5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stroke {
@@ -140,6 +143,8 @@ pub struct Engine {
     /// Коды раскладок с последнего обращения к переключателю (для журнала).
     codes: Vec<String>,
     actions: VecDeque<Action>,
+    /// Последний ответ `layout_info()` и когда он получен.
+    info_cache: Option<(f64, LayoutInfo)>,
 }
 
 impl Engine {
@@ -175,6 +180,7 @@ impl Engine {
             layout_dirty: true,
             codes: Vec::new(),
             actions: VecDeque::new(),
+            info_cache: None,
         }
     }
 
@@ -198,12 +204,14 @@ impl Engine {
 
     pub fn set_backend(&mut self, backend: Box<dyn Backend>) {
         self.backend = backend;
+        self.info_cache = None;
         self.layout_dirty = true;
         self.reset("сменился переключатель раскладки");
     }
 
     pub fn set_keymap(&mut self, keymap: Keymap) {
         self.keymap = keymap;
+        self.info_cache = None;
     }
 
     pub fn actions(&self) -> Vec<Action> {
@@ -212,7 +220,12 @@ impl Engine {
 
     /// Раскладки и текущая раскладка — для GUI.
     pub fn layout_info(&mut self) -> LayoutInfo {
-        let backend = self.backend.name().to_owned();
+        let now = (self.clock)();
+        if let Some((at, info)) = &self.info_cache
+            && now - at < LAYOUT_INFO_TTL
+        {
+            return info.clone();
+        }
         let (codes, current, error) = match self.backend.layouts() {
             Ok(codes) => {
                 let current = self.backend.current().ok().flatten();
@@ -220,6 +233,8 @@ impl Engine {
             }
             Err(err) => (Vec::new(), None, Some(format!("{err:#}"))),
         };
+        // Имя — после layouts(): Auto выбирает переключатель при первом обращении.
+        let backend = self.backend.name().to_owned();
         let from_keymap =
             !self.keymap.layouts.is_empty() && self.keymap.layouts.len() == codes.len();
         let names = if from_keymap {
@@ -230,14 +245,16 @@ impl Engine {
         if !codes.is_empty() {
             self.codes.clone_from(&codes);
         }
-        LayoutInfo {
+        let info = LayoutInfo {
             backend,
             codes,
             names,
             current,
             from_keymap,
             error,
-        }
+        };
+        self.info_cache = Some((now, info.clone()));
+        info
     }
 
     // ─── входящие события ───
@@ -506,7 +523,19 @@ impl Engine {
         // Слово вместе с пробелами после него.
         let count = self.buf.len() - start;
         let source = self.buf[start].layout;
-        let target = self.switch_next(source)?;
+        let target = self.next_layout(source)?;
+        if let Some(t) = target
+            && self.has_dead_key(t, &self.buf[start..])
+        {
+            // Мёртвая клавиша напечатает не символ, а часть следующего: слово
+            // вышло бы другим, а повторный ⇧⇧ стёр бы лишнее.
+            info!(
+                "⇧⇧: в раскладке {} среди этих клавиш есть мёртвая — слово не исправить",
+                self.label(Some(t))
+            );
+            return Ok(());
+        }
+        self.switch(target)?;
         self.keys.backspace(count)?;
         self.keys.type_strokes(&self.buf[start..])?;
         for stroke in &mut self.buf[start..] {
@@ -528,33 +557,42 @@ impl Engine {
         Ok(())
     }
 
-    fn switch_next(&mut self, src: Option<usize>) -> Result<Option<usize>> {
+    /// Раскладка после `src`; `None` — текущая неизвестна (переключение хоткеем).
+    fn next_layout(&mut self, src: Option<usize>) -> Result<Option<usize>> {
         self.codes = self.backend.layouts()?;
         let count = self.codes.len();
         let src = match src {
             Some(s) if s < count => Some(s),
             _ => self.backend.current()?,
         };
-        let target = match src {
-            None => {
-                // Раскладка неизвестна (переключение хоткеем) — просто переключаем.
-                self.backend.toggle(self.keys.as_mut())?;
-                None
-            }
-            Some(s) => {
-                if count < 2 {
-                    bail!("настроена только одна раскладка");
-                }
-                let t = (s + 1) % count;
-                self.backend.set(t, self.keys.as_mut())?;
-                Some(t)
-            }
-        };
+        match src {
+            None => Ok(None),
+            Some(_) if count < 2 => bail!("настроена только одна раскладка"),
+            Some(s) => Ok(Some((s + 1) % count)),
+        }
+    }
+
+    /// Переключить на `target`; `None` — просто на следующую.
+    fn switch(&mut self, target: Option<usize>) -> Result<()> {
+        self.info_cache = None;
+        match target {
+            None => self.backend.toggle(self.keys.as_mut())?,
+            Some(t) => self.backend.set(t, self.keys.as_mut())?,
+        }
         thread::sleep(self.cfg.switch_delay);
-        Ok(target)
+        Ok(())
+    }
+
+    /// Есть ли среди `strokes` мёртвая клавиша раскладки `layout`.
+    fn has_dead_key(&self, layout: usize, strokes: &[Stroke]) -> bool {
+        self.keymap
+            .layouts
+            .get(layout)
+            .is_some_and(|l| strokes.iter().any(|s| l.is_dead(s.key, s.shift)))
     }
 
     fn switch_to(&mut self, target: usize, current: Option<usize>) -> Result<()> {
+        self.info_cache = None;
         match current {
             None => self.backend.toggle(self.keys.as_mut())?,
             Some(c) if c != target => self.backend.set(target, self.keys.as_mut())?,
@@ -619,6 +657,12 @@ impl Engine {
                 "набор"
             }
             _ => {
+                if self.cfg.selection_method == SelectionMethod::Type {
+                    info!(
+                        "выделение не набрать клавишами (переводы строк или символы вне \
+                         раскладки) — вставляю через буфер обмена"
+                    );
+                }
                 let converted = keys::convert_text(&text, &src_layout, &tgt_layout);
                 if let Some(clip) = self.clip.as_mut() {
                     clip.paste(&converted, self.keys.as_mut())?;
@@ -952,6 +996,84 @@ mod tests {
         fn actions(&self) -> usize {
             self.w.borrow().log.len()
         }
+    }
+
+    /// Встроенная таблица, но с мёртвыми клавишами (как us(intl) или de).
+    fn with_dead(name: &str, dead: &[(KeyCode, bool)]) -> Arc<Layout> {
+        let base = keys::builtin(name).unwrap();
+        let pairs = keys::ROW_KEYS
+            .iter()
+            .map(|&k| (k, [base.char_at(k, false), base.char_at(k, true)]));
+        Arc::new(Layout::from_pairs(name, pairs).with_dead(dead.iter().copied()))
+    }
+
+    #[test]
+    fn layout_info_names_backend_after_asking_it() {
+        /// Как Auto: переключатель выбирается при первом обращении.
+        struct Lazy(bool);
+        impl Backend for Lazy {
+            fn name(&self) -> &'static str {
+                if self.0 { "KDE" } else { "хоткей" }
+            }
+            fn layouts(&mut self) -> Result<Vec<String>> {
+                self.0 = true;
+                Ok(vec!["us".into(), "ru".into()])
+            }
+            fn current(&mut self) -> Result<Option<usize>> {
+                Ok(Some(0))
+            }
+            fn set(&mut self, _: usize, _: &mut dyn Keys) -> Result<()> {
+                Ok(())
+            }
+            fn toggle(&mut self, _: &mut dyn Keys) -> Result<()> {
+                Ok(())
+            }
+        }
+        let mut r = Rig::new();
+        r.eng.set_backend(Box::new(Lazy(false)));
+        assert_eq!(r.eng.layout_info().backend, "KDE");
+    }
+
+    #[test]
+    fn layout_info_is_cached_until_switch() {
+        let mut r = Rig::new();
+        assert_eq!(r.eng.layout_info().current, Some(0));
+        // Раскладку переключили снаружи — GUI узнает об этом не сразу…
+        r.w.borrow_mut().cur = 1;
+        assert_eq!(r.eng.layout_info().current, Some(0));
+        r.clock.set(r.clock.get() + LAYOUT_INFO_TTL);
+        assert_eq!(r.eng.layout_info().current, Some(1));
+        // …а после своего переключения — сразу.
+        r.type_as("ghbdtn", "us");
+        r.shift2();
+        assert_eq!(r.eng.layout_info().current, Some(0));
+    }
+
+    #[test]
+    fn dead_key_in_target_layout_blocks_fix() {
+        let mut r = Rig::new();
+        r.eng.set_keymap(Keymap {
+            layouts: vec![
+                with_dead("us", &[(KeyCode::KEY_APOSTROPHE, false)]),
+                keys::builtin("ru").unwrap(),
+            ],
+            caps_switches_group: false,
+        });
+        // Включена ru, а пальцы набрали «it's».
+        r.w.borrow_mut().cur = 1;
+        r.type_as("it's", "us");
+        assert_eq!(r.text(), "шеэы");
+        let before = r.actions();
+        r.shift2();
+        // В us(intl) апостроф мёртвый: «itś» и Backspace×4 на повторном ⇧⇧ — не надо.
+        assert_eq!((r.text().as_str(), r.layout()), ("шеэы", 1));
+        assert_eq!(r.actions(), before, "ни переключения, ни нажатий");
+
+        // Слово без мёртвых клавиш исправляется как обычно.
+        r.tap(KeyCode::KEY_SPACE, false);
+        r.type_as("ok", "us");
+        r.shift2();
+        assert_eq!((r.text().as_str(), r.layout()), ("шеэы ok", 0));
     }
 
     #[test]

@@ -26,7 +26,7 @@ use crate::daemon::Msg;
 use crate::engine::{Backend, Keys};
 use crate::env;
 use crate::keys::norm_layout;
-use crate::xkb::keymap_from_names;
+use crate::xkb::{Keymap, keymap_from_names};
 
 pub struct XConn {
     pub conn: RustConnection,
@@ -257,23 +257,50 @@ impl Backend for XkbLayout {
     }
 }
 
-// ─── Слежение за PRIMARY ────────────────────────────────────────────────────
+// ─── Keymap ─────────────────────────────────────────────────────────────────
 
-fn send_keymap(x: &XConn, tx: &Sender<Msg>) {
-    let Ok(names) = rules_names(x) else { return };
+/// Раскладки сеанса X11 из `_XKB_RULES_NAMES` (`None` — нет libxkbcommon).
+pub fn keymap(x: &XConn) -> Option<Keymap> {
+    let names = rules_names(x).ok()?;
     let part = |i: usize| names.get(i).map(String::as_str).unwrap_or_default();
-    match keymap_from_names(part(2), part(3), part(4)) {
-        Some(keymap) => {
+    let keymap = keymap_from_names(part(2), part(3), part(4));
+    if keymap.is_none() {
+        debug!("keymap X11 не разобрана (нет libxkbcommon?)");
+    }
+    keymap
+}
+
+/// Присылать keymap сеанса X11 сейчас и при каждой смене раскладок, пока жив
+/// X-сервер. В Wayland keymap присылает композитор (`xkb::spawn_watcher`).
+pub fn watch_keymap(on_change: &impl Fn(Keymap)) -> Result<()> {
+    let x = connect()?;
+    let conn = &x.conn;
+    let rules = conn.intern_atom(false, b"_XKB_RULES_NAMES")?.reply()?.atom;
+    conn.change_window_attributes(
+        x.root,
+        &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE),
+    )?;
+    conn.flush()?;
+    let send = || {
+        if let Some(keymap) = keymap(&x) {
             let list: Vec<&str> = keymap.layouts.iter().map(|l| l.name.as_str()).collect();
             info!("раскладки из X11: {}", list.join(", "));
-            let _ = tx.send(Msg::Keymap(keymap));
+            on_change(keymap);
         }
-        None => debug!("keymap X11 не разобрана (нет libxkbcommon?)"),
+    };
+    send();
+    loop {
+        if let Event::PropertyNotify(ev) = conn.wait_for_event()?
+            && ev.atom == rules
+        {
+            send();
+        }
     }
 }
 
-/// Следить за PRIMARY (а в сеансе X11 — и за списком раскладок), пока жив X-сервер.
-/// `Ok(())` — служба завершается.
+// ─── Слежение за PRIMARY ────────────────────────────────────────────────────
+
+/// Следить за PRIMARY, пока жив X-сервер. `Ok(())` — служба завершается.
 pub fn watch(tx: &Sender<Msg>) -> Result<()> {
     let x = connect()?;
     let conn = &x.conn;
@@ -300,32 +327,17 @@ pub fn watch(tx: &Sender<Msg>) -> Result<()> {
             | SelectionEventMask::SELECTION_WINDOW_DESTROY
             | SelectionEventMask::SELECTION_CLIENT_CLOSE,
     )?;
-    // В Wayland keymap присылает композитор; в X11 берём её из свойства корня.
-    let keymaps = env::wayland_display().is_none();
-    let rules = conn.intern_atom(false, b"_XKB_RULES_NAMES")?.reply()?.atom;
-    if keymaps {
-        conn.change_window_attributes(
-            x.root,
-            &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE),
-        )?;
-        send_keymap(&x, tx);
-    }
     conn.flush()?;
     if tx.send(Msg::Selection(Ok("X11"))).is_err() {
         return Ok(());
     }
     loop {
-        let sent = match conn.wait_for_event()? {
-            Event::XfixesSelectionNotify(ev) if ev.selection == primary => {
-                tx.send(Msg::Primary(usize::from(ev.owner != x11rb::NONE)))
-            }
-            Event::PropertyNotify(ev) if keymaps && ev.atom == rules => {
-                send_keymap(&x, tx);
-                Ok(())
-            }
-            _ => Ok(()),
-        };
-        if sent.is_err() {
+        if let Event::XfixesSelectionNotify(ev) = conn.wait_for_event()?
+            && ev.selection == primary
+            && tx
+                .send(Msg::Primary(usize::from(ev.owner != x11rb::NONE)))
+                .is_err()
+        {
             return Ok(());
         }
     }
@@ -436,20 +448,35 @@ mod tests {
         assert_eq!(xkb.current().unwrap(), Some(0));
         assert!(xkb.set(4, &mut keys).is_err());
 
+        // Keymap приходит и без слежения за выделением, и после смены раскладок.
+        if crate::xkb::keymap_from_names("us", "", "").is_some() {
+            let (ktx, krx) = mpsc::channel();
+            std::thread::spawn(move || {
+                watch_keymap(&|keymap| {
+                    let _ = ktx.send(keymap.layouts.len());
+                })
+            });
+            let layouts = || {
+                krx.recv_timeout(Duration::from_secs(5))
+                    .expect("keymap от X11")
+            };
+            assert_eq!(layouts(), 2);
+            assert!(x("setxkbmap", &["-layout", "us,ru,de"]).success());
+            assert_eq!(layouts(), 3);
+        } else {
+            eprintln!("нет libxkbcommon — keymap X11 не проверяется");
+        }
+
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || watch(&tx));
         let next = || {
             rx.recv_timeout(Duration::from_secs(5))
                 .expect("событие от X11")
         };
-        let mut announced = false;
-        while !announced {
-            match next() {
-                Msg::Selection(Ok("X11")) => announced = true,
-                Msg::Keymap(_) => {}
-                _ => panic!("ждали Selection(Ok(\"X11\"))"),
-            }
-        }
+        assert!(
+            matches!(next(), Msg::Selection(Ok("X11"))),
+            "ждали Selection(Ok(\"X11\")), keymap выделение больше не присылает"
+        );
         // Новое выделение — событие Primary.
         let mut xclip = Command::new("xclip")
             .args(["-selection", "primary", "-i"])
@@ -458,12 +485,9 @@ mod tests {
             .spawn()
             .unwrap();
         drop(xclip.stdin.take()); // пустой ввод тоже делает xclip владельцем PRIMARY
-        let primary = loop {
-            match next() {
-                Msg::Primary(size) => break size,
-                Msg::Keymap(_) => {}
-                _ => panic!("ждали Primary"),
-            }
+        let primary = match next() {
+            Msg::Primary(size) => size,
+            _ => panic!("ждали Primary"),
         };
         assert_eq!(primary, 1);
         let _ = xclip.kill();

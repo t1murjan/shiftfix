@@ -21,6 +21,8 @@
 | X11 (любой WM) | группа XKB | xclip |
 | Остальное | ваше сочетание клавиш | — |
 
+В Sway задавайте раскладки для всех клавиатур: `input type:keyboard { xkb_layout us,ru }`. Слово перенабирается через виртуальную клавиатуру shiftfix, и без этих раскладок она напечатает его в своей.
+
 ## Установка
 
 ```sh
@@ -77,7 +79,7 @@ tar xf shiftfix.tar.gz && cd shiftfix && ./install.sh
 - keyd виртуальную клавиатуру shiftfix не перехватывает (vendor 0x0FAC). Для kanata добавьте в `defcfg`: `linux-dev-names-exclude ("shiftfix virtual keyboard")`.
 - fcitx5 и IBus как переключатели раскладки не поддерживаются.
 
-Найденные, но ещё не исправленные ошибки — в [BUGS.md](BUGS.md).
+Найденные при ревью ошибки и как они исправлены — в [BUGS.md](BUGS.md).
 
 ## Разработка
 

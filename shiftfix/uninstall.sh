@@ -185,7 +185,8 @@ fi
 
 step "Файлы в домашнем каталоге"
 if ((${#files[@]})); then rm -rf -- "${files[@]}"; fi
-rm -f -- "$RUNTIME/shiftfix.sock" "$RUNTIME/shiftfix.lock" "$RUNTIME/shiftfix-gui.lock"
+rm -f -- "$RUNTIME/shiftfix.sock" "$RUNTIME/shiftfix.lock" "$RUNTIME/shiftfix-gui.lock" \
+    "$RUNTIME/shiftfix-gui.sock"
 if [[ -n $build ]]; then rm -rf -- "$build"; fi
 if user_systemd; then
     systemctl --user daemon-reload || true

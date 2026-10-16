@@ -83,9 +83,10 @@ if ! rust_ok; then
     [[ -f "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
 fi
 if ! rust_ok && have rustup; then
-    note "Обновляю Rust через rustup"
+    note "Ставлю свежий Rust через rustup — только для сборки shiftfix"
     rustup toolchain install stable --profile minimal
-    rustup default stable >/dev/null
+    # Версию по умолчанию не трогаем: у других проектов она может быть выбрана нарочно.
+    export RUSTUP_TOOLCHAIN=stable
 fi
 if ! rust_ok; then
     note "Нужен Rust $MIN_RUST или новее (сейчас: $(rustc --version 2>/dev/null || echo нет))."
