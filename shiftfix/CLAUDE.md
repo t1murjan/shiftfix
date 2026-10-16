@@ -16,6 +16,8 @@
 - `service.rs` — юнит systemd.
 - `ipc.rs` — сокет `$XDG_RUNTIME_DIR/shiftfix.sock` (JSON-строки).
 - `install.sh` — сборка и установка для пользователя.
+- `uninstall.sh` — полное удаление: откатывает всё, что ставят install.sh и GUI (параметры `--yes`, `--keep-config`, `--keep-group`, `--keep-build`).
+- `BUGS.md` — отчёт о найденных и пока не исправленных ошибках, с местами в коде и способами исправить.
 
 ## Состояние (версия 0.3.0)
 
@@ -41,7 +43,7 @@
 ```sh
 cargo test                 # X11-тест сам поднимает Xvfb :97 (нужны Xvfb, setxkbmap, xclip)
 cargo clippy --all-targets
-shellcheck install.sh
+shellcheck install.sh uninstall.sh
 cargo run --bin shiftfix -- --check
 cargo run --bin shiftfix-gui -- --page devices
 ```

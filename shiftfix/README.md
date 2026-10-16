@@ -31,7 +31,7 @@ tar xf shiftfix.tar.gz && cd shiftfix && ./install.sh
 
 Если вас только что добавили в группу `input`, перезагрузитесь — служба запустится сама.
 
-Удаление: `./install.sh --uninstall`.
+Удаление — `./uninstall.sh` в той же папке. Он остановит службу и окно и удалит всё, что поставил install.sh: программы, ярлык, значки, автозапуск, настройки, правило udev для `/dev/uinput`. Ещё он выведет вас из группы `input` и сотрёт сборку (`target/`). Сначала скрипт покажет, что нашёл, и спросит. Параметры: `--yes` (не спрашивать), `--keep-config`, `--keep-group`, `--keep-build`. Пакеты (wl-clipboard, xclip и т. п.) и Rust остаются: ими пользуются и другие программы. `./install.sh --uninstall` делает то же самое.
 
 ## Окно shiftfix-gui
 
@@ -76,6 +76,8 @@ tar xf shiftfix.tar.gz && cd shiftfix && ./install.sh
 - Klipper запоминает вставленный текст в истории.
 - keyd виртуальную клавиатуру shiftfix не перехватывает (vendor 0x0FAC). Для kanata добавьте в `defcfg`: `linux-dev-names-exclude ("shiftfix virtual keyboard")`.
 - fcitx5 и IBus как переключатели раскладки не поддерживаются.
+
+Найденные, но ещё не исправленные ошибки — в [BUGS.md](BUGS.md).
 
 ## Разработка
 

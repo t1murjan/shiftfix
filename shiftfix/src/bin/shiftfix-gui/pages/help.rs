@@ -298,12 +298,14 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
         }
         ui.add_space(6.0);
         ui.label(bold("Удаление", 15.0).color(p.text));
-        ui.label(
-            RichText::new(
-                "systemctl --user disable --now shiftfix\nrm ~/.local/bin/shiftfix ~/.local/bin/shiftfix-gui\nrm ~/.config/systemd/user/shiftfix.service ~/.local/share/applications/shiftfix.desktop\nsudo rm /etc/udev/rules.d/80-shiftfix-uinput.rules /etc/modules-load.d/shiftfix-uinput.conf",
-            )
-            .monospace()
-            .color(p.weak),
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("./uninstall.sh").monospace().color(p.text));
+            ui.label(RichText::new("— в папке, откуда ставили (рядом с install.sh)").color(p.weak));
+        });
+        weak(
+            ui,
+            p,
+            "Остановит службу и удалит всё: программу, ярлык, автозапуск, настройки, правило udev и членство в группе input. Сначала покажет список и спросит.",
         );
     });
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Сборка и установка shiftfix для текущего пользователя.
 #   ./install.sh              — собрать и установить
-#   ./install.sh --uninstall  — удалить
+#   ./install.sh --uninstall  — удалить (то же, что ./uninstall.sh)
 # Пакеты ставятся сами в Arch/CachyOS/Manjaro, Debian/Ubuntu/Mint, Fedora и openSUSE.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -10,6 +10,10 @@ if ((EUID == 0)); then
     echo "Запускайте install.sh от своего пользователя, без sudo: служба, конфиг и" >&2
     echo "бинарники ставятся в домашний каталог, а sudo скрипт попросит сам." >&2
     exit 1
+fi
+if [[ ${1:-} == "--uninstall" ]]; then
+    shift
+    exec ./uninstall.sh "$@"
 fi
 if [[ -e /etc/NIXOS ]] || grep -qs '^ID=nixos' /etc/os-release; then
     cat >&2 <<'EOF'
@@ -38,23 +42,6 @@ note() { printf '    %s\n' "$*"; }
 in_group() { [[ " $1 " == *" input "* ]]; }
 have() { command -v "$1" >/dev/null 2>&1; }
 user_systemd() { have systemctl && systemctl --user show-environment >/dev/null 2>&1; }
-
-uninstall() {
-    step "Удаление shiftfix"
-    if user_systemd; then
-        systemctl --user disable --now shiftfix 2>/dev/null || true
-    fi
-    "$BIN/shiftfix" --quit 2>/dev/null || true
-    rm -f "$BIN/shiftfix" "$BIN/shiftfix-gui" "$UNIT" "$AUTOSTART" \
-        "$DATA/applications/shiftfix.desktop" \
-        "$DATA/icons/hicolor/scalable/apps/shiftfix.svg" \
-        "$DATA/icons/hicolor/scalable/apps/shiftfix-paused.svg"
-    if user_systemd; then systemctl --user daemon-reload || true; fi
-    sudo rm -f "$UDEV_RULE" "$MODULES"
-    note "Готово. Конфиг остался в $CONF/shiftfix — удалите его, если не нужен."
-    exit 0
-}
-[[ ${1:-} == "--uninstall" ]] && uninstall
 
 version_ok() { # $1 >= $2
     [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" == "$2" ]]
