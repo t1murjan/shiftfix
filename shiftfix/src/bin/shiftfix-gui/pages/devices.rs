@@ -1,0 +1,168 @@
+//! Устройства: что слушает shiftfix, активность и ручная поправка роли.
+
+use eframe::egui::{
+    self, Align, Color32, CornerRadius, Frame, Layout, Margin, RichText, Stroke, Ui,
+};
+use egui_phosphor::regular as icons;
+use shiftfix::devices::{DeviceInfo, Role};
+
+use crate::app::App;
+use crate::theme::Palette;
+use crate::widgets::{self, card, card_title, page_header};
+
+pub fn role_icon(role: Role) -> &'static str {
+    match role {
+        Role::Keyboard => icons::KEYBOARD,
+        Role::Mouse => icons::MOUSE,
+        Role::Touchpad => icons::HAND_POINTING,
+        Role::Touchscreen => icons::HAND_TAP,
+        Role::Tablet => icons::PEN_NIB,
+        Role::Ignore => icons::EYE_SLASH,
+        Role::Other => icons::PLUGS,
+    }
+}
+
+pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
+    page_header(
+        ui,
+        p,
+        icons::KEYBOARD,
+        "Устройства",
+        "Клавиатуры shiftfix слушает, а клики мыши, тачпада и касания экрана сбрасывают запомненное слово.",
+    );
+
+    Frame::NONE
+        .fill(p.accent.gamma_multiply(if p.dark { 0.16 } else { 0.09 }))
+        .stroke(Stroke::new(1.0, p.accent.gamma_multiply(0.35)))
+        .corner_radius(CornerRadius::same(12))
+        .inner_margin(Margin::same(14))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                ui.label(widgets::icon(icons::LIGHTBULB, 18.0).color(p.accent));
+                ui.label(
+                    RichText::new(
+                        "Нажмите клавишу, щёлкните или коснитесь экрана — точка у этого устройства вспыхнет. \
+                         Если устройство определилось неверно (например, сенсорный экран принят за тачпад), \
+                         выберите роль вручную.",
+                    )
+                    .color(p.text),
+                );
+            });
+        });
+    ui.add_space(14.0);
+
+    if app.status().is_none() {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(widgets::icon(icons::INFO, 16.0).color(p.warning));
+            ui.label(
+                RichText::new("Служба не запущена: активность не видна, но роли можно поменять — они применятся при запуске.")
+                    .color(p.warning),
+            );
+        });
+        ui.add_space(8.0);
+    }
+
+    let devices = app.devices();
+    if devices.is_empty() {
+        card(ui, p, |ui| {
+            widgets::empty_state(
+                ui,
+                p,
+                icons::PLUGS,
+                "Устройства не видны. Нужна группа input: sudo usermod -aG input $USER, затем перезагрузка.",
+            );
+        });
+        return;
+    }
+
+    let groups: [(&str, &str, &[Role]); 4] = [
+        (icons::KEYBOARD, "Клавиатуры", &[Role::Keyboard]),
+        (
+            icons::CURSOR_CLICK,
+            "Мыши и тачпады",
+            &[Role::Mouse, Role::Touchpad],
+        ),
+        (
+            icons::HAND_TAP,
+            "Сенсорные экраны и перья",
+            &[Role::Touchscreen, Role::Tablet],
+        ),
+        (
+            icons::EYE_SLASH,
+            "Не слушаются",
+            &[Role::Ignore, Role::Other],
+        ),
+    ];
+    let mut change: Option<(String, Option<Role>)> = None;
+    for (icon, title, roles) in groups {
+        let in_group: Vec<&DeviceInfo> =
+            devices.iter().filter(|d| roles.contains(&d.role)).collect();
+        if in_group.is_empty() {
+            continue;
+        }
+        card(ui, p, |ui| {
+            card_title(ui, p, icon, &format!("{title} · {}", in_group.len()));
+            for (i, dev) in in_group.iter().enumerate() {
+                if i > 0 {
+                    ui.separator();
+                }
+                if let Some(choice) = device_row(ui, p, dev) {
+                    change = Some((dev.key.clone(), choice));
+                }
+            }
+        });
+        ui.add_space(12.0);
+    }
+    if let Some((key, role)) = change {
+        app.set_device_role(&key, role);
+    }
+}
+
+/// Строка устройства; возвращает выбранную роль (`Some(None)` — «авто»).
+fn device_row(ui: &mut Ui, p: &Palette, dev: &DeviceInfo) -> Option<Option<Role>> {
+    let mut picked = None;
+    ui.horizontal(|ui| {
+        widgets::activity_dot(ui, p, dev.idle_ms);
+        let icon_color = if dev.role.listens() { p.accent } else { p.weak };
+        ui.label(widgets::icon(role_icon(dev.role), 20.0).color(icon_color));
+        ui.vertical(|ui| {
+            let name = if dev.name.is_empty() { "(без имени)" } else { &dev.name };
+            ui.label(RichText::new(name).color(p.text).strong());
+            let mut details = vec![dev.key.split(' ').next().unwrap_or_default().to_owned(), dev.path.clone()];
+            if dev.virtual_device {
+                details.push("виртуальное".into());
+            }
+            if dev.overridden {
+                details.push("роль задана вручную".into());
+            }
+            ui.label(RichText::new(details.join(" · ")).size(12.0).color(p.weak));
+        });
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let auto_label = format!("Авто: {}", dev.detected.title().to_lowercase());
+            let selected = if dev.overridden { dev.role.title().to_owned() } else { auto_label.clone() };
+            egui::ComboBox::from_id_salt(("role", &dev.key, &dev.path))
+                .selected_text(selected)
+                .width(210.0)
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(!dev.overridden, auto_label).clicked() && dev.overridden {
+                        picked = Some(None);
+                    }
+                    ui.separator();
+                    for role in Role::CHOICES {
+                        let label = widgets::icon_job(role_icon(role), role.title(), 14.5, p.text);
+                        let current = dev.overridden && dev.role == role;
+                        if ui.selectable_label(current, label).clicked() && !current {
+                            picked = Some(Some(role));
+                        }
+                    }
+                });
+            if dev.role == Role::Keyboard && !dev.overridden && dev.virtual_device {
+                ui.label(widgets::icon(icons::ROBOT, 17.0).color(Color32::GRAY)).on_hover_text(
+                    "Виртуальная клавиатура (keyd, kanata, remapper…). Если она дублирует настоящую — выберите «Не слушать».",
+                );
+            }
+        });
+    });
+    picked
+}
