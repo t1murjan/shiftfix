@@ -267,11 +267,8 @@ fn run_without_systemd(action: ServiceAction) -> Result<String> {
         ServiceAction::Autostart(true) | ServiceAction::Install => {
             let path = autostart_file();
             fs::create_dir_all(path.parent().expect("parent"))?;
-            let text = format!(
-                "[Desktop Entry]\nType=Application\nName=shiftfix\nExec={}\nIcon=shiftfix\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n",
-                daemon_binary().display()
-            );
-            fs::write(&path, text)?;
+            // Тот же текст, что пишет install.sh (`shiftfix --print-autostart`).
+            fs::write(&path, service::autostart_text(&daemon_binary()))?;
             if matches!(action, ServiceAction::Install) {
                 proc::spawn_detached(daemon_binary(), &[])?;
             }

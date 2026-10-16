@@ -4,7 +4,7 @@
 
 ## Устройство
 
-- `src/main.rs` — служба `shiftfix` и её CLI: `--status`, `--toggle`, `--check`, `--print-config`, `--print-unit`.
+- `src/main.rs` — служба `shiftfix` и её CLI: `--status`, `--toggle`, `--check`, `--print-config`, `--print-unit`, `--print-autostart`.
 - `src/bin/shiftfix-gui/` — окно на eframe/egui 0.36 с вкладками «Главная», «Устройства», «Настройки», «Инструкция», «Журнал».
 - `engine.rs` — логика без ввода-вывода. Буфер хранит скан-коды. Исправить слово = переключить раскладку, нажать Backspace×N и повторить те же клавиши через uinput.
 - `devices.rs` — evdev и роли устройств: клавиатура, мышь, тачпад, экран, перо; роль можно задать вручную.
@@ -13,7 +13,7 @@
 - `selection.rs`, `clipboard.rs`, `x11.rs` — выделение. Wayland с data-control идёт через wl-clipboard, X11 и GNOME через XWayland — через xclip и XFixes.
 - `env.rs` — поиск сеанса: своё окружение, окружение systemd, живые сокеты.
 - `session.rs` — проверка logind `session/auto` Active, чтобы не печатать в чужой сеанс.
-- `service.rs` — юнит systemd.
+- `service.rs` — тексты юнита systemd и файла автозапуска (`.desktop`): их печатают `--print-unit` и `--print-autostart` и пишет окно.
 - `ipc.rs` — сокет `$XDG_RUNTIME_DIR/shiftfix.sock` (JSON-строки).
 - `install.sh` — сборка и установка для пользователя.
 - `uninstall.sh` — полное удаление: откатывает всё, что ставят install.sh и GUI (параметры `--yes`, `--keep-config`, `--keep-group`, `--keep-build`).

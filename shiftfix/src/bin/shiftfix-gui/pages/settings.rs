@@ -9,7 +9,7 @@ use egui_phosphor::regular as icons;
 use shiftfix::config::{Config, Settings, ThemeMode};
 use shiftfix::portal::PortalState;
 
-use crate::app::{App, ToastKind};
+use crate::app::{App, ToastKind, shown_path};
 use crate::link::ServiceAction;
 use crate::theme::{self, HexCommit, Palette, SystemNote, Variant};
 use crate::widgets::{self, card, card_title, page_header, toggle_row};
@@ -381,12 +381,7 @@ fn hex_field(
 }
 
 pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
-    let path = app.config_path().display().to_string();
-    let home = std::env::var("HOME").unwrap_or_default();
-    let shown = match path.strip_prefix(&home) {
-        Some(rest) if !home.is_empty() => format!("~{rest}"),
-        _ => path,
-    };
+    let shown = shown_path(&app.config_path());
     page_header(
         ui,
         p,

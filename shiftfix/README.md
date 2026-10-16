@@ -54,6 +54,8 @@ tar xf shiftfix.tar.gz && cd shiftfix && ./install.sh
 | Проверить систему | `shiftfix --check` |
 | Перечитать конфиг | `shiftfix --reload` |
 | Юнит systemd для этого бинарника | `shiftfix --print-unit` |
+| Файл автозапуска для сеанса без systemd | `shiftfix --print-autostart` |
+| Версия службы и окна | `shiftfix --version`, `shiftfix-gui --version` |
 | Лог | `journalctl --user -u shiftfix -f` |
 
 ## Как устроено

@@ -26,7 +26,10 @@ shiftfix-gui — настройки и состояние shiftfix
 
 Использование: shiftfix-gui [--page home|devices|settings|help|log] [--theme system|light|dark]
 
-  --theme   режим оформления только на этот запуск (в настройки не пишется)
+  --page          открыть вкладку
+  --theme         режим оформления только на этот запуск (в настройки не пишется)
+  -V, --version   версия
+  -h, --help      эта справка
 ";
 
 /// Окно создано: паника после этого — ошибка в работающем окне, а не при запуске.
@@ -125,6 +128,11 @@ fn main() -> eframe::Result {
             },
             "-h" | "--help" => {
                 print!("{USAGE}");
+                return Ok(());
+            }
+            // До блокировки и окна: работает и при открытом окне, и без графики.
+            "-V" | "--version" => {
+                println!("shiftfix-gui {}", app::VERSION);
                 return Ok(());
             }
             other => {

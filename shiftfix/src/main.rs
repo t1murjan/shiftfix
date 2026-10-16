@@ -4,7 +4,7 @@
 
 use std::fmt::Display;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -32,6 +32,7 @@ shiftfix — двойной Shift исправляет раскладку пос
   --check           проверить окружение и выйти
   --print-config    напечатать конфиг по умолчанию
   --print-unit      напечатать юнит systemd user для этого бинарника
+  --print-autostart напечатать файл автозапуска (.desktop) — для сеанса без systemd
   --config ПУТЬ     конфиг (по умолчанию ~/.config/shiftfix/config.toml)
   --debug           подробный лог (набранный текст в лог не попадает)
   -V, --version     версия
@@ -46,6 +47,7 @@ enum Command {
     Check,
     PrintConfig,
     PrintUnit,
+    PrintAutostart,
     Help,
     Version,
     Status,
@@ -78,6 +80,7 @@ fn parse_args() -> Result<Args> {
             Some("--check") => Command::Check,
             Some("--print-config") => Command::PrintConfig,
             Some("--print-unit") => Command::PrintUnit,
+            Some("--print-autostart") => Command::PrintAutostart,
             Some("-h" | "--help") => Command::Help,
             Some("-V" | "--version") => Command::Version,
             Some("--status") => Command::Status,
@@ -117,7 +120,12 @@ fn main() -> ExitCode {
             print!("{}", config::DEFAULT_CONFIG);
             return ExitCode::SUCCESS;
         }
-        Command::PrintUnit => return print_unit(),
+        Command::PrintUnit => {
+            return print_for_exe(|exe| {
+                service::unit_text(exe, service::graphical_target_active())
+            });
+        }
+        Command::PrintAutostart => return print_for_exe(service::autostart_text),
         Command::Status => return status(),
         Command::Send(what) => return send(what),
         Command::Run | Command::Check => {}
@@ -143,13 +151,11 @@ fn main() -> ExitCode {
     }
 }
 
-fn print_unit() -> ExitCode {
+/// Напечатать текст для этого бинарника: юнит systemd или файл автозапуска.
+fn print_for_exe(text: impl FnOnce(&Path) -> String) -> ExitCode {
     match std::env::current_exe() {
         Ok(exe) => {
-            print!(
-                "{}",
-                service::unit_text(&exe, service::graphical_target_active())
-            );
+            print!("{}", text(&exe));
             ExitCode::SUCCESS
         }
         Err(err) => {

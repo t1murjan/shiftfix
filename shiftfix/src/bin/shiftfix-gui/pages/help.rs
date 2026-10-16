@@ -1,9 +1,10 @@
 //! Инструкция.
 
-use eframe::egui::{Color32, CornerRadius, Pos2, RichText, Sense, Ui, vec2};
+use eframe::egui::{Align, Color32, CornerRadius, Grid, Pos2, RichText, Sense, Ui, vec2};
 use egui_phosphor::regular as icons;
 
-use crate::app::{App, Page};
+use crate::app::{App, Page, VERSION, shown_path, versions_differ};
+use crate::link::ServiceAction;
 use crate::theme::Palette;
 use crate::widgets::{self, bold, card, card_title, keycap, page_header};
 
@@ -312,5 +313,77 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             p,
             "Остановит службу и удалит всё: программу, ярлык, автозапуск, настройки, правило udev и членство в группе input. Сначала покажет список и спросит.",
         );
+    });
+    ui.add_space(12.0);
+
+    let about_card = ui.scope(|ui| about(app, ui, p)).response;
+    if std::mem::take(&mut app.about_focus) {
+        about_card.scroll_to_me(Some(Align::TOP));
+    }
+}
+
+/// «О программе»: версии окна и службы, конфиг, ссылка на проект.
+fn about(app: &mut App, ui: &mut Ui, p: &Palette) {
+    card(ui, p, |ui| {
+        card_title(ui, p, icons::INFO, "О программе");
+        let service = app.status().map(|s| (s.version.clone(), s.pid));
+        Grid::new("about")
+            .num_columns(2)
+            .spacing(vec2(18.0, 6.0))
+            .show(ui, |ui| {
+                ui.label(RichText::new("Окно").color(p.weak));
+                ui.label(RichText::new(format!("shiftfix-gui {VERSION}")).color(p.text));
+                ui.end_row();
+
+                ui.label(RichText::new("Служба").color(p.weak));
+                match &service {
+                    Some((version, pid)) => ui.label(
+                        RichText::new(format!("shiftfix {version} · pid {pid}")).color(p.text),
+                    ),
+                    None => ui.label(RichText::new("не отвечает").color(p.weak)),
+                };
+                ui.end_row();
+
+                ui.label(RichText::new("Настройки").color(p.weak));
+                ui.label(
+                    RichText::new(shown_path(&app.config_path()))
+                        .monospace()
+                        .color(p.text),
+                );
+                ui.end_row();
+
+                let url = env!("CARGO_PKG_REPOSITORY");
+                ui.label(RichText::new("Проект").color(p.weak));
+                let shown = url.trim_start_matches("https://");
+                ui.hyperlink_to(RichText::new(shown).color(p.accent), url)
+                    .on_hover_text(url);
+                ui.end_row();
+            });
+        if let Some((version, _)) = service
+            && versions_differ(VERSION, &version)
+        {
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(widgets::icon(icons::WARNING, 16.0).color(p.warning));
+                ui.label(
+                    RichText::new(format!(
+                        "Служба {version}, окно {VERSION} — перезапустите службу."
+                    ))
+                    .color(p.warning),
+                );
+            });
+            ui.add_space(4.0);
+            if widgets::button(
+                ui,
+                p,
+                icons::ARROWS_CLOCKWISE,
+                "Перезапустить службу",
+                false,
+            )
+            .clicked()
+            {
+                app.service(ServiceAction::Restart);
+            }
+        }
     });
 }

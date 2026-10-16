@@ -21,6 +21,49 @@ pub fn graphical_target_active() -> bool {
     .is_ok_and(|out| out.ok)
 }
 
+/// Файл автозапуска сеанса (`~/.config/autostart/shiftfix.desktop`) — там,
+/// где нет пользовательского systemd. Один текст у install.sh и окна.
+pub fn autostart_text(binary: &Path) -> String {
+    format!(
+        "[Desktop Entry]
+Type=Application
+Name=shiftfix
+Exec={}
+Icon=shiftfix
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+",
+        desktop_exec(&binary.to_string_lossy())
+    )
+}
+
+/// Путь для `Exec=` по спецификации Desktop Entry: с пробелами и служебными
+/// символами — в кавычках; `"`, `` ` ``, `$` и `\` внутри кавычек экранируются,
+/// и обратная косая черта ещё раз удваивается (так значение читается из файла).
+fn desktop_exec(path: &str) -> String {
+    const RESERVED: &str = " \t\n\r\"'\\><~|&;$*?#()`";
+    let path = path.replace('%', "%%");
+    if !path.contains(|c| RESERVED.contains(c)) {
+        return path;
+    }
+    let mut out = String::from("\"");
+    for c in path.chars() {
+        match c {
+            '"' | '`' | '$' => {
+                out.push_str("\\\\");
+                out.push(c);
+            }
+            '\\' => out.push_str("\\\\\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 pub fn unit_text(binary: &Path, graphical_target: bool) -> String {
     let binary = binary.to_string_lossy();
     let exec = if binary.contains(char::is_whitespace) {
@@ -64,5 +107,25 @@ mod tests {
         let unit = unit_text(Path::new("/home/my user/bin/shiftfix"), false);
         assert!(unit.contains("ExecStart=\"/home/my user/bin/shiftfix\"\n"));
         assert!(unit.contains("WantedBy=graphical-session.target default.target\n"));
+    }
+
+    #[test]
+    fn autostart_entry() {
+        let text = autostart_text(Path::new("/home/u/.local/bin/shiftfix"));
+        assert!(text.starts_with("[Desktop Entry]\n"));
+        assert!(text.contains("\nType=Application\n"));
+        assert!(text.contains("\nExec=/home/u/.local/bin/shiftfix\n"));
+        assert!(text.contains("\nIcon=shiftfix\n"));
+        assert!(text.ends_with("\nX-GNOME-Autostart-enabled=true\n"));
+        let text = autostart_text(Path::new("/home/my user/bin/shiftfix"));
+        assert!(text.contains("\nExec=\"/home/my user/bin/shiftfix\"\n"));
+    }
+
+    #[test]
+    fn autostart_exec_escaping() {
+        assert_eq!(desktop_exec("/opt/100%/shiftfix"), "/opt/100%%/shiftfix");
+        assert_eq!(desktop_exec("/a b/$x"), r#""/a b/\\$x""#);
+        assert_eq!(desktop_exec(r#"/a"b"#), r#""/a\\"b""#);
+        assert_eq!(desktop_exec(r"/a\b"), r#""/a\\\\b""#);
     }
 }
