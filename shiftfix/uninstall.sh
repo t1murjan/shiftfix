@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Полное удаление shiftfix: всё, что поставили install.sh и окно shiftfix-gui.
-# Параметры — ./uninstall.sh --help.
+# Удаление shiftfix: всё, что поставили install.sh и окно shiftfix-gui.
+# Настройки и сборка остаются — их стирает --purge. Параметры — ./uninstall.sh --help.
 set -euo pipefail
 
 usage() {
     cat <<'EOF'
 Использование: ./uninstall.sh [ПАРАМЕТРЫ]
 
-Удаляет shiftfix с компьютера полностью: останавливает службу и окно, удаляет
-программы, ярлык, значки, автозапуск, настройки, правило udev для /dev/uinput,
-выводит вас из группы input и стирает сборку (target/ рядом со скриптом).
+Удаляет shiftfix: останавливает службу и окно, удаляет программы, ярлык,
+значки, автозапуск, правило udev для /dev/uinput и выводит вас из группы input.
+Настройки (~/.config/shiftfix) остаются — поставите снова, и всё будет как было.
 Сначала показывает, что нашлось, и спрашивает.
 
   -y, --yes        не спрашивать
-  --keep-config    оставить настройки (~/.config/shiftfix)
+  --purge          удалить и настройки, и сборку (target/ рядом со скриптом)
   --keep-group     не выводить из группы input (если она нужна другим программам)
-  --keep-build     оставить сборку (target/)
+  --keep-build     с --purge: оставить сборку
   -h, --help       эта справка
 
 Пакеты (wl-clipboard, xclip, libnotify, компилятор C) и Rust не удаляются:
@@ -23,11 +23,15 @@ usage() {
 EOF
 }
 
-yes=0 keep_config=0 keep_group=0 keep_build=0
+yes=0 purge=0 keep_group=0 keep_build=0
 for arg in "$@"; do
     case $arg in
     -y | --yes) yes=1 ;;
-    --keep-config) keep_config=1 ;;
+    --purge) purge=1 ;;
+    --keep-config)
+        # Так было до 0.4.0; теперь настройки и так остаются без --purge.
+        echo "uninstall.sh: --keep-config больше не нужен — настройки удаляет только --purge" >&2
+        ;;
     --keep-group) keep_group=1 ;;
     --keep-build) keep_build=1 ;;
     -h | --help)
@@ -62,12 +66,12 @@ CONF="${XDG_CONFIG_HOME:-$HOME/.config}"
 UNITS="$CONF/systemd/user"
 UDEV_RULE=/etc/udev/rules.d/80-shiftfix-uinput.rules
 MODULES=/etc/modules-load.d/shiftfix-uinput.conf
-# Из консоли или по ssh XDG_RUNTIME_DIR бывает не задан — тогда systemctl --user
-# не видит службу, хотя она запущена.
+# Как в службе (env.rs): из консоли или по ssh XDG_RUNTIME_DIR бывает не задан —
+# тогда systemctl --user не видит службу, хотя она запущена.
 if [[ -z ${XDG_RUNTIME_DIR:-} && -d /run/user/$MY_UID ]]; then
     export XDG_RUNTIME_DIR="/run/user/$MY_UID"
 fi
-RUNTIME="${XDG_RUNTIME_DIR:-/run/user/$MY_UID}"
+RUNTIME="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
 
 step() { printf '\n\033[1;36m==>\033[0m %s\n' "$*"; }
 note() { printf '    %s\n' "$*"; }
@@ -92,13 +96,13 @@ found "$BIN/shiftfix" "$BIN/shiftfix-gui" \
     "$CONF/autostart/shiftfix.desktop" \
     "$UNITS/shiftfix.service" "$UNITS/shiftfix.service.d" \
     "$UNITS"/*.wants/shiftfix.service
-if ((!keep_config)); then
-    found "$CONF/shiftfix"
-fi
+settings=
+if [[ -e $CONF/shiftfix || -L $CONF/shiftfix ]]; then settings="$CONF/shiftfix"; fi
+if ((purge)) && [[ -n $settings ]]; then found "$settings"; fi
 
-# Сборку стираем, только если скрипт лежит в папке проекта shiftfix.
+# Сборку стираем только с --purge и только если скрипт лежит в папке проекта shiftfix.
 build=
-if ((!keep_build)) && [[ -d $HERE/target && -f $HERE/Cargo.toml ]] &&
+if ((purge && !keep_build)) && [[ -d $HERE/target && -f $HERE/Cargo.toml ]] &&
     grep -q '^name = "shiftfix"' "$HERE/Cargo.toml"; then
     build="$HERE/target"
 fi
@@ -129,6 +133,9 @@ fi
 
 if ((${#files[@]} == 0 && ${#system[@]} == 0 && !leave_group)) && [[ -z $build && -z $processes ]]; then
     echo "shiftfix не установлен — удалять нечего."
+    if [[ -n $settings ]] && ((!purge)); then
+        note "Настройки остались: $(pretty "$settings") (удалить: ./uninstall.sh --purge)"
+    fi
     for path in "${others[@]}"; do note "Есть копия, поставленная не через install.sh: $path"; done
     exit 0
 fi
@@ -144,7 +151,9 @@ if ((leave_group)); then
     note "вы ($ME) — из группы input (через sudo; она даёт любой программе читать клавиатуру)"
 fi
 if [[ -n $processes ]]; then note "будут остановлены: служба и окно shiftfix"; fi
-if ((keep_config)); then note "настройки остаются: $(pretty "$CONF/shiftfix")"; fi
+if [[ -n $settings ]] && ((!purge)); then
+    note "настройки остаются: $(pretty "$settings") (удалить и их: --purge)"
+fi
 
 if ((!yes)); then
     if [[ ! -t 0 ]]; then
@@ -186,7 +195,7 @@ fi
 step "Файлы в домашнем каталоге"
 if ((${#files[@]})); then rm -rf -- "${files[@]}"; fi
 rm -f -- "$RUNTIME/shiftfix.sock" "$RUNTIME/shiftfix.lock" "$RUNTIME/shiftfix-gui.lock" \
-    "$RUNTIME/shiftfix-gui.sock"
+    "$RUNTIME/shiftfix-gui.sock" "$RUNTIME/shiftfix-install.lock"
 if [[ -n $build ]]; then rm -rf -- "$build"; fi
 if user_systemd; then
     systemctl --user daemon-reload || true
@@ -230,6 +239,9 @@ if ((need_root && !root_ok)); then
     echo "shiftfix удалён, кроме системных настроек — для них нужны команды выше."
 else
     echo "shiftfix удалён."
+fi
+if [[ -n $settings ]] && ((!purge)); then
+    note "Настройки остались: $(pretty "$settings") — удалить и их: ./uninstall.sh --purge"
 fi
 if [[ -f $HERE/install.sh && -f $HERE/Cargo.toml ]]; then
     note "Папка с исходниками осталась: $(pretty "$HERE") — удалите её сами, если не нужна."

@@ -15,8 +15,10 @@
 - `session.rs` — проверка logind `session/auto` Active, чтобы не печатать в чужой сеанс.
 - `service.rs` — тексты юнита systemd и файла автозапуска (`.desktop`): их печатают `--print-unit` и `--print-autostart` и пишет окно.
 - `ipc.rs` — сокет `$XDG_RUNTIME_DIR/shiftfix.sock` (JSON-строки).
-- `install.sh` — сборка и установка для пользователя.
-- `uninstall.sh` — полное удаление: откатывает всё, что ставят install.sh и GUI (параметры `--yes`, `--keep-config`, `--keep-group`, `--keep-build`).
+- `portal.rs` — XDG Desktop Portal (`org.freedesktop.appearance`: `color-scheme`, `accent-color`) на zbus blocking, со сменой на лету; служба его не вызывает, только окно.
+- `src/bin/shiftfix-gui/theme.rs` — палитры (данными в `PALETTES`), режим, акцент и контраст текста на нём (WCAG) → `egui::Visuals`; тема хранится в `[theme]` конфига (`config::ThemeSettings`).
+- `install.sh` — установка и обновление одним идемпотентным скриптом: версии (установка / обновление / уже установлена / более старая — с вопросом), сборка до остановки, атомарная замена, sudo только для недостающего, служба запускается снова, только если работала; конфиг и выбор автозапуска не трогает.
+- `uninstall.sh` — удаление: откатывает то, что ставят install.sh и GUI, в том числе правило udev и группу input; настройки и `target/` — только с `--purge` (ещё `--yes`, `--keep-group`, `--keep-build`).
 - `BUGS.md` — найденные при ревью ошибки: место в коде, сценарий и как исправлено.
 
 ## Состояние (версия 0.3.0)

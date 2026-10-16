@@ -303,6 +303,17 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             });
         }
         ui.add_space(6.0);
+        ui.label(bold("Обновление", 15.0).color(p.text));
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("./install.sh").monospace().color(p.text));
+            ui.label(RichText::new("— в папке с новой версией").color(p.weak));
+        });
+        weak(
+            ui,
+            p,
+            "Соберёт, заменит программу и запустит службу снова, если она работала. Настройки и выбор автозапуска не трогает.",
+        );
+        ui.add_space(6.0);
         ui.label(bold("Удаление", 15.0).color(p.text));
         ui.horizontal(|ui| {
             ui.label(RichText::new("./uninstall.sh").monospace().color(p.text));
@@ -311,7 +322,7 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
         weak(
             ui,
             p,
-            "Остановит службу и удалит всё: программу, ярлык, автозапуск, настройки, правило udev и членство в группе input. Сначала покажет список и спросит.",
+            "Остановит службу и удалит программу, ярлык, автозапуск, правило udev и членство в группе input. Настройки останутся; удалить и их: ./uninstall.sh --purge. Сначала покажет список и спросит.",
         );
     });
     ui.add_space(12.0);
