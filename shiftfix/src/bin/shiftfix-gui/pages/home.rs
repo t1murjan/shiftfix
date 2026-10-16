@@ -11,7 +11,7 @@ use shiftfix::ipc::Request;
 
 use crate::app::{App, Page, State, clock};
 use crate::link::ServiceAction;
-use crate::theme::Palette;
+use crate::theme::{self, Palette};
 use crate::widgets::{self, bold, card, card_title, keycap};
 
 pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
@@ -33,27 +33,24 @@ fn hero(app: &mut App, ui: &mut Ui, p: &Palette) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 168.0), Sense::hover());
     let (from, to) = match state {
         State::Working => (p.accent, p.accent2),
-        State::Paused => (
-            Color32::from_rgb(0x8a, 0x93, 0x9d),
-            Color32::from_rgb(0x5f, 0x67, 0x72),
-        ),
-        State::Stopped | State::NotInstalled => (
-            Color32::from_rgb(0xe0, 0x6b, 0x5b),
-            Color32::from_rgb(0xb8, 0x4a, 0x8f),
-        ),
+        State::Paused => (p.paused_from, p.paused_to),
+        State::Stopped | State::NotInstalled => (p.stopped_from, p.stopped_to),
     };
+    // «Чернила» заголовка: чёрные или белые — что лучше видно на этом градиенте.
+    // Из них же — полупрозрачные круги, стрелки, кнопки и переключатель.
+    let ink = theme::best_on(from, to);
     widgets::gradient_rect(ui, rect, 20.0, from, to);
     // Мягкие круги для объёма.
     let painter = ui.painter().with_clip_rect(rect);
     painter.circle_filled(
         Pos2::new(rect.right() - 170.0, rect.top() + 18.0),
         74.0,
-        Color32::from_white_alpha(16),
+        ink.gamma_multiply_u8(16),
     );
     painter.circle_filled(
         Pos2::new(rect.right() - 60.0, rect.bottom() - 6.0),
         52.0,
-        Color32::from_white_alpha(12),
+        ink.gamma_multiply_u8(12),
     );
     let show_toggle = matches!(state, State::Working | State::Paused);
     let decor_x = rect.right() - if show_toggle { 196.0 } else { 120.0 };
@@ -63,7 +60,7 @@ fn hero(app: &mut App, ui: &mut Ui, p: &Palette) {
             Align2::CENTER_CENTER,
             icons::ARROW_FAT_UP,
             widgets::icon_font(50.0),
-            Color32::from_white_alpha(alpha),
+            ink.gamma_multiply_u8(alpha),
         );
     }
 
@@ -73,8 +70,7 @@ fn hero(app: &mut App, ui: &mut Ui, p: &Palette) {
             .max_rect(inner)
             .layout(Layout::left_to_right(Align::Center)),
     );
-    let white = Color32::WHITE;
-    let soft = Color32::from_white_alpha(225);
+    let soft = ink.gamma_multiply_u8(225);
     let (title, text) = match state {
         State::Working => (
             "Работает",
@@ -98,21 +94,21 @@ fn hero(app: &mut App, ui: &mut Ui, p: &Palette) {
     };
     ui.vertical(|ui| {
         ui.set_max_width(inner.width() - if show_toggle { 250.0 } else { 170.0 });
-        ui.label(bold(title, 30.0).color(white));
+        ui.label(bold(title, 30.0).color(ink));
         ui.add_space(2.0);
         ui.add(egui::Label::new(RichText::new(text).size(15.0).color(soft)).wrap());
         ui.add_space(8.0);
         ui.horizontal(|ui| match state {
             State::Stopped => {
-                if hero_button(ui, icons::PLAY, "Запустить").clicked() {
+                if hero_button(ui, ink, icons::PLAY, "Запустить").clicked() {
                     app.service(ServiceAction::Start);
                 }
-                if hero_button(ui, icons::SCROLL, "Журнал").clicked() {
+                if hero_button(ui, ink, icons::SCROLL, "Журнал").clicked() {
                     app.page = Page::Log;
                 }
             }
             State::NotInstalled => {
-                if hero_button(ui, icons::DOWNLOAD_SIMPLE, "Установить и запустить").clicked()
+                if hero_button(ui, ink, icons::DOWNLOAD_SIMPLE, "Установить и запустить").clicked()
                 {
                     app.service(ServiceAction::Install);
                 }
@@ -123,26 +119,27 @@ fn hero(app: &mut App, ui: &mut Ui, p: &Palette) {
     if show_toggle {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let mut on = state == State::Working;
-            if hero_toggle(ui, &mut on).changed() {
+            if hero_toggle(ui, ink, p.accent, &mut on).changed() {
                 app.link.send(Request::SetEnabled { enabled: on }, None);
             }
         });
     }
 }
 
-fn hero_button(ui: &mut Ui, icon: &str, text: &str) -> egui::Response {
-    let label = widgets::icon_job(icon, text, 15.0, Color32::WHITE);
+fn hero_button(ui: &mut Ui, ink: Color32, icon: &str, text: &str) -> egui::Response {
+    let label = widgets::icon_job(icon, text, 15.0, ink);
     ui.add(
         egui::Button::new(label)
-            .fill(Color32::from_white_alpha(46))
-            .stroke(Stroke::new(1.0, Color32::from_white_alpha(90)))
+            .fill(ink.gamma_multiply_u8(46))
+            .stroke(Stroke::new(1.0, ink.gamma_multiply_u8(90)))
             .corner_radius(CornerRadius::same(10))
             .min_size(vec2(0.0, 36.0)),
     )
 }
 
-/// Крупный белый переключатель для цветного заголовка.
-fn hero_toggle(ui: &mut Ui, on: &mut bool) -> egui::Response {
+/// Крупный переключатель для цветного заголовка: дорожка цвета «чернил»,
+/// ручка выключенного — противоположного цвета, включённого — акцентом.
+fn hero_toggle(ui: &mut Ui, ink: Color32, accent: Color32, on: &mut bool) -> egui::Response {
     let (rect, mut response) = ui.allocate_exact_size(vec2(84.0, 44.0), Sense::click());
     if response.clicked() {
         *on = !*on;
@@ -150,19 +147,24 @@ fn hero_toggle(ui: &mut Ui, on: &mut bool) -> egui::Response {
     }
     let t = ui.ctx().animate_bool_responsive(response.id, *on);
     let radius = rect.height() / 2.0;
-    let track = widgets::lerp_color(Color32::from_white_alpha(70), Color32::WHITE, t);
+    let track = widgets::lerp_color(ink.gamma_multiply_u8(70), ink, t);
     ui.painter()
         .rect_filled(rect, CornerRadius::from(radius), track);
     if response.hovered() {
         ui.painter().rect_stroke(
             rect,
             CornerRadius::from(radius),
-            Stroke::new(2.0, Color32::from_white_alpha(160)),
+            Stroke::new(2.0, ink.gamma_multiply_u8(160)),
             StrokeKind::Outside,
         );
     }
     let x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), t);
-    let knob_color = widgets::lerp_color(Color32::WHITE, Color32::from_rgb(0x3d, 0xae, 0xe9), t);
+    let knob_off = if ink == Color32::BLACK {
+        Color32::WHITE
+    } else {
+        Color32::BLACK
+    };
+    let knob_color = widgets::lerp_color(knob_off, accent, t);
     ui.painter().circle_filled(
         Pos2::new(x, rect.center().y + 1.0),
         radius - 5.0,
@@ -189,7 +191,7 @@ fn stat_card(ui: &mut Ui, p: &Palette, icon: &str, title: &str, add: impl FnOnce
 
 fn chip(ui: &mut Ui, p: &Palette, text: &str, active: bool) {
     let font = FontId::proportional(14.0);
-    let color = if active { Color32::WHITE } else { p.text };
+    let color = if active { p.on_accent } else { p.text };
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
     let (rect, _) = ui.allocate_exact_size(galley.size() + vec2(18.0, 8.0), Sense::hover());
     let fill = if active { p.accent } else { p.hover };

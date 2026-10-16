@@ -172,7 +172,7 @@ fn main() -> eframe::Result {
             SHOWN.store(true, Ordering::Relaxed);
             listen_for_raise(cc.egui_ctx.clone());
             theme::install_fonts(&cc.egui_ctx);
-            theme::apply(&cc.egui_ctx);
+            theme::apply_style(&cc.egui_ctx);
             let choice = forced_theme.unwrap_or_else(theme::saved_choice);
             theme::set_choice(&cc.egui_ctx, choice, false);
             Ok(Box::new(app::App::new(cc, page, choice)))

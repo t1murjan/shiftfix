@@ -90,12 +90,7 @@ pub fn toggle(ui: &mut Ui, on: &mut bool, height: f32, p: &Palette) -> Response 
     }
     if ui.is_rect_visible(rect) {
         let t = ui.ctx().animate_bool_responsive(response.id, *on);
-        let off = if p.dark {
-            Color32::from_rgb(0x4a, 0x4f, 0x55)
-        } else {
-            Color32::from_rgb(0xc5, 0xca, 0xd0)
-        };
-        let fill = lerp_color(off, p.accent, t);
+        let fill = lerp_color(p.toggle_off, p.accent, t);
         let radius = rect.height() / 2.0;
         ui.painter()
             .rect_filled(rect, CornerRadius::from(radius), fill);
@@ -149,24 +144,14 @@ pub fn keycap(ui: &mut Ui, p: &Palette, text: &str) -> Response {
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font, p.text);
     let size = galley.size() + vec2(16.0, 10.0);
     let (rect, response) = ui.allocate_exact_size(vec2(size.x.max(28.0), size.y), Sense::hover());
-    let face = if p.dark {
-        Color32::from_rgb(0x35, 0x39, 0x3e)
-    } else {
-        Color32::from_rgb(0xfb, 0xfb, 0xfc)
-    };
-    let edge = if p.dark {
-        Color32::from_rgb(0x16, 0x18, 0x1a)
-    } else {
-        Color32::from_rgb(0xc5, 0xca, 0xd0)
-    };
     let radius = CornerRadius::same(6);
     ui.painter()
-        .rect_filled(rect.translate(vec2(0.0, 2.0)), radius, edge);
+        .rect_filled(rect.translate(vec2(0.0, 2.0)), radius, p.key_edge);
     ui.painter().rect(
         rect,
         radius,
-        face,
-        Stroke::new(1.0, edge),
+        p.key_face,
+        Stroke::new(1.0, p.key_edge),
         StrokeKind::Inside,
     );
     let pos = rect.center() - galley.size() / 2.0;
@@ -195,12 +180,7 @@ pub fn pill(ui: &mut Ui, text: &str, color: Color32, fill: Color32) -> Response 
 pub fn activity_dot(ui: &mut Ui, p: &Palette, idle_ms: Option<u64>) {
     let (rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
     let glow = idle_ms.map_or(0.0, |ms| (1.0 - ms as f32 / 1500.0).clamp(0.0, 1.0));
-    let base = if p.dark {
-        Color32::from_rgb(0x45, 0x4a, 0x50)
-    } else {
-        Color32::from_rgb(0xcf, 0xd3, 0xd8)
-    };
-    let color = lerp_color(base, p.positive, glow);
+    let color = lerp_color(p.dot_idle, p.positive, glow);
     if glow > 0.0 {
         ui.painter()
             .circle_filled(rect.center(), 7.0, p.positive.gamma_multiply(0.25 * glow));
@@ -209,10 +189,13 @@ pub fn activity_dot(ui: &mut Ui, p: &Palette, idle_ms: Option<u64>) {
     ui.painter().circle_filled(rect.center(), 4.5, color);
 }
 
+/// Смесь цветов в гамма-пространстве. Компоненты `Color32` уже умножены на альфу,
+/// поэтому и результат собирается как умноженный: полупрозрачный белый остаётся
+/// белым, а не темнеет. Для непрозрачных цветов разницы нет.
 pub fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
     let mix = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
-    Color32::from_rgba_unmultiplied(
+    Color32::from_rgba_premultiplied(
         mix(a.r(), b.r()),
         mix(a.g(), b.g()),
         mix(a.b(), b.b()),
@@ -267,12 +250,7 @@ pub fn gradient_rect(ui: &Ui, rect: Rect, radius: f32, from: Color32, to: Color3
 
 /// Крупная кнопка с иконкой; `primary` — залитая акцентным цветом.
 pub fn button(ui: &mut Ui, p: &Palette, icon: &str, text: &str, primary: bool) -> Response {
-    let label = icon_job(
-        icon,
-        text,
-        15.0,
-        if primary { Color32::WHITE } else { p.text },
-    );
+    let label = icon_job(icon, text, 15.0, if primary { p.on_accent } else { p.text });
     let mut b = egui::Button::new(label)
         .corner_radius(CornerRadius::same(9))
         .min_size(vec2(0.0, 34.0));
