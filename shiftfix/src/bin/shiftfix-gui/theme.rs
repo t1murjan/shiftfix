@@ -40,6 +40,8 @@ pub struct Palette {
     pub button: Color32,
     /// Дорожка выключенного переключателя.
     pub toggle_off: Color32,
+    /// Ручка переключателя.
+    pub knob: Color32,
     /// Изображение клавиши: верх и край.
     pub key_face: Color32,
     pub key_edge: Color32,
@@ -58,7 +60,6 @@ pub struct PaletteDef {
     /// Имя в config.toml (`light_palette`, `dark_palette`).
     pub id: &'static str,
     /// Имя в окне.
-    #[cfg_attr(not(test), expect(dead_code, reason = "покажет карточка «Оформление»"))]
     pub name: &'static str,
     pub light: Palette,
     pub dark: Palette,
@@ -95,6 +96,7 @@ const BREEZE: PaletteDef = PaletteDef {
         hover: rgb(0xdde1e6),
         button: rgb(0xe8eaed),
         toggle_off: rgb(0xc5cad0),
+        knob: WHITE,
         key_face: rgb(0xfbfbfc),
         key_edge: rgb(0xc5cad0),
         dot_idle: rgb(0xcfd3d8),
@@ -121,6 +123,7 @@ const BREEZE: PaletteDef = PaletteDef {
         hover: rgb(0x303438),
         button: rgb(0x31353a),
         toggle_off: rgb(0x4a4f55),
+        knob: WHITE,
         key_face: rgb(0x35393e),
         key_edge: rgb(0x16181a),
         dot_idle: rgb(0x454a50),
@@ -153,6 +156,7 @@ const NORD: PaletteDef = PaletteDef {
         hover: rgb(0xcfd6e2),
         button: rgb(0xe2e7ee),
         toggle_off: rgb(0xb8c1cf),
+        knob: WHITE,
         key_face: rgb(0xf9fafc),
         key_edge: rgb(0xc0c8d4),
         dot_idle: rgb(0xc8cfda),
@@ -179,6 +183,7 @@ const NORD: PaletteDef = PaletteDef {
         hover: rgb(0x434a5a),
         button: rgb(0x454d5f),
         toggle_off: rgb(0x616e88),
+        knob: rgb(0xeceff4),
         key_face: rgb(0x464e60),
         key_edge: rgb(0x242933),
         dot_idle: rgb(0x566075),
@@ -211,6 +216,7 @@ const CATPPUCCIN: PaletteDef = PaletteDef {
         hover: rgb(0xd4d8e1),
         button: rgb(0xdce0e8),
         toggle_off: rgb(0xbcc0cc),
+        knob: WHITE,
         key_face: rgb(0xf7f8fa),
         key_edge: rgb(0xbcc0cc),
         dot_idle: rgb(0xc6cad5),
@@ -237,6 +243,7 @@ const CATPPUCCIN: PaletteDef = PaletteDef {
         hover: rgb(0x414356),
         button: rgb(0x45475a),
         toggle_off: rgb(0x585b70),
+        knob: rgb(0xf5e0dc),
         key_face: rgb(0x45475a),
         key_edge: rgb(0x11111b),
         dot_idle: rgb(0x585b70),
@@ -269,6 +276,7 @@ const GRUVBOX: PaletteDef = PaletteDef {
         hover: rgb(0xe2d1a6),
         button: rgb(0xebdbb2),
         toggle_off: rgb(0xbdae93),
+        knob: rgb(0xfbf1c7),
         key_face: rgb(0xf9f5d7),
         key_edge: rgb(0xbdae93),
         dot_idle: rgb(0xd5c4a1),
@@ -295,6 +303,7 @@ const GRUVBOX: PaletteDef = PaletteDef {
         hover: rgb(0x48433f),
         button: rgb(0x504945),
         toggle_off: rgb(0x665c54),
+        knob: rgb(0xfbf1c7),
         key_face: rgb(0x504945),
         key_edge: rgb(0x1d2021),
         dot_idle: rgb(0x665c54),
@@ -358,12 +367,35 @@ pub fn parse_hex(s: &str) -> Option<Color32> {
 }
 
 /// Цвет в виде «#rrggbb» — так он записывается в config.toml.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "поле hex в карточке «Оформление»")
-)]
 pub fn format_hex(c: Color32) -> String {
     format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b())
+}
+
+/// Что сделать с полем «#rrggbb», когда оно потеряло фокус.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HexCommit {
+    /// В поле ничего не набирали — принимать нечего.
+    Keep,
+    /// Набранное отменено — забыть его.
+    Discard,
+    /// Принять цвет.
+    Apply(Color32),
+    /// Не цвет — оставить набранное и подсветить.
+    Bad,
+}
+
+/// Уход из поля hex. Принимается только набранное (`edited`): если цвет
+/// сменили кнопкой («Сбросить», «Свой акцент», пипетка), набранное уже
+/// забыто, в поле сохранённый цвет, и уход из поля не должен его вернуть.
+/// Esc, пустое поле или поле, ставшее неактивным, — отмена.
+pub fn hex_commit(edited: bool, enabled: bool, escape: bool, text: &str) -> HexCommit {
+    if !edited {
+        HexCommit::Keep
+    } else if escape || !enabled || text.trim().is_empty() {
+        HexCommit::Discard
+    } else {
+        parse_hex(text).map_or(HexCommit::Bad, HexCommit::Apply)
+    }
 }
 
 /// Сдвиг оттенка второго цвета градиента от своего акцента: как у Breeze,
@@ -473,11 +505,66 @@ impl SystemWatch {
     }
 }
 
+/// Вариант палитры: у каждого свои палитра и акцент в `[theme]`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Variant {
+    Light,
+    Dark,
+}
+
+impl Variant {
+    pub fn of(dark: bool) -> Variant {
+        if dark { Variant::Dark } else { Variant::Light }
+    }
+
+    /// Цвета этого варианта во встроенной палитре.
+    pub fn of_def(self, def: &PaletteDef) -> &Palette {
+        match self {
+            Variant::Light => &def.light,
+            Variant::Dark => &def.dark,
+        }
+    }
+
+    /// Имя палитры варианта (`light_palette` или `dark_palette`).
+    pub fn palette_id(self, t: &ThemeSettings) -> &str {
+        match self {
+            Variant::Light => &t.light_palette,
+            Variant::Dark => &t.dark_palette,
+        }
+    }
+
+    pub fn palette_id_mut(self, t: &mut ThemeSettings) -> &mut String {
+        match self {
+            Variant::Light => &mut t.light_palette,
+            Variant::Dark => &mut t.dark_palette,
+        }
+    }
+
+    /// Свой акцент варианта: «#rrggbb» или пустая строка.
+    pub fn accent(self, t: &ThemeSettings) -> &str {
+        match self {
+            Variant::Light => &t.light_accent,
+            Variant::Dark => &t.dark_accent,
+        }
+    }
+
+    pub fn accent_mut(self, t: &mut ThemeSettings) -> &mut String {
+        match self {
+            Variant::Light => &mut t.light_accent,
+            Variant::Dark => &mut t.dark_accent,
+        }
+    }
+}
+
+/// Действует ли сейчас акцент системы: только в режиме «как в системе»,
+/// с `system_accent` и если система его сообщает.
+pub fn system_accent_active(t: &ThemeSettings, sys: &System, mode: ThemeMode) -> bool {
+    mode == ThemeMode::System && t.system_accent && sys.available && sys.accent.is_some()
+}
+
 /// Итоговые цвета окна. `forced` — режим из `--theme`, он перекрывает `t.mode`.
 ///
 /// Режим «как в системе» без портала или без предпочтения — тёмная тема.
-/// Акцент: системный (только в режиме «как в системе» и с `system_accent`),
-/// иначе свой «#rrggbb», иначе акцент палитры.
 pub fn resolve(t: &ThemeSettings, sys: &System, forced: Option<ThemeMode>) -> Palette {
     let mode = forced.unwrap_or(t.mode);
     let dark = match mode {
@@ -485,21 +572,122 @@ pub fn resolve(t: &ThemeSettings, sys: &System, forced: Option<ThemeMode>) -> Pa
         ThemeMode::Dark => true,
         ThemeMode::System => !sys.available || sys.dark.unwrap_or(true),
     };
-    let (def, own_accent) = if dark {
-        (find(&t.dark_palette), t.dark_accent.as_str())
-    } else {
-        (find(&t.light_palette), t.light_accent.as_str())
-    };
-    let mut p = if dark { def.dark } else { def.light };
-    let system_accent = sys
-        .accent
-        .filter(|_| mode == ThemeMode::System && t.system_accent && sys.available);
-    if let Some(accent) = system_accent.or_else(|| parse_hex(own_accent)) {
+    variant_palette(t, sys, mode, Variant::of(dark))
+}
+
+/// Цвета варианта в режиме `mode` — и того, что сейчас не на экране.
+/// Акцент: системный (см. `system_accent_active`), иначе свой «#rrggbb»,
+/// иначе акцент палитры.
+pub fn variant_palette(t: &ThemeSettings, sys: &System, mode: ThemeMode, v: Variant) -> Palette {
+    let mut p = *v.of_def(find(v.palette_id(t)));
+    let system_accent = sys.accent.filter(|_| system_accent_active(t, sys, mode));
+    if let Some(accent) = system_accent.or_else(|| parse_hex(v.accent(t))) {
         p.accent = accent;
         p.accent2 = shifted_hue(accent);
     }
     p.on_accent = on_accent(p.accent);
     p
+}
+
+/// «Сбросить» в карточке «Оформление»: палитра и свой акцент варианта и акцент
+/// системы — по умолчанию. Режим и второй вариант не меняются.
+pub fn reset_variant(t: &mut ThemeSettings, v: Variant) {
+    let defaults = ThemeSettings::default();
+    *v.palette_id_mut(t) = v.palette_id(&defaults).to_owned();
+    *v.accent_mut(t) = v.accent(&defaults).to_owned();
+    t.system_accent = defaults.system_accent;
+}
+
+/// Включить или выключить свой акцент варианта. Включённый начинается с
+/// акцента палитры: окно не меняется, пока цвет не выбран.
+pub fn set_own_accent(t: &mut ThemeSettings, v: Variant, on: bool) {
+    let accent = if on {
+        format_hex(v.of_def(find(v.palette_id(t))).accent)
+    } else {
+        String::new()
+    };
+    let slot = v.accent_mut(t);
+    if !on || slot.trim().is_empty() {
+        *slot = accent;
+    }
+}
+
+/// Ниже этого контраста с фоном карточек акцентные значки, заголовки и
+/// ссылки читаются плохо. Все встроенные палитры порог проходят (тест):
+/// у Breeze light акцент к белой карточке — около 3.04.
+pub const ACCENT_MIN_CONTRAST: f32 = 3.0;
+
+/// Акцент виден на фоне карточек.
+pub fn accent_readable(p: &Palette) -> bool {
+    contrast(p.accent, p.card) >= ACCENT_MIN_CONTRAST
+}
+
+/// Ручка, слишком похожая на дорожку, теряется.
+const KNOB_MIN_CONTRAST: f32 = 1.5;
+
+/// Ручка включённого переключателя: цвет палитры, а на похожем на него
+/// своём акценте — чёрная или белая.
+pub fn knob_on(p: &Palette) -> Color32 {
+    if contrast(p.knob, p.accent) >= KNOB_MIN_CONTRAST {
+        p.knob
+    } else {
+        p.on_accent
+    }
+}
+
+/// Что окно знает о теме системы — строка в карточке «Оформление».
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SystemNote {
+    /// Портал ещё не ответил.
+    Waiting,
+    /// Портала нет: тёмная.
+    Unavailable,
+    /// Портал есть, но тема в системе не выбрана: тёмная.
+    NoPreference,
+    Dark,
+    Light,
+}
+
+impl SystemNote {
+    pub fn of(portal: &PortalState) -> SystemNote {
+        match portal {
+            PortalState::Pending => SystemNote::Waiting,
+            PortalState::Unavailable(_) => SystemNote::Unavailable,
+            PortalState::Ready(a) => match a.scheme {
+                Some(Scheme::Dark) => SystemNote::Dark,
+                Some(Scheme::Light) => SystemNote::Light,
+                Some(Scheme::NoPreference) | None => SystemNote::NoPreference,
+            },
+        }
+    }
+
+    pub fn text(self) -> &'static str {
+        match self {
+            SystemNote::Waiting => "Ждём ответа системы…",
+            SystemNote::Unavailable => "Система не сообщает тему — используется тёмная.",
+            SystemNote::NoPreference => "В системе тема не выбрана — используется тёмная.",
+            SystemNote::Dark => "Сейчас в системе тёмная тема.",
+            SystemNote::Light => "Сейчас в системе светлая тема.",
+        }
+    }
+
+    /// Тема выбрана не системой, а запасная.
+    pub fn fallback(self) -> bool {
+        matches!(self, SystemNote::Unavailable | SystemNote::NoPreference)
+    }
+}
+
+/// Почему «Акцент как в системе» нельзя включить; `None` — можно. Пока портал
+/// не ответил, переключатель не выключается.
+pub fn system_accent_blocked(portal: &PortalState) -> Option<&'static str> {
+    match portal {
+        PortalState::Pending => None,
+        PortalState::Unavailable(_) => Some("Система не сообщает тему и акцент."),
+        PortalState::Ready(a) if a.accent.is_none() => {
+            Some("Система не сообщает свой акцент (accent-color).")
+        }
+        PortalState::Ready(_) => None,
+    }
 }
 
 /// Стиль виджетов egui из палитры.
@@ -912,13 +1100,233 @@ mod tests {
                 ("text/field", p.text, p.field, 4.5),
                 ("text/button", p.text, p.button, 4.5),
                 ("weak/card", p.weak, p.card, 3.0),
-                ("accent/card", p.accent, p.card, 3.0),
+                ("accent/card", p.accent, p.card, ACCENT_MIN_CONTRAST),
+                ("knob/toggle_off", p.knob, p.toggle_off, KNOB_MIN_CONTRAST),
+                ("knob/accent", p.knob, p.accent, KNOB_MIN_CONTRAST),
             ] {
                 let c = contrast(fg, bg);
                 assert!(c >= min, "{name}: {what} = {c:.2} < {min}");
             }
             assert_eq!(p.on_accent, on_accent(p.accent), "{name}: on_accent");
+            // Предупреждение «акцент плохо виден» на своих палитрах не появляется.
+            assert!(accent_readable(p), "{name}: accent_readable");
+            assert_eq!(knob_on(p), p.knob, "{name}: ручка включённого");
         }
+    }
+
+    #[test]
+    fn accent_warning_threshold() {
+        let light = |accent: &str| ThemeSettings {
+            mode: ThemeMode::Light,
+            light_accent: accent.into(),
+            ..ThemeSettings::default()
+        };
+        let none = System::default();
+        // Жёлтый, оранжевый и светло-серый на белой карточке видны плохо.
+        for bad in ["#ffff00", "#ff8800", "#cccccc", "#ffffff"] {
+            assert!(
+                !accent_readable(&resolve(&light(bad), &none, None)),
+                "{bad}"
+            );
+        }
+        for good in ["#1d99f3", "#d65d0e", "#000000"] {
+            assert!(
+                accent_readable(&resolve(&light(good), &none, None)),
+                "{good}"
+            );
+        }
+        // На тёмной карточке — наоборот: тёмно-синий не виден.
+        let dark = ThemeSettings {
+            mode: ThemeMode::Dark,
+            dark_accent: "#1e3a8a".into(),
+            ..ThemeSettings::default()
+        };
+        assert!(!accent_readable(&resolve(&dark, &none, None)));
+    }
+
+    #[test]
+    fn knob_on_own_accent() {
+        let mut p = find("breeze").dark;
+        // Свой белый акцент — белая ручка потерялась бы, берём чёрную.
+        p.accent = WHITE;
+        p.on_accent = on_accent(p.accent);
+        assert_eq!(knob_on(&p), BLACK);
+        p.accent = rgb(0x1e3a8a);
+        p.on_accent = on_accent(p.accent);
+        assert_eq!(knob_on(&p), p.knob);
+    }
+
+    #[test]
+    fn variant_fields() {
+        let mut t = ThemeSettings {
+            light_palette: "nord".into(),
+            dark_palette: "gruvbox".into(),
+            light_accent: "#ff8800".into(),
+            ..ThemeSettings::default()
+        };
+        assert_eq!(Variant::of(true), Variant::Dark);
+        assert_eq!(Variant::of(false), Variant::Light);
+        assert_eq!(Variant::Light.palette_id(&t), "nord");
+        assert_eq!(Variant::Dark.palette_id(&t), "gruvbox");
+        assert_eq!(Variant::Light.accent(&t), "#ff8800");
+        assert_eq!(Variant::Dark.accent(&t), "");
+        *Variant::Dark.accent_mut(&mut t) = "#000000".into();
+        *Variant::Dark.palette_id_mut(&mut t) = "catppuccin".into();
+        assert_eq!(t.dark_accent, "#000000");
+        assert_eq!(t.dark_palette, "catppuccin");
+        assert_eq!(t.light_palette, "nord");
+        let def = find("nord");
+        assert_eq!(Variant::Light.of_def(def), &def.light);
+        assert_eq!(Variant::Dark.of_def(def), &def.dark);
+    }
+
+    #[test]
+    fn variant_palette_matches_resolve() {
+        let t = ThemeSettings {
+            mode: ThemeMode::System,
+            light_palette: "catppuccin".into(),
+            dark_palette: "nord".into(),
+            dark_accent: "#ff8800".into(),
+            system_accent: true,
+            ..ThemeSettings::default()
+        };
+        let sys = System {
+            available: true,
+            dark: Some(false),
+            accent: Some(rgb(0x00aa55)),
+        };
+        // На экране светлый вариант, а тёмный можно посмотреть тут же.
+        let on_screen = resolve(&t, &sys, None);
+        assert_eq!(
+            variant_palette(&t, &sys, ThemeMode::System, Variant::Light),
+            on_screen
+        );
+        let dark = variant_palette(&t, &sys, ThemeMode::System, Variant::Dark);
+        assert!(dark.dark);
+        assert_eq!(dark.bg, find("nord").dark.bg);
+        // В режиме «как в системе» акцент системы действует на оба варианта.
+        assert_eq!(dark.accent, rgb(0x00aa55));
+        assert!(system_accent_active(&t, &sys, ThemeMode::System));
+        // В явном режиме — свой акцент.
+        let dark = variant_palette(&t, &sys, ThemeMode::Dark, Variant::Dark);
+        assert_eq!(dark.accent, rgb(0xff8800));
+        assert!(!system_accent_active(&t, &sys, ThemeMode::Dark));
+        let quiet = System {
+            accent: None,
+            ..sys
+        };
+        assert!(!system_accent_active(&t, &quiet, ThemeMode::System));
+    }
+
+    #[test]
+    fn reset_variant_keeps_mode_and_other_variant() {
+        let edited = ThemeSettings {
+            mode: ThemeMode::Light,
+            light_palette: "gruvbox".into(),
+            dark_palette: "nord".into(),
+            light_accent: "#ff8800".into(),
+            dark_accent: "#00aa55".into(),
+            system_accent: true,
+        };
+        let mut t = edited.clone();
+        reset_variant(&mut t, Variant::Light);
+        assert_eq!(
+            t,
+            ThemeSettings {
+                light_palette: "breeze".into(),
+                light_accent: String::new(),
+                system_accent: false,
+                ..edited.clone()
+            }
+        );
+        let mut t = edited.clone();
+        reset_variant(&mut t, Variant::Dark);
+        assert_eq!(t.mode, ThemeMode::Light);
+        assert_eq!(t.light_palette, "gruvbox");
+        assert_eq!(t.light_accent, "#ff8800");
+        assert_eq!(t.dark_palette, "breeze");
+        assert_eq!(t.dark_accent, "");
+        assert!(!t.system_accent);
+        // Повторный сброс ничего не меняет.
+        let once = t.clone();
+        reset_variant(&mut t, Variant::Dark);
+        assert_eq!(t, once);
+        // Сброс всех вариантов — значения по умолчанию, кроме режима.
+        reset_variant(&mut t, Variant::Light);
+        assert_eq!(
+            t,
+            ThemeSettings {
+                mode: ThemeMode::Light,
+                ..ThemeSettings::default()
+            }
+        );
+    }
+
+    #[test]
+    fn own_accent_switch() {
+        let mut t = ThemeSettings {
+            dark_palette: "gruvbox".into(),
+            ..ThemeSettings::default()
+        };
+        // Включили — акцент палитры, окно не меняется.
+        set_own_accent(&mut t, Variant::Dark, true);
+        assert_eq!(t.dark_accent, format_hex(find("gruvbox").dark.accent));
+        assert_eq!(t.light_accent, "");
+        assert_eq!(
+            resolve(&t, &System::default(), Some(ThemeMode::Dark)).accent,
+            find("gruvbox").dark.accent
+        );
+        // Уже выбранный цвет повторное включение не затирает.
+        t.dark_accent = "#ff8800".into();
+        set_own_accent(&mut t, Variant::Dark, true);
+        assert_eq!(t.dark_accent, "#ff8800");
+        set_own_accent(&mut t, Variant::Dark, false);
+        assert_eq!(t.dark_accent, "");
+        // Пробелы — это «выключен».
+        t.light_accent = "  ".into();
+        set_own_accent(&mut t, Variant::Light, true);
+        assert_eq!(t.light_accent, format_hex(find("breeze").light.accent));
+    }
+
+    #[test]
+    fn system_notes() {
+        use shiftfix::portal::Appearance;
+        let ready = |scheme, accent| PortalState::Ready(Appearance { scheme, accent });
+        let cases = [
+            (PortalState::Pending, SystemNote::Waiting, None),
+            (
+                PortalState::Unavailable("нет шины".into()),
+                SystemNote::Unavailable,
+                Some(()),
+            ),
+            (ready(None, None), SystemNote::NoPreference, Some(())),
+            (
+                ready(Some(Scheme::NoPreference), Some([1, 2, 3])),
+                SystemNote::NoPreference,
+                None,
+            ),
+            (ready(Some(Scheme::Dark), None), SystemNote::Dark, Some(())),
+            (
+                ready(Some(Scheme::Light), Some([1, 2, 3])),
+                SystemNote::Light,
+                None,
+            ),
+        ];
+        for (state, note, blocked) in cases {
+            assert_eq!(SystemNote::of(&state), note, "{state:?}");
+            assert_eq!(
+                system_accent_blocked(&state).map(|_| ()),
+                blocked,
+                "{state:?}"
+            );
+        }
+        // Запасная тёмная — только когда система тему не сообщила.
+        assert!(SystemNote::Unavailable.fallback());
+        assert!(SystemNote::NoPreference.fallback());
+        for note in [SystemNote::Waiting, SystemNote::Dark, SystemNote::Light] {
+            assert!(!note.fallback(), "{note:?}");
+        }
+        assert!(SystemNote::Unavailable.text().contains("тёмная"));
     }
 
     #[test]
@@ -963,6 +1371,26 @@ mod tests {
         for c in [orange, BLACK, WHITE, rgb(0x0a0b0c), rgb(0x3daee9)] {
             assert_eq!(parse_hex(&format_hex(c)), Some(c));
         }
+    }
+
+    #[test]
+    fn hex_commit_only_typed() {
+        use HexCommit::*;
+        // «Сбросить» или выключенный «Свой акцент»: набранное забыто, в поле
+        // акцент палитры — уход из поля его не записывает.
+        assert_eq!(hex_commit(false, true, false, "#1d99f3"), Keep);
+        assert_eq!(hex_commit(false, false, false, "#1d99f3"), Keep);
+        assert_eq!(hex_commit(false, true, true, "#1d99f3"), Keep);
+        // Набрали и ушли из поля (Enter, клик мимо) — принять.
+        assert_eq!(
+            hex_commit(true, true, false, "#00aa55"),
+            Apply(rgb(0x00aa55))
+        );
+        assert_eq!(hex_commit(true, true, false, "#0a5"), Bad);
+        // Esc, пусто или поле стало неактивным («Акцент как в системе»).
+        assert_eq!(hex_commit(true, true, true, "#00aa55"), Discard);
+        assert_eq!(hex_commit(true, true, false, "  "), Discard);
+        assert_eq!(hex_commit(true, false, false, "#00aa55"), Discard);
     }
 
     #[test]

@@ -135,6 +135,8 @@ pub struct App {
     theme_save_at: Option<Instant>,
     /// О неудачной записи темы уже сказали.
     theme_save_failed: bool,
+    /// Вкладка варианта в карточке «Оформление»; `None` — вариант на экране.
+    pub theme_tab: Option<theme::Variant>,
 }
 
 impl App {
@@ -187,12 +189,26 @@ impl App {
             applied: None,
             theme_save_at: None,
             theme_save_failed: false,
+            theme_tab: None,
         }
     }
 
     /// Режим, в котором окно сейчас: `--theme` или из настроек.
     pub fn theme_mode(&self) -> ThemeMode {
         self.forced_mode.unwrap_or(self.settings.theme.mode)
+    }
+
+    /// Режим задан параметром `--theme` (до первого выбора в окне).
+    pub fn theme_forced(&self) -> bool {
+        self.forced_mode.is_some()
+    }
+
+    /// Выбор режима в окне (боковая панель и «Оформление»): отменяет `--theme`,
+    /// вкладка «Оформления» снова показывает вариант на экране.
+    pub fn set_mode(&mut self, mode: ThemeMode) {
+        self.forced_mode = None;
+        self.theme_tab = None;
+        self.set_theme(|t| t.mode = mode);
     }
 
     /// Изменить тему: видно сразу, в файл — чуть позже и только секция `[theme]`.
@@ -402,8 +418,7 @@ impl App {
                         .corner_radius(CornerRadius::same(8))
                         .min_size(vec2(34.0, 30.0));
                     if ui.add(button).on_hover_text(hint).clicked() {
-                        self.forced_mode = None;
-                        self.set_theme(|t| t.mode = mode);
+                        self.set_mode(mode);
                     }
                 }
             });

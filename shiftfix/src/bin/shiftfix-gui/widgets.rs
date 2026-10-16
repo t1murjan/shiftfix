@@ -6,7 +6,7 @@ use eframe::egui::{
     RichText, Sense, Shape, Stroke, StrokeKind, Ui, Vec2, vec2,
 };
 
-use crate::theme::{BOLD, Palette};
+use crate::theme::{self, BOLD, Palette};
 
 /// Семейство шрифта с иконками Phosphor.
 pub const ICONS: &str = "phosphor";
@@ -109,10 +109,182 @@ pub fn toggle(ui: &mut Ui, on: &mut bool, height: f32, p: &Palette) -> Response 
             radius - 3.0,
             Color32::from_black_alpha(40),
         );
-        ui.painter()
-            .circle_filled(knob, radius - 3.5, Color32::WHITE);
+        let knob_color = lerp_color(p.knob, theme::knob_on(p), t);
+        ui.painter().circle_filled(knob, radius - 3.5, knob_color);
     }
     response
+}
+
+/// Сегмент «одно из нескольких»: иконка и подпись на каждой кнопке.
+/// Возвращает нажатое, в том числе уже выбранное: повторный выбор — тоже
+/// выбор (так режим из сегмента отменяет `--theme`, как и боковая панель).
+pub fn segment<T: Copy + PartialEq>(
+    ui: &mut Ui,
+    p: &Palette,
+    current: T,
+    items: &[(T, &str, &str)],
+) -> Option<T> {
+    let mut picked = None;
+    Frame::NONE
+        .fill(p.field)
+        .stroke(Stroke::new(1.0, p.card_border))
+        .corner_radius(CornerRadius::same(10))
+        .inner_margin(Margin::same(3))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.horizontal(|ui| {
+                // Справа налево (в правой колонке строки) — с конца, чтобы
+                // порядок на экране был тот же.
+                let rtl = ui.layout().main_dir() == egui::Direction::RightToLeft;
+                let mut order: Vec<_> = items.iter().collect();
+                if rtl {
+                    order.reverse();
+                }
+                for &(value, glyph, text) in order {
+                    let selected = value == current;
+                    let color = if selected { p.accent } else { p.text };
+                    let button = egui::Button::new(icon_job(glyph, text, 14.0, color))
+                        .fill(if selected {
+                            p.accent.gamma_multiply(if p.dark { 0.22 } else { 0.14 })
+                        } else {
+                            Color32::TRANSPARENT
+                        })
+                        .stroke(Stroke::NONE)
+                        .corner_radius(CornerRadius::same(8))
+                        .min_size(vec2(0.0, 28.0));
+                    if ui.add(button).clicked() {
+                        picked = Some(value);
+                    }
+                }
+            });
+        });
+    picked
+}
+
+/// Вкладка: подпись с чертой снизу у выбранной.
+pub fn tab(ui: &mut Ui, p: &Palette, text: &str, selected: bool) -> Response {
+    let font = FontId::proportional(15.0);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font, Color32::PLACEHOLDER);
+    let size = galley.size() + vec2(20.0, 14.0);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let color = if selected {
+        p.accent
+    } else if response.hovered() {
+        p.text
+    } else {
+        p.weak
+    };
+    if response.hovered() && !selected {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(8), p.hover);
+    }
+    let pos = rect.center() - galley.size() / 2.0 - vec2(0.0, 2.0);
+    ui.painter().galley(pos, galley, color);
+    if selected {
+        let bar = Rect::from_min_max(
+            Pos2::new(rect.left() + 8.0, rect.bottom() - 3.0),
+            Pos2::new(rect.right() - 8.0, rect.bottom()),
+        );
+        ui.painter()
+            .rect_filled(bar, CornerRadius::same(2), p.accent);
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// Плитка палитры: уменьшенное окно в её цветах (`preview`) и имя под ним.
+/// Рамка у выбранной — акцентом окна (`p`).
+pub fn palette_tile(
+    ui: &mut Ui,
+    p: &Palette,
+    preview: &Palette,
+    name: &str,
+    selected: bool,
+) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(132.0, 104.0), Sense::click());
+    if !ui.is_rect_visible(rect) {
+        return response;
+    }
+    let painter = ui.painter();
+    let shot = Rect::from_min_size(rect.min, vec2(rect.width(), 76.0));
+    let r8 = CornerRadius::same(8);
+    painter.rect_filled(shot, r8, preview.bg);
+    // Боковая панель с выбранным пунктом.
+    let side = Rect::from_min_size(shot.min, vec2(30.0, shot.height()));
+    painter.rect_filled(
+        side,
+        CornerRadius {
+            nw: 8,
+            sw: 8,
+            ne: 0,
+            se: 0,
+        },
+        preview.sidebar,
+    );
+    let nav = Rect::from_min_size(side.min + vec2(5.0, 10.0), vec2(20.0, 7.0));
+    painter.rect_filled(
+        nav,
+        CornerRadius::same(3),
+        preview.accent.gamma_multiply(0.4),
+    );
+    for i in 0..2 {
+        let item = Rect::from_min_size(
+            side.min + vec2(5.0, 24.0 + 11.0 * i as f32),
+            vec2(16.0, 4.0),
+        );
+        painter.rect_filled(item, CornerRadius::same(2), preview.weak);
+    }
+    // Карточка: заголовок, текст, кнопка и переключатель.
+    let card = Rect::from_min_max(shot.min + vec2(38.0, 9.0), shot.max - vec2(8.0, 9.0));
+    painter.rect(
+        card,
+        CornerRadius::same(6),
+        preview.card,
+        Stroke::new(1.0, preview.card_border),
+        StrokeKind::Inside,
+    );
+    let line = |x: f32, y: f32, w: f32, color: Color32| {
+        let r = Rect::from_min_size(card.min + vec2(x, y), vec2(w, 4.0));
+        painter.rect_filled(r, CornerRadius::same(2), color);
+    };
+    painter.circle_filled(card.min + vec2(11.0, 11.0), 3.5, preview.accent);
+    line(19.0, 9.0, 36.0, preview.text);
+    line(8.0, 20.0, 62.0, preview.weak);
+    line(8.0, 28.0, 48.0, preview.weak);
+    let button = Rect::from_min_size(card.min + vec2(8.0, 39.0), vec2(30.0, 12.0));
+    painter.rect_filled(button, CornerRadius::same(4), preview.accent);
+    let label = Rect::from_center_size(button.center(), vec2(16.0, 3.0));
+    painter.rect_filled(label, CornerRadius::same(1), preview.on_accent);
+    let track = Rect::from_min_size(card.min + vec2(52.0, 40.0), vec2(20.0, 11.0));
+    painter.rect_filled(track, CornerRadius::same(6), preview.accent);
+    painter.circle_filled(
+        track.right_center() - vec2(5.5, 0.0),
+        4.0,
+        theme::knob_on(preview),
+    );
+
+    let border = if selected {
+        Stroke::new(2.5, p.accent)
+    } else if response.hovered() {
+        Stroke::new(1.5, p.accent.gamma_multiply(0.6))
+    } else {
+        Stroke::new(1.0, p.card_border)
+    };
+    painter.rect_stroke(shot, r8, border, StrokeKind::Outside);
+    let galley = if selected {
+        painter.layout_job(icon_job(
+            egui_phosphor::regular::CHECK,
+            name,
+            14.0,
+            p.accent,
+        ))
+    } else {
+        painter.layout_no_wrap(name.to_owned(), FontId::proportional(14.0), p.text)
+    };
+    let pos = Pos2::new(rect.center().x - galley.size().x / 2.0, shot.bottom() + 6.0);
+    painter.galley(pos, galley, p.text);
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// Строка «подпись слева — переключатель справа».
