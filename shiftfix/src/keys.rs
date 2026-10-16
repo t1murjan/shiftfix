@@ -50,6 +50,8 @@ pub struct Layout {
     chars: HashMap<KeyCode, [Option<char>; 2]>,
     keys: HashMap<char, (KeyCode, bool)>,
     letters: HashSet<char>,
+    /// Мёртвые клавиши (клавиша, Shift): сами символ не печатают.
+    dead: HashSet<(KeyCode, bool)>,
 }
 
 impl Layout {
@@ -86,7 +88,17 @@ impl Layout {
             chars,
             keys,
             letters,
+            dead: HashSet::new(),
         }
+    }
+
+    pub fn with_dead(mut self, dead: impl IntoIterator<Item = (KeyCode, bool)>) -> Self {
+        self.dead.extend(dead);
+        self
+    }
+
+    pub fn is_dead(&self, key: KeyCode, shift: bool) -> bool {
+        self.dead.contains(&(key, shift))
     }
 
     fn from_rows(name: &str, lower: &str, upper: &str) -> Self {

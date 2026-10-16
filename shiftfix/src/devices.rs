@@ -235,6 +235,13 @@ impl Rules {
     }
 }
 
+/// Итог обхода /dev/input: сколько устройств открылось и сколько — нет прав.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ScanStats {
+    pub opened: usize,
+    pub denied: usize,
+}
+
 /// Все устройства ввода и потоки их чтения.
 pub struct Registry {
     entries: Mutex<HashMap<PathBuf, Entry>>,
@@ -260,7 +267,7 @@ impl Registry {
     }
 
     /// Найти новые устройства, забыть отключённые.
-    pub fn scan(self: &Arc<Self>) {
+    pub fn scan(self: &Arc<Self>) -> ScanStats {
         let nodes = event_nodes();
         {
             let mut entries = self.entries.lock().expect("devices");
@@ -270,18 +277,26 @@ impl Registry {
                 present && (!e.reading || e.shared.alive.load(Ordering::Relaxed))
             });
         }
+        let mut stats = ScanStats::default();
         for path in nodes {
             if self.entries.lock().expect("devices").contains_key(&path) {
+                stats.opened += 1;
                 continue;
             }
             let Ok(meta) = fs::metadata(&path) else {
                 continue;
             };
-            let Ok(dev) = RawDevice::open(&path) else {
-                continue;
-            }; // нет прав — попробуем позже
-            self.add(path, (meta.ctime(), meta.ctime_nsec()), dev);
+            match RawDevice::open(&path) {
+                Ok(dev) => {
+                    stats.opened += 1;
+                    self.add(path, (meta.ctime(), meta.ctime_nsec()), dev);
+                }
+                // Нет прав (или udev ещё не выставил группу новому узлу) — попробуем позже.
+                Err(err) if err.kind() == ErrorKind::PermissionDenied => stats.denied += 1,
+                Err(_) => {}
+            }
         }
+        stats
     }
 
     fn add(self: &Arc<Self>, path: PathBuf, stamp: (i64, i64), dev: RawDevice) {

@@ -1,6 +1,6 @@
 [package]
 name = "shiftfix"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.95"
 description = "Двойной Shift исправляет раскладку последнего слова или выделения (Linux, evdev + uinput)"
@@ -20,6 +20,9 @@ signal-hook = "0.4"
 toml = "1.1.8"
 toml_edit = "0.25"
 wayland-client = "0.31"
+# Рамка окна с заголовком в GNOME: у mutter нет серверных декораций.
+winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita"] }
+x11rb = { version = "0.13", features = ["xfixes", "xkb"] }
 zbus = "5"
 
 [profile.release]

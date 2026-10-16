@@ -26,11 +26,13 @@ const HOTKEYS: [(&str, &str); 5] = [
     ("KEY_LEFTMETA+KEY_LEFTALT+KEY_K", "Meta+Alt+K (KDE)"),
 ];
 
-const BACKENDS: [(&str, &str); 5] = [
+const BACKENDS: [(&str, &str); 7] = [
     ("auto", "Автоматически"),
     ("kde", "KDE Plasma (KWin)"),
+    ("gnome", "GNOME"),
     ("hyprland", "Hyprland"),
     ("sway", "Sway"),
+    ("x11", "X11 (XKB)"),
     ("hotkey", "Нажатием сочетания клавиш"),
 ];
 
@@ -203,7 +205,7 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             ui,
             p,
             "Чем переключать",
-            "«Автоматически» сам найдёт KDE, Hyprland или Sway.",
+            "«Автоматически» сам найдёт KDE, GNOME, Hyprland, Sway или X11.",
             280.0,
             |ui| {
                 combo(ui, "backend", &mut s.backend, &BACKENDS);

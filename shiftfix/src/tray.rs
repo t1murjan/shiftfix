@@ -1,11 +1,13 @@
 //! Значок в системном трее (StatusNotifierItem): пауза, настройки, выход.
 //! Работает в Plasma, а также в Waybar и других панелях с поддержкой SNI.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 
 use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::{CheckmarkItem, StandardItem};
-use ksni::{Icon, MenuItem, ToolTip, Tray};
+use ksni::{Icon, MenuItem, OfflineReason, ToolTip, Tray};
 use log::{info, warn};
 
 use crate::daemon::Msg;
@@ -16,6 +18,8 @@ struct ShiftTray {
     tx: Sender<Msg>,
     enabled: bool,
     layouts: String,
+    /// Панель с треем сейчас есть (её может не быть при входе — служба стартует раньше).
+    visible: Arc<AtomicBool>,
 }
 
 fn open_gui(page: Option<&str>) {
@@ -83,6 +87,18 @@ impl Tray for ShiftTray {
         }
     }
 
+    fn watcher_online(&self) {
+        info!("панель с треем появилась — значок показан");
+        self.visible.store(true, Ordering::Relaxed);
+    }
+
+    fn watcher_offline(&self, reason: OfflineReason) -> bool {
+        if self.visible.swap(false, Ordering::Relaxed) {
+            info!("панели с треем нет ({reason:?}) — значок появится, когда она запустится");
+        }
+        true // ждать панель, а не завершаться
+    }
+
     fn activate(&mut self, _x: i32, _y: i32) {
         open_gui(None);
     }
@@ -131,20 +147,27 @@ impl Tray for ShiftTray {
     }
 }
 
-pub struct TrayIcon(Handle<ShiftTray>);
+pub struct TrayIcon {
+    handle: Handle<ShiftTray>,
+    visible: Arc<AtomicBool>,
+}
 
 impl TrayIcon {
     pub fn spawn(tx: Sender<Msg>, enabled: bool) -> Option<TrayIcon> {
-        match (ShiftTray {
+        let visible = Arc::new(AtomicBool::new(true));
+        let tray = ShiftTray {
             tx,
             enabled,
             layouts: String::new(),
-        })
-        .spawn()
-        {
+            visible: visible.clone(),
+        };
+        // При входе служба часто стартует раньше панели: не сдаваться, а ждать её.
+        match tray.assume_sni_available(true).spawn() {
             Ok(handle) => {
-                info!("значок в трее показан");
-                Some(TrayIcon(handle))
+                if visible.load(Ordering::Relaxed) {
+                    info!("значок в трее показан");
+                }
+                Some(TrayIcon { handle, visible })
             }
             Err(err) => {
                 warn!("значок в трее недоступен: {err}");
@@ -153,9 +176,14 @@ impl TrayIcon {
         }
     }
 
+    /// Значок действительно показан на панели.
+    pub fn visible(&self) -> bool {
+        self.visible.load(Ordering::Relaxed)
+    }
+
     pub fn update(&self, enabled: bool, layouts: &str) {
         let layouts = layouts.to_owned();
-        self.0.update(move |tray| {
+        self.handle.update(move |tray| {
             tray.enabled = enabled;
             tray.layouts = layouts;
         });
@@ -164,6 +192,6 @@ impl TrayIcon {
 
 impl Drop for TrayIcon {
     fn drop(&mut self) {
-        let _ = self.0.shutdown();
+        let _ = self.handle.shutdown();
     }
 }

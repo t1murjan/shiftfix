@@ -64,6 +64,8 @@ const KEYMAP_FORMAT_TEXT_V1: c_int = 1;
 /// Keysym'ы, которыми клавиша переключает группу раскладок.
 const GROUP_SWITCH_SYMS: [u32; 5] = [0xfe08, 0xfe09, 0xfe0a, 0xfe0b, 0xfe0c]; // ISO_Next_Group… ISO_Last_Group_Lock
 const KEY_CAPS_XKB: u32 = 58 + 8;
+/// dead_grave … dead_lowline и прочие мёртвые keysym'ы.
+const DEAD_SYMS: std::ops::RangeInclusive<u32> = 0xfe50..=0xfe93;
 
 fn library() -> Option<&'static Xkb> {
     static XKB: OnceLock<Option<Xkb>> = OnceLock::new();
@@ -141,7 +143,9 @@ impl Compiled<'_> {
     }
 
     fn char_at(&self, key: KeyCode, group: u32, level: u32) -> Option<char> {
-        let sym = self.sym(u32::from(key.code()) + 8, group, level)?;
+        let sym = self
+            .sym(u32::from(key.code()) + 8, group, level)
+            .filter(|sym| !DEAD_SYMS.contains(sym))?;
         // SAFETY: чистая функция.
         let code = unsafe { (self.xkb.keysym_to_utf32)(sym) };
         char::from_u32(code).filter(|c| *c != '\0' && !c.is_control())
@@ -160,14 +164,20 @@ impl Compiled<'_> {
                         .to_string_lossy()
                         .into_owned()
                 };
-                let keys = ROW_KEYS.iter().chain([&KeyCode::KEY_SPACE]);
-                let pairs = keys.map(|&key| {
+                let keys = || ROW_KEYS.iter().chain([&KeyCode::KEY_SPACE]);
+                let pairs = keys().map(|&key| {
                     (
                         key,
                         [self.char_at(key, group, 0), self.char_at(key, group, 1)],
                     )
                 });
-                Arc::new(Layout::from_pairs(name, pairs))
+                let dead = keys().flat_map(|&key| {
+                    [false, true].into_iter().filter_map(move |shift| {
+                        let sym = self.sym(u32::from(key.code()) + 8, group, u32::from(shift))?;
+                        DEAD_SYMS.contains(&sym).then_some((key, shift))
+                    })
+                });
+                Arc::new(Layout::from_pairs(name, pairs).with_dead(dead.collect::<Vec<_>>()))
             })
             .collect();
         let caps_switches_group = (0..count.max(1)).any(|group| {
@@ -285,6 +295,21 @@ fn connect() -> Option<Connection> {
     Connection::from_socket(UnixStream::connect(path).ok()?).ok()
 }
 
+/// Есть ли у композитора протокол data-control (без него wl-paste не может
+/// следить за выделением; так в GNOME). `None` — к композитору не подключиться.
+pub fn data_control() -> Option<bool> {
+    let conn = connect()?;
+    let (globals, _queue) = registry_queue_init::<State>(&conn).ok()?;
+    Some(globals.contents().with_list(|list| {
+        list.iter().any(|g| {
+            matches!(
+                g.interface.as_str(),
+                "zwlr_data_control_manager_v1" | "ext_data_control_manager_v1"
+            )
+        })
+    }))
+}
+
 /// Один раз получить keymap композитора.
 pub fn fetch() -> Option<Keymap> {
     let conn = connect()?;
@@ -382,6 +407,20 @@ mod tests {
         // «hello», набранное пальцами Dvorak в украинской раскладке.
         assert_eq!(convert_text("овззі", ua, dvorak), "hello");
         assert!(keymap.caps_switches_group);
+    }
+
+    #[test]
+    fn dead_keys_are_marked() {
+        let Some(keymap) = keymap_from_names("us,ru", "intl,", "") else {
+            return;
+        };
+        let (intl, ru) = (&keymap.layouts[0], &keymap.layouts[1]);
+        // US International: ' и Shift+6 — мёртвые, буквы — нет.
+        assert!(intl.is_dead(KeyCode::KEY_APOSTROPHE, false));
+        assert!(intl.is_dead(KeyCode::KEY_6, true));
+        assert!(!intl.is_dead(KeyCode::KEY_A, false));
+        assert_eq!(intl.char_at(KeyCode::KEY_APOSTROPHE, false), None);
+        assert!(!ru.is_dead(KeyCode::KEY_APOSTROPHE, false));
     }
 
     #[test]

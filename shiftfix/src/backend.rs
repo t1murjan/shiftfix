@@ -1,4 +1,5 @@
-//! Переключение раскладки: KWin по DBus, Hyprland, Sway или эмуляция хоткея.
+//! Переключение раскладки: KWin по DBus, GNOME, Hyprland, Sway, XKB в X11
+//! или эмуляция хоткея.
 //! В режиме «авто» окружение определяется при первом обращении и заново —
 //! если оно сменилось или служба стартовала раньше сессии.
 
@@ -10,19 +11,26 @@ use log::info;
 use serde_json::Value;
 
 use crate::config::{BackendKind, Config};
+use crate::dbus::{Bus, Client};
 use crate::engine::{Backend, Keys};
 use crate::env;
 use crate::keys::{code_from_long_name, norm_layout};
 use crate::proc::run_text;
+use crate::x11::XkbLayout;
 
 // ─── KDE Plasma ─────────────────────────────────────────────────────────────
 
 /// KWin (Plasma 6) и kded (Plasma 5): `org.kde.keyboard /Layouts`.
-#[derive(Default)]
 pub struct Kde {
-    conn: Option<zbus::blocking::Connection>,
-    /// Адрес шины для тестов; обычно — сессионная шина.
-    address: Option<String>,
+    client: Client,
+}
+
+impl Default for Kde {
+    fn default() -> Self {
+        Kde {
+            client: Client::new(Bus::Session),
+        }
+    }
 }
 
 impl Kde {
@@ -31,28 +39,15 @@ impl Kde {
         method: &str,
         body: &(impl serde::Serialize + zbus::zvariant::DynamicType),
     ) -> Result<zbus::Message> {
-        if self.conn.is_none() {
-            let builder = match &self.address {
-                Some(address) => zbus::blocking::connection::Builder::address(address.as_str()),
-                None => zbus::blocking::connection::Builder::session(),
-            };
-            let conn = builder
-                .and_then(|b| b.method_timeout(Duration::from_secs(2)).build())
-                .context("DBus: нет сессионной шины")?;
-            self.conn = Some(conn);
-        }
-        let conn = self.conn.as_ref().expect("connection");
-        conn.call_method(
-            Some("org.kde.keyboard"),
-            "/Layouts",
-            Some("org.kde.KeyboardLayouts"),
-            method,
-            body,
-        )
-        .map_err(|err| {
-            self.conn = None; // шина могла перезапуститься — переподключимся
-            anyhow!("KDE {method}: {err}")
-        })
+        self.client
+            .call(
+                "org.kde.keyboard",
+                "/Layouts",
+                "org.kde.KeyboardLayouts",
+                method,
+                body,
+            )
+            .map_err(|err| err.context("KDE"))
     }
 
     fn call<R>(
@@ -118,14 +113,15 @@ impl Default for Hyprland {
 }
 
 impl Hyprland {
-    fn keyboards(&self) -> Result<Vec<Value>> {
+    /// Клавиатуры Hyprland; `ours` — вместе с виртуальной клавиатурой shiftfix.
+    fn keyboards(&self, ours: bool) -> Result<Vec<Value>> {
         let out = run_text(&self.hyprctl, &["-j", "devices"])?;
         let value: Value = serde_json::from_str(&out).context("hyprctl: неожиданный ответ")?;
         let keyboards: Vec<Value> = value["keyboards"]
             .as_array()
             .into_iter()
             .flatten()
-            .filter(|k| !k["name"].as_str().unwrap_or_default().contains("shiftfix"))
+            .filter(|k| ours || !k["name"].as_str().unwrap_or_default().contains("shiftfix"))
             .cloned()
             .collect();
         if keyboards.is_empty() {
@@ -135,7 +131,7 @@ impl Hyprland {
     }
 
     fn main_keyboard(&self) -> Result<Value> {
-        let keyboards = self.keyboards()?;
+        let keyboards = self.keyboards(false)?;
         let main = keyboards
             .iter()
             .find(|k| k["main"].as_bool() == Some(true))
@@ -144,13 +140,15 @@ impl Hyprland {
     }
 
     fn switch(&self, arg: &str) -> Result<()> {
-        // Старые версии не знают `all` — тогда по одной клавиатуре.
+        // Старые версии не знают `all` — тогда по одной клавиатуре. В Hyprland у
+        // каждой клавиатуры своя раскладка, и виртуальную надо переключить тоже:
+        // это через неё перенабирается слово.
         if run_text(&self.hyprctl, &["switchxkblayout", "all", arg])
             .is_ok_and(|out| out.to_lowercase().contains("ok"))
         {
             return Ok(());
         }
-        for kb in self.keyboards()? {
+        for kb in self.keyboards(true)? {
             let name = kb["name"].as_str().unwrap_or_default();
             let out = run_text(&self.hyprctl, &["switchxkblayout", name, arg])?;
             if !out.to_lowercase().contains("ok") {
@@ -274,6 +272,199 @@ impl Backend for Sway {
     }
 }
 
+// ─── GNOME ──────────────────────────────────────────────────────────────────
+
+/// Строки в одинарных кавычках из вывода `gsettings get` (формат GVariant).
+fn gvariant_strings(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c != '\'' {
+            continue;
+        }
+        let mut value = String::new();
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' => value.extend(chars.next()),
+                '\'' => break,
+                c => value.push(c),
+            }
+        }
+        out.push(value);
+    }
+    out
+}
+
+/// `<Super>space` → (модификаторы, клавиша).
+pub fn parse_accel(accel: &str) -> Option<(Vec<KeyCode>, KeyCode)> {
+    let mut mods = Vec::new();
+    let mut rest = accel.trim();
+    while let Some(tail) = rest.strip_prefix('<') {
+        let (name, after) = tail.split_once('>')?;
+        let key = match name.to_lowercase().as_str() {
+            "super" | "mod4" | "meta" | "hyper" => KeyCode::KEY_LEFTMETA,
+            "primary" | "control" | "ctrl" => KeyCode::KEY_LEFTCTRL,
+            "alt" | "mod1" => KeyCode::KEY_LEFTALT,
+            "shift" => KeyCode::KEY_LEFTSHIFT,
+            _ => return None,
+        };
+        mods.push(key);
+        rest = after;
+    }
+    let key = match rest.to_lowercase().as_str() {
+        "space" => KeyCode::KEY_SPACE,
+        "tab" => KeyCode::KEY_TAB,
+        "caps_lock" => KeyCode::KEY_CAPSLOCK,
+        "shift_l" => KeyCode::KEY_LEFTSHIFT,
+        "shift_r" => KeyCode::KEY_RIGHTSHIFT,
+        "alt_l" => KeyCode::KEY_LEFTALT,
+        "alt_r" => KeyCode::KEY_RIGHTALT,
+        "control_l" => KeyCode::KEY_LEFTCTRL,
+        "control_r" => KeyCode::KEY_RIGHTCTRL,
+        "super_l" => KeyCode::KEY_LEFTMETA,
+        "super_r" => KeyCode::KEY_RIGHTMETA,
+        "grave" => KeyCode::KEY_GRAVE,
+        name if name.len() == 1 && name.chars().all(|c| c.is_ascii_alphanumeric()) => {
+            format!("KEY_{}", name.to_uppercase()).parse().ok()?
+        }
+        name if name.starts_with('f')
+            && name[1..].parse::<u8>().is_ok_and(|n| (1..=12).contains(&n)) =>
+        {
+            format!("KEY_{}", name.to_uppercase()).parse().ok()?
+        }
+        _ => return None,
+    };
+    Some((mods, key))
+}
+
+/// GNOME: источники ввода из gsettings, переключение — сочетанием из настроек
+/// GNOME (обычно Super+Space) с проверкой, что раскладка правда сменилась.
+pub struct Gnome {
+    gsettings: String,
+    /// Сочетание из конфига на случай, если в GNOME его не прочитать.
+    fallback: Vec<KeyCode>,
+}
+
+impl Gnome {
+    pub fn new(fallback: Vec<KeyCode>) -> Self {
+        Gnome {
+            gsettings: "gsettings".into(),
+            fallback,
+        }
+    }
+
+    fn get(&self, schema: &str, key: &str) -> Result<String> {
+        run_text(&self.gsettings, &["get", schema, key])
+    }
+
+    /// Пары (тип, id): `('xkb', 'us')`, `('ibus', 'mozc-jp')`.
+    fn pairs(&self, key: &str) -> Result<Vec<(String, String)>> {
+        let text = self.get("org.gnome.desktop.input-sources", key)?;
+        let strings = gvariant_strings(&text);
+        Ok(strings
+            .chunks_exact(2)
+            .map(|pair| (pair[0].clone(), pair[1].clone()))
+            .collect())
+    }
+
+    fn sources(&self) -> Result<Vec<(String, String)>> {
+        let sources = self.pairs("sources")?;
+        if sources.is_empty() {
+            bail!("в GNOME не настроены источники ввода");
+        }
+        Ok(sources)
+    }
+
+    /// Порядок, в котором GNOME перебирает источники: недавние первыми, текущий — нулевой.
+    fn mru_order(&self, sources: &[(String, String)]) -> Vec<usize> {
+        let mut order: Vec<usize> = self
+            .pairs("mru-sources")
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|m| sources.iter().position(|s| s == m))
+            .collect();
+        order.dedup();
+        for i in 0..sources.len() {
+            if !order.contains(&i) {
+                order.push(i);
+            }
+        }
+        order
+    }
+
+    fn hotkey(&self) -> Option<(Vec<KeyCode>, KeyCode)> {
+        let text = self
+            .get("org.gnome.desktop.wm.keybindings", "switch-input-source")
+            .ok()?;
+        gvariant_strings(&text).iter().find_map(|a| parse_accel(a))
+    }
+}
+
+impl Backend for Gnome {
+    fn name(&self) -> &'static str {
+        "GNOME"
+    }
+
+    fn layouts(&mut self) -> Result<Vec<String>> {
+        Ok(self
+            .sources()?
+            .iter()
+            .map(|(kind, id)| {
+                if kind == "xkb" {
+                    norm_layout(id.split('+').next().unwrap_or(id))
+                } else {
+                    id.clone()
+                }
+            })
+            .collect())
+    }
+
+    fn current(&mut self) -> Result<Option<usize>> {
+        let sources = self.sources()?;
+        Ok(self.mru_order(&sources).first().copied())
+    }
+
+    fn set(&mut self, index: usize, keys: &mut dyn Keys) -> Result<()> {
+        let sources = self.sources()?;
+        if index >= sources.len() {
+            bail!("GNOME: нет источника ввода №{}", index + 1);
+        }
+        let order = self.mru_order(&sources);
+        let steps = order.iter().position(|&i| i == index).unwrap_or(1);
+        if steps == 0 {
+            return Ok(());
+        }
+        let (hold, tap) = self
+            .hotkey()
+            .or_else(|| {
+                let (&tap, hold) = self.fallback.split_last()?;
+                Some((hold.to_vec(), tap))
+            })
+            .context("GNOME: неизвестно сочетание переключения источников ввода")?;
+        // Super+Space N раз при зажатом Super — как в переключателе GNOME.
+        keys.chord(&hold, tap, steps)?;
+        let deadline = Instant::now() + Duration::from_millis(700);
+        loop {
+            if self.mru_order(&sources).first() == Some(&index) {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                bail!(
+                    "GNOME не переключил раскладку — проверьте сочетание «Переключиться на \\
+                     следующий источник ввода» в настройках клавиатуры"
+                );
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    fn toggle(&mut self, keys: &mut dyn Keys) -> Result<()> {
+        let count = self.sources()?.len();
+        let current = self.current()?.unwrap_or(0);
+        self.set((current + 1) % count.max(1), keys)
+    }
+}
+
 // ─── Хоткей ─────────────────────────────────────────────────────────────────
 
 /// Запасной вариант: нажимает хоткей переключения, текущая раскладка неизвестна.
@@ -314,7 +505,7 @@ pub struct Auto {
 }
 
 impl Auto {
-    fn probe() -> Option<Box<dyn Backend>> {
+    fn probe(hotkey: &[KeyCode]) -> Option<Box<dyn Backend>> {
         let mut candidates: Vec<Box<dyn Backend>> = Vec::new();
         if env::hyprland_signature().is_some() {
             candidates.push(Box::new(Hyprland::default()));
@@ -323,6 +514,13 @@ impl Auto {
             candidates.push(Box::new(Sway::default()));
         }
         candidates.push(Box::new(Kde::default()));
+        if env::in_path("gsettings") && Client::new(Bus::Session).has_owner("org.gnome.Shell") {
+            candidates.push(Box::new(Gnome::new(hotkey.to_vec())));
+        }
+        // Группа XKB у XWayland — не раскладка сеанса Wayland: только чистый X11.
+        if env::wayland_display().is_none() && env::x11_display().is_some() {
+            candidates.push(Box::new(XkbLayout::default()));
+        }
         candidates
             .into_iter()
             .find_map(|mut backend| match backend.layouts() {
@@ -344,7 +542,7 @@ impl Auto {
             .is_none_or(|t| t.elapsed() > Duration::from_secs(5));
         if self.found.is_none() && stale {
             self.last_probe = Some(Instant::now());
-            self.found = Auto::probe();
+            self.found = Auto::probe(&self.fallback.keys);
         }
         match self.found.as_deref_mut() {
             Some(backend) => backend,
@@ -396,8 +594,10 @@ pub fn make(cfg: &Config) -> Box<dyn Backend> {
             last_probe: None,
         }),
         BackendKind::Kde => Box::new(Kde::default()),
+        BackendKind::Gnome => Box::new(Gnome::new(cfg.switch_hotkey.clone())),
         BackendKind::Hyprland => Box::new(Hyprland::default()),
         BackendKind::Sway => Box::new(Sway::default()),
+        BackendKind::X11 => Box::new(XkbLayout::default()),
         BackendKind::Hotkey => Box::new(hotkey()),
     }
 }
@@ -491,8 +691,7 @@ mod tests {
             .unwrap();
 
         let mut kde = Kde {
-            conn: None,
-            address: Some(address),
+            client: Client::with_address(&address),
         };
         assert_eq!(kde.layouts().unwrap(), ["us", "ru"]);
         assert_eq!(kde.current().unwrap(), Some(0));
@@ -521,11 +720,15 @@ fi"#,
         let mut hypr = Hyprland { hyprctl };
         assert_eq!(hypr.layouts().unwrap(), ["us", "ru"]);
         assert_eq!(hypr.current().unwrap(), Some(1));
-        hypr.set(0, &mut NoKeys).unwrap(); // старый Hyprland: по одной клавиатуре
+        // Старый Hyprland: по одной клавиатуре, включая виртуальную shiftfix —
+        // через неё перенабирается слово.
+        hypr.set(0, &mut NoKeys).unwrap();
         assert_eq!(
             fs::read_to_string(dir.join("switched")).unwrap(),
-            "at-translated-set-2-keyboard\n"
+            "shiftfix-virtual-keyboard\nat-translated-set-2-keyboard\n"
         );
+        // А раскладку определяет настоящая клавиатура, не виртуальная.
+        assert_eq!(hypr.current().unwrap(), Some(1));
         fs::remove_dir_all(dir).unwrap();
     }
 

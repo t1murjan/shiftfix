@@ -72,7 +72,14 @@ pub struct Status {
     pub selection: bool,
     /// Почему выделение не исправляется (если не исправляется).
     pub selection_note: Option<String>,
+    /// Чем сейчас берётся выделение: wl-clipboard или X11.
+    #[serde(default)]
+    pub selection_via: Option<String>,
+    /// Значок показан на панели.
     pub tray: bool,
+    /// Значок включён, но панели (StatusNotifierWatcher) пока нет.
+    #[serde(default)]
+    pub tray_waiting: bool,
     pub devices: Vec<DeviceInfo>,
     pub actions: Vec<Action>,
     pub log: Vec<LogLine>,

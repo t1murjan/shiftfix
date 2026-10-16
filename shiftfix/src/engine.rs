@@ -44,6 +44,11 @@ pub trait Keys {
     fn backspace(&mut self, count: usize) -> Result<()>;
     fn type_strokes(&mut self, strokes: &[Stroke]) -> Result<()>;
     fn combo(&mut self, keys: &[KeyCode]) -> Result<()>;
+    /// Зажать `hold`, нажать `tap` `times` раз, отпустить (Super+Space+Space в GNOME).
+    fn chord(&mut self, hold: &[KeyCode], tap: KeyCode, times: usize) -> Result<()> {
+        let keys: Vec<KeyCode> = hold.iter().copied().chain([tap]).collect();
+        (0..times).try_for_each(|_| self.combo(&keys))
+    }
 }
 
 /// Переключение раскладки.
@@ -101,6 +106,9 @@ struct Held {
     modifier: bool,
 }
 
+/// Почему исправлять сейчас нельзя (`None` — можно): неактивный сеанс и т.п.
+pub type Guard = Box<dyn FnMut() -> Option<String>>;
+
 pub struct Engine {
     cfg: Config,
     backend: Box<dyn Backend>,
@@ -108,6 +116,7 @@ pub struct Engine {
     clip: Option<Box<dyn Selection>>,
     caps_on: Box<dyn FnMut() -> bool>,
     clock: Box<dyn Fn() -> f64>,
+    guard: Guard,
     keymap: Keymap,
     enabled: bool,
     buf: Vec<Stroke>,
@@ -141,6 +150,7 @@ impl Engine {
         clip: Option<Box<dyn Selection>>,
         caps_on: Box<dyn FnMut() -> bool>,
         clock: Box<dyn Fn() -> f64>,
+        guard: Guard,
     ) -> Self {
         Engine {
             cfg,
@@ -149,6 +159,7 @@ impl Engine {
             clip,
             caps_on,
             clock,
+            guard,
             keymap: Keymap::default(),
             enabled: true,
             buf: Vec::new(),
@@ -404,6 +415,16 @@ impl Engine {
             self.layout = self.current_layout();
             self.layout_dirty = false;
         }
+        // Мёртвая клавиша (´, ¨ в раскладках с акцентами) печатает не символ, а
+        // часть следующего: сколько символов стирать — уже не узнать.
+        let dead = self
+            .layout
+            .and_then(|i| self.keymap.layouts.get(i))
+            .is_some_and(|l| l.is_dead(key, shift));
+        if dead {
+            self.reset("мёртвая клавиша");
+            return;
+        }
         self.buf.push(Stroke {
             key,
             shift,
@@ -439,6 +460,12 @@ impl Engine {
     // ─── исправление ───
 
     pub fn trigger(&mut self) {
+        if let Some(reason) = (self.guard)() {
+            info!("⇧⇧ пропущен: {reason}");
+            self.sel_valid = false;
+            self.reset("исправлять нельзя");
+            return;
+        }
         let result = if self.sel_valid && self.clip.is_some() {
             self.fix_selection()
         } else if !self.buf.is_empty() {
@@ -831,6 +858,7 @@ mod tests {
                 Some(Box::new(FakeClip(w.clone()))),
                 Box::new(move || cw.borrow().caps),
                 Box::new(move || ck.get()),
+                Box::new(|| None),
             );
             Rig {
                 w,

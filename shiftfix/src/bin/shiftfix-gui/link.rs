@@ -11,11 +11,11 @@ use anyhow::{Context, Result, bail};
 use eframe::egui;
 use shiftfix::env;
 use shiftfix::ipc::{self, Request, Status};
-use shiftfix::proc;
+use shiftfix::{proc, service};
 
 use crate::app::{Toast, ToastKind};
 
-const UNIT: &str = "shiftfix.service";
+use shiftfix::service::UNIT;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Service {
@@ -204,22 +204,8 @@ fn daemon_binary() -> PathBuf {
     fs::canonicalize(&path).unwrap_or(path)
 }
 
-pub fn unit_text() -> String {
-    format!(
-        "[Unit]\n\
-         Description=shiftfix: double Shift fixes the layout of the last word or selection\n\
-         PartOf=graphical-session.target\n\
-         After=graphical-session.target\n\n\
-         [Service]\n\
-         ExecStart={}\n\
-         Restart=on-failure\n\
-         RestartSec=3\n\
-         # Код 2 — ошибка настройки (нет доступа к устройствам и т.п.), перезапуск не поможет.\n\
-         RestartPreventExitStatus=2\n\n\
-         [Install]\n\
-         WantedBy=graphical-session.target\n",
-        daemon_binary().display()
-    )
+fn unit_text() -> String {
+    service::unit_text(&daemon_binary(), service::graphical_target_active())
 }
 
 fn checked(out: proc::Output, what: &str) -> Result<()> {

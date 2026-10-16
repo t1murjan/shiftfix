@@ -19,6 +19,10 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
     ui.add_space(16.0);
     stats(app, ui, p);
     ui.add_space(16.0);
+    if app.status().is_some_and(|s| s.tray_waiting) {
+        tray_waiting(ui, p);
+        ui.add_space(16.0);
+    }
     try_it(app, ui, p);
     ui.add_space(16.0);
     recent(app, ui, p);
@@ -268,7 +272,11 @@ fn stats(app: &mut App, ui: &mut Ui, p: &Palette) {
                     } else {
                         "встроенные таблицы us/ru"
                     };
-                    ui.label(RichText::new(tables).size(12.5).color(p.weak));
+                    let note = match &s.selection_via {
+                        Some(via) => format!("через {via} · {tables}"),
+                        None => tables.to_owned(),
+                    };
+                    ui.label(RichText::new(note).size(12.5).color(p.weak));
                 }
                 Some(s) => {
                     ui.label(bold("Недоступно", 18.0).color(p.warning));
@@ -282,6 +290,24 @@ fn stats(app: &mut App, ui: &mut Ui, p: &Palette) {
                     ui.label(RichText::new("—").size(20.0).color(p.weak));
                 }
             },
+        );
+    });
+}
+
+fn tray_waiting(ui: &mut Ui, p: &Palette) {
+    card(ui, p, |ui| {
+        card_title(ui, p, icons::HOURGLASS, "Значок в трее ждёт панель");
+        ui.add(
+            egui::Label::new(
+                RichText::new(
+                    "Панель с системным треем (StatusNotifier) пока не появилась. Значок покажется \
+                     сам, когда она запустится; исправление работает и без него. В Hyprland \
+                     трей даёт, например, waybar с модулем tray; в GNOME нужно расширение \
+                     AppIndicator.",
+                )
+                .color(p.weak),
+            )
+            .wrap(),
         );
     });
 }

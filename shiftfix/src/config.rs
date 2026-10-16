@@ -31,7 +31,8 @@ switch_delay_ms = 40
 # Слова длиннее не трогаем (страховка от игр, где «слово» — это WASD).
 max_word_len = 50
 
-# Исправление выделенного текста (нужны wl-clipboard и PRIMARY-выделение).
+# Исправление выделенного текста (PRIMARY): в Wayland нужен wl-clipboard,
+# в X11 и GNOME — xclip.
 selection = true
 # paste — вставка через буфер обмена; type — перенабор клавишами (без буфера
 # обмена, но в нередактируемом месте нажатия уйдут как горячие клавиши сайта).
@@ -41,7 +42,7 @@ paste_keys = "KEY_LEFTCTRL+KEY_V"
 paste_restore_ms = 400
 restore_clipboard = true
 
-# auto | kde | hyprland | sway | hotkey
+# auto | kde | gnome | hyprland | sway | x11 | hotkey
 backend = "auto"
 # Только для backend = "hotkey": сочетание переключения раскладки и раскладки по порядку.
 switch_hotkey = "KEY_LEFTMETA+KEY_SPACE"
@@ -203,8 +204,10 @@ pub enum SelectionMethod {
 pub enum BackendKind {
     Auto,
     Kde,
+    Gnome,
     Hyprland,
     Sway,
+    X11,
     Hotkey,
 }
 
@@ -261,10 +264,14 @@ impl Config {
         let backend = match raw.backend.as_str() {
             "auto" => BackendKind::Auto,
             "kde" => BackendKind::Kde,
+            "gnome" => BackendKind::Gnome,
             "hyprland" => BackendKind::Hyprland,
             "sway" => BackendKind::Sway,
+            "x11" => BackendKind::X11,
             "hotkey" => BackendKind::Hotkey,
-            other => bail!("backend = {other:?}: допустимо auto, kde, hyprland, sway или hotkey"),
+            other => bail!(
+                "backend = {other:?}: допустимо auto, kde, gnome, hyprland, sway, x11 или hotkey"
+            ),
         };
         for (device, role) in &raw.devices {
             if crate::devices::Role::parse(role).is_none() {

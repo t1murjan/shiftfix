@@ -1,24 +1,23 @@
-//! Виртуальная клавиатура uinput, слежение за PRIMARY и сигналами.
+//! Виртуальная клавиатура uinput и сигналы.
 
-use std::io::{BufRead, BufReader, Read};
-use std::os::unix::process::CommandExt;
-use std::process::Stdio;
 use std::sync::mpsc::Sender;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use evdev::uinput::VirtualDevice;
-use evdev::{AttributeSet, EventType, InputEvent, KeyCode};
+use evdev::{AttributeSet, BusType, EventType, InputEvent, InputId, KeyCode};
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM, SIGUSR1};
 use signal_hook::iterator::Signals;
 
 use crate::daemon::Msg;
 use crate::devices::UINPUT_NAME;
 use crate::engine::{Keys, Stroke};
-use crate::env;
 
-// ─── Виртуальная клавиатура ─────────────────────────────────────────────────
+/// Производитель 0x0FAC keyd считает своим и не перехватывает: иначе он
+/// применил бы свои замены клавиш к уже заменённым нажатиям ещё раз.
+pub const UINPUT_VENDOR: u16 = 0x0fac;
+pub const UINPUT_PRODUCT: u16 = 0x5f5f;
 
 pub struct Injector {
     dev: VirtualDevice,
@@ -31,8 +30,9 @@ impl Injector {
         for code in KeyCode::KEY_ESC.code()..=KeyCode::KEY_MICMUTE.code() {
             keys.insert(KeyCode::new(code));
         }
+        let id = InputId::new(BusType::BUS_VIRTUAL, UINPUT_VENDOR, UINPUT_PRODUCT, 1);
         let dev = VirtualDevice::builder()
-            .and_then(|b| b.name(UINPUT_NAME).with_keys(&keys))
+            .and_then(|b| b.name(UINPUT_NAME).input_id(id).with_keys(&keys))
             .and_then(evdev::uinput::VirtualDeviceBuilder::build)
             .context("нет доступа к /dev/uinput — нужно udev-правило из install.sh")?;
         thread::sleep(Duration::from_millis(300)); // композитору нужно время, чтобы подхватить устройство
@@ -87,101 +87,18 @@ impl Keys for Injector {
         let released = keys.iter().rev().try_for_each(|&k| self.emit(k, 0));
         pressed.and(released)
     }
-}
 
-// ─── PRIMARY ────────────────────────────────────────────────────────────────
-
-/// `wl-paste --primary --watch` печатает размер каждого нового выделения.
-/// Сессии ещё нет или wl-clipboard не установлен — ждём и пробуем снова.
-pub fn spawn_primary_watcher(tx: Sender<Msg>) {
-    let spawned = thread::Builder::new()
-        .name("primary".into())
-        .spawn(move || watch_primary(&tx));
-    if let Err(err) = spawned {
-        log::warn!("поток PRIMARY не запустился: {err}");
-    }
-}
-
-fn watch_primary(tx: &Sender<Msg>) {
-    let mut failures = 0u32;
-    loop {
-        let wait = if env::wayland_display().is_none() {
-            Some(("нет Wayland-сессии", 5))
-        } else if !env::in_path("wl-paste") {
-            Some(("не установлен wl-clipboard", 30))
-        } else {
-            None
-        };
-        if let Some((reason, secs)) = wait {
-            if tx.send(Msg::Selection(Some(reason.into()))).is_err() {
-                return;
-            }
-            thread::sleep(Duration::from_secs(secs));
-            continue;
-        }
-        let started = Instant::now();
-        let mut cmd = env::session_command("wl-paste");
-        cmd.args(["--primary", "--watch", "sh", "-c", "wc -c"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        // SAFETY: в pre_exec только async-signal-safe prctl: wl-paste завершится вместе с этим потоком.
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM as libc::c_ulong);
-                Ok(())
-            });
-        }
-        let mut child = match cmd.spawn() {
-            Ok(child) => child,
-            Err(err) => {
-                let _ = tx.send(Msg::Selection(Some(format!("wl-paste: {err}"))));
-                thread::sleep(Duration::from_secs(30));
-                continue;
-            }
-        };
-        let mut stderr = child.stderr.take().expect("stderr");
-        let errors = thread::spawn(move || {
-            let mut text = String::new();
-            let _ = stderr.read_to_string(&mut text);
-            text
+    fn chord(&mut self, hold: &[KeyCode], tap: KeyCode, times: usize) -> Result<()> {
+        let pressed = hold.iter().try_for_each(|&k| self.emit(k, 1));
+        let tapped = pressed.and_then(|()| {
+            (0..times).try_for_each(|_| {
+                self.emit(tap, 1)?;
+                self.emit(tap, 0)
+            })
         });
-        let mut announced = false;
-        for line in BufReader::new(child.stdout.take().expect("stdout")).lines() {
-            let Ok(line) = line else { break };
-            if !announced {
-                announced = true;
-                failures = 0;
-                if tx.send(Msg::Selection(None)).is_err() {
-                    let _ = child.kill();
-                    return;
-                }
-            }
-            if started.elapsed() < Duration::from_millis(700) {
-                continue; // первое событие — уже существующее выделение
-            }
-            if let Ok(size) = line.trim().parse()
-                && tx.send(Msg::Primary(size)).is_err()
-            {
-                let _ = child.kill();
-                return;
-            }
-        }
-        let _ = child.wait();
-        let err = errors.join().unwrap_or_default();
-        failures += 1;
-        let reason = if err.trim().is_empty() {
-            "wl-paste завершился".to_owned()
-        } else {
-            err.trim().to_owned()
-        };
-        if tx.send(Msg::Selection(Some(reason))).is_err() {
-            return;
-        }
-        // Композитор перезапущен или не умеет PRIMARY — пробуем реже и реже.
-        thread::sleep(Duration::from_secs(
-            2u64.saturating_pow(failures.min(6)).min(60),
-        ));
+        // Модификаторы отпускаем в любом случае — не оставить их зажатыми.
+        let released = hold.iter().rev().try_for_each(|&k| self.emit(k, 0));
+        tapped.and(released)
     }
 }
 

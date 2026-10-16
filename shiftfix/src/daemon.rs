@@ -20,9 +20,11 @@ use crate::devices::Registry;
 use crate::engine::Engine;
 use crate::input::Injector;
 use crate::ipc::{Request, Response, Status};
+use crate::selection::{self, Active};
+use crate::session::{self, Logind};
 use crate::tray::TrayIcon;
 use crate::xkb::Keymap;
-use crate::{backend, clipboard, env, input, ipc, logbuf, proc, xkb};
+use crate::{backend, env, input, ipc, logbuf, proc, xkb};
 
 pub enum Msg {
     Key {
@@ -46,8 +48,8 @@ pub enum Msg {
     },
     /// PRIMARY изменился; размер нового выделения в байтах.
     Primary(usize),
-    /// Слежение за PRIMARY: `None` — работает, иначе причина, почему нет.
-    Selection(Option<String>),
+    /// Слежение за PRIMARY: `Ok(чем)` — работает, иначе причина, почему нет.
+    Selection(Result<&'static str, String>),
     Keymap(Keymap),
     TogglePause,
     Reload,
@@ -95,6 +97,9 @@ struct Daemon {
     tray: Option<TrayIcon>,
     tx: Sender<Msg>,
     selection_note: Option<String>,
+    /// Через что сейчас следим за выделением.
+    selection_via: Option<&'static str>,
+    selection_active: Active,
     watching_primary: bool,
 }
 
@@ -104,12 +109,16 @@ pub fn run(path: PathBuf, cfg: Config) -> Result<()> {
     let (tx, rx) = mpsc::channel();
 
     let registry = Registry::new(&cfg, tx.clone());
-    registry.scan();
+    let stats = registry.scan();
     if registry.keyboard_count() == 0 {
-        bail!(
-            "не видно ни одной клавиатуры — добавь себя в группу input \
-             (sudo usermod -aG input $USER) и перезагрузись"
-        );
+        if stats.opened == 0 && stats.denied > 0 {
+            bail!(
+                "нет доступа к /dev/input — добавь себя в группу input \
+                 (sudo usermod -aG input $USER) и перезагрузись"
+            );
+        }
+        // Bluetooth- и беспроводные клавиатуры подключаются и после входа.
+        warn!("клавиатур пока нет — жду подключения");
     }
     let scanner = Arc::clone(&registry);
     thread::Builder::new()
@@ -128,13 +137,16 @@ pub fn run(path: PathBuf, cfg: Config) -> Result<()> {
     });
 
     let leds = Arc::clone(&registry);
+    let selection_active = Active::default();
+    let mut logind = Logind::default();
     let engine = Engine::new(
         cfg.clone(),
         backend::make(&cfg),
         Box::new(injector),
-        clipboard::make(&cfg),
+        selection::make(&cfg, &selection_active),
         Box::new(move || leds.caps_led()),
         Box::new(monotonic),
+        Box::new(move || session::blocked(&mut logind)),
     );
     let mut daemon = Daemon {
         path,
@@ -143,6 +155,8 @@ pub fn run(path: PathBuf, cfg: Config) -> Result<()> {
         registry,
         tx,
         selection_note: Some("запускается".into()),
+        selection_via: None,
+        selection_active,
         watching_primary: false,
         cfg,
     };
@@ -179,7 +193,7 @@ impl Daemon {
             self.tray = None;
         }
         if self.cfg.selection && !self.watching_primary {
-            input::spawn_primary_watcher(self.tx.clone());
+            selection::spawn_watcher(self.tx.clone(), self.selection_active.clone());
             self.watching_primary = true;
         }
     }
@@ -214,7 +228,8 @@ impl Daemon {
         if backend_changed {
             self.engine.set_backend(backend::make(&cfg));
         }
-        self.engine.set_clip(clipboard::make(&cfg));
+        self.engine
+            .set_clip(selection::make(&cfg, &self.selection_active));
         self.engine.set_config(cfg.clone());
         self.registry.apply(&cfg);
         self.cfg = cfg;
@@ -235,9 +250,14 @@ impl Daemon {
             selection_note: if self.engine.selection_enabled() {
                 self.selection_note.clone()
             } else {
-                Some("выключено в настройках или нет wl-clipboard".into())
+                Some("выключено в настройках".into())
             },
-            tray: self.tray.is_some(),
+            selection_via: self
+                .selection_via
+                .filter(|_| self.engine.selection_enabled())
+                .map(Into::into),
+            tray: self.tray.as_ref().is_some_and(TrayIcon::visible),
+            tray_waiting: self.tray.as_ref().is_some_and(|tray| !tray.visible()),
             devices: self.registry.snapshot(),
             actions: self.engine.actions(),
             log: logbuf::recent(),
@@ -257,12 +277,18 @@ impl Daemon {
                 self.engine.resync(self.registry.held_keys());
             }
             Msg::Primary(size) => self.engine.primary_changed(size),
-            Msg::Selection(note) => {
-                if note != self.selection_note {
-                    match &note {
-                        None => info!("слежу за выделением (PRIMARY)"),
-                        Some(reason) => warn!("выделение не отслеживается: {reason}"),
+            Msg::Selection(state) => {
+                let (via, note) = match state {
+                    Ok(via) => (Some(via), None),
+                    Err(reason) => (None, Some(reason)),
+                };
+                if via != self.selection_via || note != self.selection_note {
+                    match (&via, &note) {
+                        (Some(via), _) => info!("слежу за выделением (PRIMARY) через {via}"),
+                        (None, Some(reason)) => warn!("выделение не отслеживается: {reason}"),
+                        (None, None) => {}
                     }
+                    self.selection_via = via;
                     self.selection_note = note;
                 }
             }
@@ -366,6 +392,7 @@ mod tests {
             None,
             Box::new(|| false),
             Box::new(monotonic),
+            Box::new(|| None),
         );
         Daemon {
             path,
@@ -375,6 +402,8 @@ mod tests {
             tray: None,
             tx,
             selection_note: None,
+            selection_via: None,
+            selection_active: Active::default(),
             watching_primary: false,
         }
     }

@@ -13,7 +13,9 @@ use log::error;
 use shiftfix::config::{self, Config};
 use shiftfix::devices::{self, Role};
 use shiftfix::ipc::{self, Request};
-use shiftfix::{backend, env, logbuf, proc, xkb};
+use shiftfix::selection::{self, Choice};
+use shiftfix::session::Logind;
+use shiftfix::{backend, env, logbuf, proc, service, x11, xkb};
 
 const USAGE: &str = "\
 shiftfix — двойной Shift исправляет раскладку последнего слова или выделенного текста
@@ -29,6 +31,7 @@ shiftfix — двойной Shift исправляет раскладку пос
   --quit            остановить службу
   --check           проверить окружение и выйти
   --print-config    напечатать конфиг по умолчанию
+  --print-unit      напечатать юнит systemd user для этого бинарника
   --config ПУТЬ     конфиг (по умолчанию ~/.config/shiftfix/config.toml)
   --debug           подробный лог (набранный текст в лог не попадает)
   -V, --version     версия
@@ -42,6 +45,7 @@ enum Command {
     Run,
     Check,
     PrintConfig,
+    PrintUnit,
     Help,
     Version,
     Status,
@@ -73,6 +77,7 @@ fn parse_args() -> Result<Args> {
             }
             Some("--check") => Command::Check,
             Some("--print-config") => Command::PrintConfig,
+            Some("--print-unit") => Command::PrintUnit,
             Some("-h" | "--help") => Command::Help,
             Some("-V" | "--version") => Command::Version,
             Some("--status") => Command::Status,
@@ -112,6 +117,7 @@ fn main() -> ExitCode {
             print!("{}", config::DEFAULT_CONFIG);
             return ExitCode::SUCCESS;
         }
+        Command::PrintUnit => return print_unit(),
         Command::Status => return status(),
         Command::Send(what) => return send(what),
         Command::Run | Command::Check => {}
@@ -133,6 +139,22 @@ fn main() -> ExitCode {
         Err(err) => {
             error!("{err:#}");
             ExitCode::from(2) // systemd не перезапускает (RestartPreventExitStatus=2)
+        }
+    }
+}
+
+fn print_unit() -> ExitCode {
+    match std::env::current_exe() {
+        Ok(exe) => {
+            print!(
+                "{}",
+                service::unit_text(&exe, service::graphical_target_active())
+            );
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("shiftfix: не найден путь к бинарнику: {err}");
+            ExitCode::FAILURE
         }
     }
 }
@@ -187,9 +209,13 @@ fn status() -> ExitCode {
                 "клавиатур: {keyboards}, устройств всего: {}",
                 s.devices.len()
             );
-            match s.selection_note {
-                None => println!("выделение: исправляется"),
-                Some(note) => println!("выделение: не исправляется ({note})"),
+            match (s.selection_note, s.selection_via) {
+                (None, Some(via)) => println!("выделение: исправляется (через {via})"),
+                (None, None) => println!("выделение: исправляется"),
+                (Some(note), _) => println!("выделение: не исправляется ({note})"),
+            }
+            if s.tray_waiting {
+                println!("трей: жду появления панели");
             }
             ExitCode::SUCCESS
         }
@@ -209,6 +235,18 @@ fn ok(msg: impl Display) {
 fn bad(problems: &mut usize, msg: impl Display) {
     *problems += 1;
     println!("  ✗ {msg}");
+}
+
+/// В X11 keymap не присылает композитор: служба строит её из `_XKB_RULES_NAMES`.
+fn x11_keymap() -> Option<String> {
+    if env::wayland_display().is_some() {
+        return None;
+    }
+    let names = x11::rules_names(&x11::connect().ok()?).ok()?;
+    let part = |i: usize| names.get(i).map(String::as_str).unwrap_or_default();
+    let keymap = xkb::keymap_from_names(part(2), part(3), part(4))?;
+    let list: Vec<&str> = keymap.layouts.iter().map(|l| l.name.as_str()).collect();
+    Some(list.join(", "))
 }
 
 fn check(cfg: &Config) -> ExitCode {
@@ -297,32 +335,61 @@ fn check(cfg: &Config) -> ExitCode {
             let names: Vec<&str> = keymap.layouts.iter().map(|l| l.name.as_str()).collect();
             ok(format!("keymap композитора: {}", names.join(", ")));
         }
-        None => println!(
-            "  · keymap композитора недоступна — для выделения будут встроенные таблицы us/ru"
+        None => match x11_keymap() {
+            Some(names) => ok(format!("keymap X11: {names}")),
+            None => {
+                println!("  · keymap недоступна — для выделения будут встроенные таблицы us/ru")
+            }
+        },
+    }
+
+    println!("Сеанс");
+    if env::graphical_session() {
+        ok("графический сеанс найден");
+    } else {
+        bad(&mut problems, "графический сеанс не найден");
+    }
+    match Logind::default().active() {
+        Some(true) => ok("сеанс активен (logind)"),
+        Some(false) => bad(
+            &mut problems,
+            "сеанс неактивен (logind): работает другой пользователь или открыта консоль — \
+             исправления не выполняются",
         ),
+        None => println!("  · logind недоступен — активность сеанса не проверяется"),
     }
 
     println!("Выделение");
+    let xclip = if env::in_path("xclip") {
+        "xclip есть"
+    } else {
+        "xclip нет"
+    };
+    let wl_clipboard = if env::in_path("wl-paste") && env::in_path("wl-copy") {
+        "wl-clipboard есть"
+    } else {
+        "wl-clipboard нет"
+    };
+    println!("  · {wl_clipboard}, {xclip}");
     if !cfg.selection {
         println!("  · выключено в конфиге");
-    } else if !(env::in_path("wl-paste") && env::in_path("wl-copy")) {
-        bad(&mut problems, "нет wl-clipboard (пакет wl-clipboard)");
-    } else if env::wayland_display().is_none() {
-        bad(
-            &mut problems,
-            "не найден сокет Wayland — это не Wayland-сессия?",
-        );
     } else {
-        match proc::run("wl-paste", &["--primary", "--list-types"], proc::TIMEOUT) {
-            Ok(out) => {
-                let reason = out.stderr.to_lowercase();
-                if out.ok || reason.contains("nothing") || reason.contains("no selection") {
-                    ok("PRIMARY читается");
-                } else {
-                    bad(&mut problems, format!("PRIMARY недоступен: {}", out.stderr));
+        match selection::decide() {
+            Choice::Wait(reason, _) => bad(&mut problems, reason),
+            Choice::X11 => ok("PRIMARY берётся через X11 (XFixes + xclip)"),
+            Choice::Wayland => {
+                match proc::run("wl-paste", &["--primary", "--list-types"], proc::TIMEOUT) {
+                    Ok(out) => {
+                        let reason = out.stderr.to_lowercase();
+                        if out.ok || reason.contains("nothing") || reason.contains("no selection") {
+                            ok("PRIMARY читается через wl-clipboard");
+                        } else {
+                            bad(&mut problems, format!("PRIMARY недоступен: {}", out.stderr));
+                        }
+                    }
+                    Err(err) => bad(&mut problems, format!("{err:#}")),
                 }
             }
-            Err(err) => bad(&mut problems, format!("{err:#}")),
         }
     }
 
