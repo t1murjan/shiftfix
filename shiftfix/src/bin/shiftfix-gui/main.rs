@@ -154,6 +154,8 @@ fn main() -> eframe::Result {
         return Ok(());
     };
 
+    // Портал отвечает не сразу: спрашиваем, пока создаётся окно.
+    let system = theme::SystemWatch::start();
     let icon = egui::IconData {
         rgba: shiftfix::icon::rgba(128, true),
         width: 128,
@@ -176,7 +178,8 @@ fn main() -> eframe::Result {
             listen_for_raise(cc.egui_ctx.clone());
             theme::install_fonts(&cc.egui_ctx);
             theme::apply_style(&cc.egui_ctx);
-            Ok(Box::new(app::App::new(cc, page, forced_theme)))
+            system.attach(&cc.egui_ctx);
+            Ok(Box::new(app::App::new(cc, page, forced_theme, system)))
         }),
     );
     if let Err(err) = &result {

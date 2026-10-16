@@ -13,6 +13,7 @@ use egui_phosphor::regular as icons;
 use shiftfix::config::{Config, Settings, ThemeMode, ThemeSettings};
 use shiftfix::devices::{self, DeviceInfo, Role};
 use shiftfix::ipc::{Request, Status};
+use shiftfix::portal::PortalState;
 
 use crate::link::{Link, ServiceAction, Snapshot};
 use crate::pages;
@@ -122,7 +123,11 @@ pub struct App {
     theme_path: PathBuf,
     /// Режим из `--theme`: только на этот запуск.
     forced_mode: Option<ThemeMode>,
-    /// Что сообщила система о теме и акценте.
+    /// Поток портала: тема и акцент системы.
+    watch: theme::SystemWatch,
+    /// Ответ портала: «ещё не ответил» и «недоступен» — для подсказок в окне.
+    pub portal: PortalState,
+    /// Что сообщила система о теме и акценте (из `portal`).
     pub system: theme::System,
     /// Палитра, уже применённая к egui.
     applied: Option<Palette>,
@@ -137,6 +142,7 @@ impl App {
         cc: &eframe::CreationContext<'_>,
         page: Page,
         forced_mode: Option<ThemeMode>,
+        watch: theme::SystemWatch,
     ) -> App {
         let ctx = &cc.egui_ctx;
         let (toast_tx, toast_rx) = mpsc::channel();
@@ -158,6 +164,7 @@ impl App {
             }
         };
         theme::migrate_legacy(&theme_path, &mut settings.theme);
+        let portal = watch.state();
         App {
             page,
             link,
@@ -174,7 +181,9 @@ impl App {
             logo,
             theme_path,
             forced_mode,
-            system: theme::System::default(),
+            watch,
+            system: theme::System::from(&portal),
+            portal,
             applied: None,
             theme_save_at: None,
             theme_save_failed: false,
@@ -215,6 +224,12 @@ impl App {
 
     /// Цвета кадра: применить к egui, если тема изменилась, и вовремя записать её.
     fn palette(&mut self, ctx: &egui::Context) -> Palette {
+        // Система сменила тему — поток портала уже попросил перерисовку.
+        let portal = self.watch.state();
+        if portal != self.portal {
+            self.system = theme::System::from(&portal);
+            self.portal = portal;
+        }
         let p = theme::resolve(&self.settings.theme, &self.system, self.forced_mode);
         if self.applied != Some(p) {
             theme::apply_palette(ctx, &p);

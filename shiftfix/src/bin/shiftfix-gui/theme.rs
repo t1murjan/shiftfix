@@ -7,14 +7,15 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::time::{Duration, Instant};
 
 use eframe::egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Shadow, Stroke,
     TextStyle, Theme, ThemePreference, Visuals, ecolor, vec2,
 };
 use shiftfix::config::{ThemeMode, ThemeSettings};
+use shiftfix::portal::{self, PortalState, Scheme};
 
 /// Цвета окна для одного варианта палитры (светлого или тёмного).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -388,6 +389,88 @@ pub struct System {
     pub dark: Option<bool>,
     /// accent-color, если система его сообщает.
     pub accent: Option<Color32>,
+}
+
+/// Пока портал не ответил (или недоступен), цвета — как без портала:
+/// тёмная тема и свой акцент. Чем это состояние отличается от «недоступен»,
+/// окно смотрит в самом `PortalState`.
+impl From<&PortalState> for System {
+    fn from(state: &PortalState) -> System {
+        let PortalState::Ready(a) = state else {
+            return System::default();
+        };
+        System {
+            available: true,
+            dark: a.scheme.and_then(|scheme| match scheme {
+                Scheme::Dark => Some(true),
+                Scheme::Light => Some(false),
+                Scheme::NoPreference => None,
+            }),
+            accent: a.accent.map(|[r, g, b]| Color32::from_rgb(r, g, b)),
+        }
+    }
+}
+
+/// Сколько окно при запуске ждёт первый ответ портала, чтобы не мигнуть
+/// тёмной темой. Дольше — открываемся тёмными, тема сменится на лету.
+const FIRST_ANSWER: Duration = Duration::from_millis(250);
+
+/// Тема системы из портала: поток портала пишет, кадр читает.
+pub struct SystemWatch {
+    shared: Arc<Shared>,
+    started: Instant,
+}
+
+#[derive(Default)]
+struct Shared {
+    state: Mutex<PortalState>,
+    answered: Condvar,
+    /// Окно, которое надо перерисовать при смене темы системы.
+    ctx: OnceLock<egui::Context>,
+}
+
+fn lock(state: &Mutex<PortalState>) -> MutexGuard<'_, PortalState> {
+    state.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+impl SystemWatch {
+    /// Начать слушать портал (сессионная шина) — ещё до создания окна.
+    pub fn start() -> SystemWatch {
+        let shared = Arc::new(Shared::default());
+        let writer = Arc::clone(&shared);
+        let spawned = portal::spawn(None, move |state| {
+            *lock(&writer.state) = state;
+            writer.answered.notify_all();
+            if let Some(ctx) = writer.ctx.get() {
+                ctx.request_repaint();
+            }
+        });
+        if let Err(err) = spawned {
+            log::warn!("портал настроек: поток не запущен: {err} — тёмная тема");
+            *lock(&shared.state) = PortalState::Unavailable(err.to_string());
+        }
+        SystemWatch {
+            shared,
+            started: Instant::now(),
+        }
+    }
+
+    /// Перерисовывать окно, когда сменится тема системы. Первый ответ
+    /// подождать, но не дольше `FIRST_ANSWER` с запуска.
+    pub fn attach(&self, ctx: &egui::Context) {
+        let _ = self.shared.ctx.set(ctx.clone());
+        let left = FIRST_ANSWER.saturating_sub(self.started.elapsed());
+        let guard = lock(&self.shared.state);
+        let _ = self
+            .shared
+            .answered
+            .wait_timeout_while(guard, left, |s| *s == PortalState::Pending);
+    }
+
+    /// Что портал сообщил на сейчас.
+    pub fn state(&self) -> PortalState {
+        lock(&self.shared.state).clone()
+    }
 }
 
 /// Итоговые цвета окна. `forced` — режим из `--theme`, он перекрывает `t.mode`.
@@ -986,6 +1069,33 @@ mod tests {
             ..light
         };
         assert!(resolve(&t, &stale, None).dark);
+    }
+
+    #[test]
+    fn system_from_portal() {
+        use shiftfix::portal::Appearance;
+        let t = ThemeSettings {
+            system_accent: true,
+            ..ThemeSettings::default()
+        };
+        let ready =
+            |scheme, accent| System::from(&PortalState::Ready(Appearance { scheme, accent }));
+        // Ещё не ответил или недоступен — как без портала: тёмная.
+        for state in [PortalState::Pending, PortalState::Unavailable("нет".into())] {
+            let sys = System::from(&state);
+            assert_eq!(sys, System::default(), "{state:?}");
+            assert_eq!(resolve(&t, &sys, None), find("breeze").dark, "{state:?}");
+        }
+        assert!(!resolve(&t, &ready(Some(Scheme::Light), None), None).dark);
+        assert!(resolve(&t, &ready(Some(Scheme::Dark), None), None).dark);
+        // 0 («нет предпочтения») и неизвестный ключ — тёмная (решение автора).
+        assert!(resolve(&t, &ready(Some(Scheme::NoPreference), None), None).dark);
+        assert!(resolve(&t, &ready(None, None), None).dark);
+        // Акцент системы.
+        let sys = ready(Some(Scheme::Light), Some([255, 128, 0]));
+        assert!(sys.available);
+        assert_eq!(sys.accent, Some(rgb(0xff8000)));
+        assert_eq!(resolve(&t, &sys, None).accent, rgb(0xff8000));
     }
 
     #[test]

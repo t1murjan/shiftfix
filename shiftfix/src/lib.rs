@@ -15,6 +15,7 @@ pub mod input;
 pub mod ipc;
 pub mod keys;
 pub mod logbuf;
+pub mod portal;
 pub mod proc;
 pub mod selection;
 pub mod service;
