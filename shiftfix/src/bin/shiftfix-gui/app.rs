@@ -10,13 +10,13 @@ use eframe::egui::{
     ScrollArea, Sense, Stroke, TextureHandle, TextureOptions, Ui, load::SizedTexture, vec2,
 };
 use egui_phosphor::regular as icons;
-use shiftfix::config::{Config, Settings};
+use shiftfix::config::{Config, Settings, ThemeMode, ThemeSettings};
 use shiftfix::devices::{self, DeviceInfo, Role};
 use shiftfix::ipc::{Request, Status};
 
 use crate::link::{Link, ServiceAction, Snapshot};
 use crate::pages;
-use crate::theme::{self, Palette, ThemeChoice};
+use crate::theme::{self, Palette};
 use crate::widgets::{self, bold};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,6 +69,9 @@ impl Page {
     }
 }
 
+/// Тема пишется в файл не сразу: пипетка меняет цвет каждый кадр.
+const THEME_SAVE_DELAY: Duration = Duration::from_millis(400);
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ToastKind {
     Info,
@@ -115,21 +118,46 @@ pub struct App {
     pub checking: bool,
     local_devices: Option<(Instant, Vec<DeviceInfo>)>,
     logo: TextureHandle,
-    theme: ThemeChoice,
+    /// Конфиг, в котором хранится тема (тот же, откуда прочитаны настройки).
+    theme_path: PathBuf,
+    /// Режим из `--theme`: только на этот запуск.
+    forced_mode: Option<ThemeMode>,
+    /// Что сообщила система о теме и акценте.
+    pub system: theme::System,
+    /// Палитра, уже применённая к egui.
+    applied: Option<Palette>,
+    /// Когда записать изменённую тему.
+    theme_save_at: Option<Instant>,
+    /// О неудачной записи темы уже сказали.
+    theme_save_failed: bool,
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, page: Page, theme: ThemeChoice) -> App {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        page: Page,
+        forced_mode: Option<ThemeMode>,
+    ) -> App {
         let ctx = &cc.egui_ctx;
         let (toast_tx, toast_rx) = mpsc::channel();
         let link = Link::start(ctx, toast_tx);
         let logo_image =
             egui::ColorImage::from_rgba_unmultiplied([96, 96], &shiftfix::icon::rgba(96, true));
         let logo = ctx.load_texture("logo", logo_image, TextureOptions::LINEAR);
-        let (settings, settings_error) = match Settings::load(&Config::default_path()) {
+        let theme_path = Config::default_path();
+        let (mut settings, settings_error) = match Settings::load(&theme_path) {
             Ok(s) => (s, None),
-            Err(err) => (Settings::default(), Some(format!("{err:#}"))),
+            Err(err) => {
+                // Ошибка в другом параметре — тему всё равно берём из файла.
+                let theme = ThemeSettings::load(&theme_path).unwrap_or_default();
+                let settings = Settings {
+                    theme,
+                    ..Settings::default()
+                };
+                (settings, Some(format!("{err:#}")))
+            }
         };
+        theme::migrate_legacy(&theme_path, &mut settings.theme);
         App {
             page,
             link,
@@ -144,8 +172,74 @@ impl App {
             checking: false,
             local_devices: None,
             logo,
-            theme,
+            theme_path,
+            forced_mode,
+            system: theme::System::default(),
+            applied: None,
+            theme_save_at: None,
+            theme_save_failed: false,
         }
+    }
+
+    /// Режим, в котором окно сейчас: `--theme` или из настроек.
+    pub fn theme_mode(&self) -> ThemeMode {
+        self.forced_mode.unwrap_or(self.settings.theme.mode)
+    }
+
+    /// Изменить тему: видно сразу, в файл — чуть позже и только секция `[theme]`.
+    /// «Сохранить» на странице настроек тема не включает.
+    pub fn set_theme(&mut self, change: impl FnOnce(&mut ThemeSettings)) {
+        let mut theme = self.settings.theme.clone();
+        change(&mut theme);
+        if theme == self.settings.theme {
+            return;
+        }
+        self.saved.theme = theme.clone();
+        self.settings.theme = theme;
+        self.theme_save_at = Some(Instant::now() + THEME_SAVE_DELAY);
+    }
+
+    fn save_theme(&mut self) {
+        self.theme_save_at = None;
+        match self.settings.theme.save(&self.theme_path) {
+            Ok(()) => self.theme_save_failed = false,
+            Err(err) => {
+                log::warn!("тема не сохранена: {err:#}");
+                if !self.theme_save_failed {
+                    self.theme_save_failed = true;
+                    self.toast(ToastKind::Error, format!("Тема не сохранилась: {err:#}"));
+                }
+            }
+        }
+    }
+
+    /// Цвета кадра: применить к egui, если тема изменилась, и вовремя записать её.
+    fn palette(&mut self, ctx: &egui::Context) -> Palette {
+        let p = theme::resolve(&self.settings.theme, &self.system, self.forced_mode);
+        if self.applied != Some(p) {
+            theme::apply_palette(ctx, &p);
+            if self.applied.is_none_or(|old| old.dark != p.dark) {
+                // Рамка окна в GNOME (CSD) — в тон.
+                let theme = if p.dark {
+                    egui::SystemTheme::Dark
+                } else {
+                    egui::SystemTheme::Light
+                };
+                ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(theme));
+            }
+            self.applied = Some(p);
+        }
+        let now = Instant::now();
+        let pointer_down = ctx.input(|i| i.pointer.any_down());
+        if theme::save_due(self.theme_save_at, now, pointer_down) {
+            self.save_theme();
+        } else if let Some(at) = self.theme_save_at {
+            ctx.request_repaint_after(
+                at.saturating_duration_since(now)
+                    .max(Duration::from_millis(50)),
+            );
+        }
+        p
     }
 
     pub fn config_path(&self) -> PathBuf {
@@ -274,16 +368,13 @@ impl App {
         }
         ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
             ui.horizontal(|ui| {
-                for (choice, icon, hint) in [
-                    (
-                        ThemeChoice::System,
-                        icons::CIRCLE_HALF,
-                        "Тема как в системе",
-                    ),
-                    (ThemeChoice::Light, icons::SUN, "Светлая тема"),
-                    (ThemeChoice::Dark, icons::MOON, "Тёмная тема"),
+                let current = self.theme_mode();
+                for (mode, icon, hint) in [
+                    (ThemeMode::System, icons::CIRCLE_HALF, "Тема как в системе"),
+                    (ThemeMode::Light, icons::SUN, "Светлая тема"),
+                    (ThemeMode::Dark, icons::MOON, "Тёмная тема"),
                 ] {
-                    let selected = self.theme == choice;
+                    let selected = current == mode;
                     let text =
                         widgets::icon(icon, 16.0).color(if selected { p.accent } else { p.weak });
                     let button = egui::Button::new(text)
@@ -296,8 +387,8 @@ impl App {
                         .corner_radius(CornerRadius::same(8))
                         .min_size(vec2(34.0, 30.0));
                     if ui.add(button).on_hover_text(hint).clicked() {
-                        self.theme = choice;
-                        theme::set_choice(ui.ctx(), choice, true);
+                        self.forced_mode = None;
+                        self.set_theme(|t| t.mode = mode);
                     }
                 }
             });
@@ -420,7 +511,7 @@ impl eframe::App for App {
         while let Ok(toast) = self.toast_rx.try_recv() {
             self.toasts.push(toast);
         }
-        let p = theme::current(ui.ctx());
+        let p = self.palette(ui.ctx());
         egui::Panel::left("nav")
             .exact_size(236.0)
             .resizable(false)
@@ -459,6 +550,12 @@ impl eframe::App for App {
             });
         let ctx = ui.ctx().clone();
         self.draw_toasts(&ctx, &p);
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if self.theme_save_at.is_some() {
+            self.save_theme();
+        }
     }
 }
 

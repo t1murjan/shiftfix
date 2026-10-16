@@ -25,6 +25,8 @@ const USAGE: &str = "\
 shiftfix-gui — настройки и состояние shiftfix
 
 Использование: shiftfix-gui [--page home|devices|settings|help|log] [--theme system|light|dark]
+
+  --theme   режим оформления только на этот запуск (в настройки не пишется)
 ";
 
 /// Окно создано: паника после этого — ошибка в работающем окне, а не при запуске.
@@ -101,6 +103,7 @@ fn single_instance() -> Option<Option<File>> {
 }
 
 fn main() -> eframe::Result {
+    shiftfix::logbuf::init(false);
     let mut page = app::Page::Home;
     let mut forced_theme = None;
     let mut args = std::env::args().skip(1);
@@ -113,7 +116,7 @@ fn main() -> eframe::Result {
                     std::process::exit(2);
                 }
             },
-            "--theme" => match args.next().as_deref().and_then(theme::ThemeChoice::parse) {
+            "--theme" => match args.next().as_deref().and_then(theme::parse_mode) {
                 Some(t) => forced_theme = Some(t),
                 None => {
                     eprintln!("{USAGE}");
@@ -173,9 +176,7 @@ fn main() -> eframe::Result {
             listen_for_raise(cc.egui_ctx.clone());
             theme::install_fonts(&cc.egui_ctx);
             theme::apply_style(&cc.egui_ctx);
-            let choice = forced_theme.unwrap_or_else(theme::saved_choice);
-            theme::set_choice(&cc.egui_ctx, choice, false);
-            Ok(Box::new(app::App::new(cc, page, choice)))
+            Ok(Box::new(app::App::new(cc, page, forced_theme)))
         }),
     );
     if let Err(err) = &result {

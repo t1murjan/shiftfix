@@ -318,9 +318,12 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
                 app.settings = app.saved.clone();
             }
             if widgets::button(ui, p, icons::BROOM, "По умолчанию", false).clicked() {
+                // Роли устройств и оформление сбрасываются отдельно.
                 let devices = std::mem::take(&mut app.settings.devices);
+                let theme = app.settings.theme.clone();
                 app.settings = Settings {
                     devices,
+                    theme,
                     ..Settings::default()
                 };
                 app.toast(

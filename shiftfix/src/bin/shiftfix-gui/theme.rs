@@ -3,9 +3,12 @@
 //! Палитры — данные (`PALETTES`); итоговые цвета для кадра даёт `resolve`:
 //! режим (светлая, тёмная, как в системе), палитра варианта и акцент.
 
-use std::path::Path;
+use std::fs;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
+use std::time::Instant;
 
 use eframe::egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Shadow, Stroke,
@@ -474,76 +477,95 @@ pub fn visuals(p: &Palette) -> Visuals {
     v
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ThemeChoice {
-    System,
-    Light,
-    Dark,
-}
-
-impl ThemeChoice {
-    pub fn parse(s: &str) -> Option<ThemeChoice> {
-        match s.trim() {
-            "system" => Some(ThemeChoice::System),
-            "light" => Some(ThemeChoice::Light),
-            "dark" => Some(ThemeChoice::Dark),
-            _ => None,
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            ThemeChoice::System => "system",
-            ThemeChoice::Light => "light",
-            ThemeChoice::Dark => "dark",
-        }
-    }
-
-    fn mode(self) -> ThemeMode {
-        match self {
-            ThemeChoice::System => ThemeMode::System,
-            ThemeChoice::Light => ThemeMode::Light,
-            ThemeChoice::Dark => ThemeMode::Dark,
-        }
+/// Режим из параметра `--theme` (только на этот запуск, в файл не пишется).
+pub fn parse_mode(s: &str) -> Option<ThemeMode> {
+    match s.trim() {
+        "system" => Some(ThemeMode::System),
+        "light" => Some(ThemeMode::Light),
+        "dark" => Some(ThemeMode::Dark),
+        _ => None,
     }
 }
 
-fn choice_file() -> std::path::PathBuf {
-    shiftfix::config::Config::default_path().with_file_name("gui-theme")
+/// Пора ли записать тему: срок вышел и кнопка мыши отпущена. Пока тянут
+/// ползунок пипетки, цвет меняется каждый кадр, а файл пишется один раз.
+pub fn save_due(at: Option<Instant>, now: Instant, pointer_down: bool) -> bool {
+    at.is_some_and(|at| now >= at) && !pointer_down
 }
 
-/// Тема интерфейса, выбранная в окне (по умолчанию — как в системе).
-pub fn saved_choice() -> ThemeChoice {
-    std::fs::read_to_string(choice_file())
-        .ok()
-        .and_then(|s| ThemeChoice::parse(&s))
-        .unwrap_or(ThemeChoice::System)
+/// Что делать со старым файлом `gui-theme` (режим окна до версии 0.4).
+#[derive(Debug, PartialEq, Eq)]
+pub enum Migration {
+    /// Файла нет.
+    Nothing,
+    /// Перенести режим в `[theme]`, после удачной записи удалить файл.
+    Adopt(ThemeMode),
+    /// Режим в конфиге уже есть (или в файле мусор): файл просто удалить.
+    Remove,
+    /// Конфиг не читается — ничего не трогать, чтобы не потерять выбор.
+    Keep,
 }
 
-pub fn set_choice(ctx: &egui::Context, choice: ThemeChoice, persist: bool) {
-    let p = resolve(
-        &ThemeSettings::default(),
-        &System::default(),
-        Some(choice.mode()),
-    );
-    apply_palette(ctx, &p);
-    if persist {
-        let path = choice_file();
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(path, choice.as_str());
-    }
-}
-
-/// Цвета текущего кадра: палитры по умолчанию и режим, заданный в `ctx`.
-pub fn current(ctx: &egui::Context) -> Palette {
-    let mode = if ctx.theme() == Theme::Dark {
-        ThemeMode::Dark
-    } else {
-        ThemeMode::Light
+pub fn migration(legacy: Option<&str>, config_ok: bool, config_has_mode: bool) -> Migration {
+    let Some(text) = legacy else {
+        return Migration::Nothing;
     };
-    resolve(&ThemeSettings::default(), &System::default(), Some(mode))
+    if !config_ok {
+        return Migration::Keep;
+    }
+    match parse_mode(text) {
+        Some(mode) if !config_has_mode => Migration::Adopt(mode),
+        _ => Migration::Remove,
+    }
+}
+
+/// Старый файл режима рядом с конфигом.
+pub fn legacy_file(config: &Path) -> PathBuf {
+    config.with_file_name("gui-theme")
+}
+
+/// Один раз перенести режим из `gui-theme` в `[theme]`. Ошибки — в журнал:
+/// окно работает и без переноса.
+pub fn migrate_legacy(config: &Path, theme: &mut ThemeSettings) {
+    let legacy = legacy_file(config);
+    let Ok(text) = fs::read_to_string(&legacy) else {
+        return;
+    };
+    let raw = match fs::read_to_string(config) {
+        Ok(text) => Some(text),
+        Err(err) if err.kind() == ErrorKind::NotFound => None,
+        Err(err) => {
+            log::warn!("gui-theme не перенесён: {}: {err}", config.display());
+            return;
+        }
+    };
+    let table = raw.as_deref().map(str::parse::<toml::Table>);
+    let config_ok = table.as_ref().is_none_or(Result::is_ok);
+    let has_mode = table
+        .and_then(Result::ok)
+        .is_some_and(|t| t.get("theme").and_then(|v| v.get("mode")).is_some());
+    let remove = || {
+        if let Err(err) = fs::remove_file(&legacy) {
+            log::warn!("не удалён {}: {err}", legacy.display());
+        }
+    };
+    match migration(Some(&text), config_ok, has_mode) {
+        Migration::Adopt(mode) => {
+            let moved = ThemeSettings {
+                mode,
+                ..theme.clone()
+            };
+            match moved.save(config) {
+                Ok(()) => {
+                    *theme = moved;
+                    remove();
+                }
+                Err(err) => log::warn!("gui-theme не перенесён: {err:#}"),
+            }
+        }
+        Migration::Remove => remove(),
+        Migration::Keep | Migration::Nothing => {}
+    }
 }
 
 /// Отступы и шрифты — один раз, для стилей обеих тем egui.
@@ -668,6 +690,69 @@ mod tests {
                 ]
             })
             .collect()
+    }
+
+    #[test]
+    fn mode_from_argument() {
+        assert_eq!(parse_mode("light"), Some(ThemeMode::Light));
+        assert_eq!(parse_mode(" dark\n"), Some(ThemeMode::Dark));
+        assert_eq!(parse_mode("system"), Some(ThemeMode::System));
+        assert_eq!(parse_mode("Dark"), None);
+    }
+
+    #[test]
+    fn save_waits_for_deadline_and_release() {
+        let now = Instant::now();
+        let later = now + std::time::Duration::from_millis(400);
+        assert!(!save_due(None, later, false), "сохранять нечего");
+        assert!(!save_due(Some(later), now, false), "срок не вышел");
+        assert!(!save_due(Some(now), later, true), "ползунок ещё тянут");
+        assert!(save_due(Some(now), later, false));
+        assert!(save_due(Some(now), now, false), "ровно в срок");
+    }
+
+    #[test]
+    fn legacy_migration_rules() {
+        assert_eq!(migration(None, true, false), Migration::Nothing);
+        assert_eq!(
+            migration(Some("light\n"), true, false),
+            Migration::Adopt(ThemeMode::Light)
+        );
+        assert_eq!(migration(Some("dark"), true, true), Migration::Remove);
+        assert_eq!(migration(Some("мусор"), true, false), Migration::Remove);
+        assert_eq!(migration(Some("light"), false, false), Migration::Keep);
+    }
+
+    #[test]
+    fn legacy_file_moves_into_config() {
+        let dir = std::env::temp_dir().join(format!("shiftfix-legacy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let config = dir.join("config.toml");
+        fs::write(&config, "# моя настройка\ndouble_tap_ms = 350\n").unwrap();
+        fs::write(legacy_file(&config), "light").unwrap();
+
+        let mut theme = ThemeSettings::default();
+        migrate_legacy(&config, &mut theme);
+        assert_eq!(theme.mode, ThemeMode::Light);
+        assert!(!legacy_file(&config).exists(), "файл удалён после записи");
+        assert_eq!(ThemeSettings::load(&config).unwrap().mode, ThemeMode::Light);
+        let text = fs::read_to_string(&config).unwrap();
+        assert!(text.starts_with("# моя настройка\ndouble_tap_ms = 350\n"));
+
+        // Режим в конфиге уже есть — файл просто удаляется.
+        fs::write(legacy_file(&config), "dark").unwrap();
+        migrate_legacy(&config, &mut theme);
+        assert_eq!(theme.mode, ThemeMode::Light);
+        assert!(!legacy_file(&config).exists());
+
+        // Битый конфиг не трогаем, файл остаётся.
+        fs::write(&config, "double_tap_ms = [\n").unwrap();
+        fs::write(legacy_file(&config), "dark").unwrap();
+        migrate_legacy(&config, &mut theme);
+        assert!(legacy_file(&config).exists());
+        assert_eq!(fs::read_to_string(&config).unwrap(), "double_tap_ms = [\n");
+        fs::remove_dir_all(dir).unwrap();
     }
 
     fn own_accent(mode: ThemeMode, light: &str, dark: &str) -> ThemeSettings {
