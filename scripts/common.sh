@@ -29,6 +29,12 @@ init_paths() {
     AUTOSTART="$CONF/autostart/shiftfix.desktop"
     SETTINGS="$CONF/shiftfix"
     CONFIG="$SETTINGS/config.toml"
+    # Что ставит install.sh из сборки и assets/ (в этом порядке) и удаляет uninstall.sh.
+    # Роль — откуда файл и что обновить после замены: daemon и gui — программы
+    # (перезапустить), icon — значок, menu — ярлык (обновить меню).
+    FILES=("$BIN/shiftfix" "$BIN/shiftfix-gui" "$ICONS/shiftfix.svg" "$ICONS/shiftfix-paused.svg"
+        "$APPS/shiftfix.desktop")
+    ROLES=(daemon gui icon icon menu)
     UDEV_RULE=/etc/udev/rules.d/80-shiftfix-uinput.rules
     UDEV_TEXT='KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"'
     MODULES=/etc/modules-load.d/shiftfix-uinput.conf
