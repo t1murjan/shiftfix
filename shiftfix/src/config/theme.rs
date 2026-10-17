@@ -83,14 +83,9 @@ impl ThemeSettings {
     /// Прочитать только `[theme]`: ошибка в другом параметре тему не сбрасывает.
     /// Нет файла — значения по умолчанию, ошибка TOML — `Err`.
     pub fn load(path: &Path) -> Result<ThemeSettings> {
-        if !path.exists() {
+        let Some((_, table)) = super::file::read(path)? else {
             return Ok(ThemeSettings::default());
-        }
-        let text =
-            fs::read_to_string(path).with_context(|| format!("не читается {}", path.display()))?;
-        let table: toml::Table = text
-            .parse()
-            .with_context(|| format!("{}: ошибка TOML", path.display()))?;
+        };
         Ok(table
             .get("theme")
             .map(ThemeSettings::from_value)

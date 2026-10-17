@@ -79,40 +79,21 @@ impl Default for Settings {
     }
 }
 
-const KNOWN_KEYS: [&str; 19] = [
-    "double_tap_ms",
-    "tap_max_hold_ms",
-    "key_delay_ms",
-    "switch_delay_ms",
-    "max_word_len",
-    "selection",
-    "selection_method",
-    "max_selection",
-    "paste_keys",
-    "paste_restore_ms",
-    "restore_clipboard",
-    "backend",
-    "switch_hotkey",
-    "hotkey_layouts",
-    "tray",
-    "notify",
-    "ignore_devices",
-    "theme",
-    "devices",
-];
+/// Ключи верхнего уровня, которые понимает shiftfix, — поля `Settings`.
+fn known_keys() -> Vec<String> {
+    toml::Table::try_from(Settings::default())
+        .map(|table| table.into_iter().map(|(key, _)| key).collect())
+        .unwrap_or_default()
+}
 
 impl Settings {
     /// Прочитать файл; нет файла — значения по умолчанию.
     pub fn load(path: &Path) -> Result<Settings> {
-        if !path.exists() {
+        let Some((text, table)) = file::read(path)? else {
             return Ok(Settings::default());
-        }
-        let text =
-            fs::read_to_string(path).with_context(|| format!("не читается {}", path.display()))?;
-        let table: toml::Table = text
-            .parse()
-            .with_context(|| format!("{}: ошибка TOML", path.display()))?;
-        for key in table.keys().filter(|k| !KNOWN_KEYS.contains(&k.as_str())) {
+        };
+        let known = known_keys();
+        for key in table.keys().filter(|k| !known.contains(k)) {
             warn!("config: неизвестный параметр {key}");
         }
         toml::from_str(&text).with_context(|| format!("{}: неверное значение", path.display()))
@@ -138,14 +119,7 @@ impl Settings {
                 continue;
             }
             match doc.get_mut(key) {
-                Some(slot) if slot.is_value() => {
-                    // Значение меняем, а комментарий над строкой оставляем.
-                    let decor = slot.as_value().map(|v| v.decor().clone());
-                    *slot = item.clone();
-                    if let (Some(decor), Some(value)) = (decor, slot.as_value_mut()) {
-                        *value.decor_mut() = decor;
-                    }
-                }
+                Some(slot) if slot.is_value() => file::set_value(slot, item),
                 _ => {
                     doc.insert(key, item.clone());
                 }

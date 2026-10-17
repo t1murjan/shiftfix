@@ -13,8 +13,9 @@ fn default_text_matches_defaults() {
         Settings::default()
     );
     let table: toml::Table = DEFAULT_CONFIG.parse().unwrap();
-    let mut keys: Vec<&str> = table.keys().map(String::as_str).collect();
-    let mut known = KNOWN_KEYS.to_vec();
+    let mut keys: Vec<String> = table.keys().cloned().collect();
+    let mut known = known_keys();
+    assert_eq!(known.len(), 19);
     keys.sort_unstable();
     known.sort_unstable();
     assert_eq!(keys, known);

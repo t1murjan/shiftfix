@@ -1,9 +1,32 @@
-//! Запись config.toml: правка с сохранением комментариев и атомарная замена файла.
+//! Чтение и запись config.toml: правка с сохранением комментариев и
+//! атомарная замена файла.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+
+/// Прочитать конфиг: текст и разобранная таблица. Нет файла — `None`.
+pub(super) fn read(path: &Path) -> Result<Option<(String, toml::Table)>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text =
+        fs::read_to_string(path).with_context(|| format!("не читается {}", path.display()))?;
+    let table = text
+        .parse()
+        .with_context(|| format!("{}: ошибка TOML", path.display()))?;
+    Ok(Some((text, table)))
+}
+
+/// Записать в `slot` новое значение, оставив комментарии над строкой и после неё.
+pub(super) fn set_value(slot: &mut toml_edit::Item, item: &toml_edit::Item) {
+    let decor = slot.as_value().map(|v| v.decor().clone());
+    *slot = item.clone();
+    if let (Some(decor), Some(value)) = (decor, slot.as_value_mut()) {
+        *value.decor_mut() = decor;
+    }
+}
 
 /// Обновить таблицу `key` значениями из `fresh`: комментарии, порядок и лишние
 /// ключи файла (например, от более новой версии) остаются. Нет таблицы — новая
@@ -21,14 +44,7 @@ pub(super) fn merge_table(doc: &mut toml_edit::DocumentMut, key: &str, fresh: &t
     };
     for (name, item) in fresh.iter() {
         match table.get_mut(name) {
-            Some(slot) => {
-                // Значение меняем, а комментарии над строкой и после неё оставляем.
-                let decor = slot.as_value().map(|v| v.decor().clone());
-                *slot = item.clone();
-                if let (Some(decor), Some(value)) = (decor, slot.as_value_mut()) {
-                    *value.decor_mut() = decor;
-                }
-            }
+            Some(slot) => set_value(slot, item),
             None => {
                 table.insert(name, item.clone());
             }
