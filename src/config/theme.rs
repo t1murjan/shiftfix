@@ -52,7 +52,7 @@ impl Default for ThemeSettings {
 impl ThemeSettings {
     /// Мягкий разбор: неверное поле — предупреждение и значение по умолчанию,
     /// остальные поля читаются как обычно.
-    pub fn from_value(value: &toml::Value) -> ThemeSettings {
+    pub(super) fn from_value(value: &toml::Value) -> ThemeSettings {
         let mut theme = ThemeSettings::default();
         let Some(table) = value.as_table() else {
             warn!("config: theme: неверное значение — используется значение по умолчанию");

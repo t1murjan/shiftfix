@@ -2,26 +2,18 @@
 
 use std::process::Command;
 
-use shiftfix::config::{Settings, ThemeSettings};
-
-/// install.sh создаёт конфиг из `--print-config`: он должен разбираться в
-/// значения по умолчанию, включая [theme].
+/// install.sh создаёт конфиг из `--print-config`: это должен быть ровно
+/// config/default.toml — его тесты config сверяют с `Settings::default()`.
 #[test]
-fn print_config_parses_to_defaults() {
+fn print_config_is_default_config() {
     let out = Command::new(env!("CARGO_BIN_EXE_shiftfix"))
         .arg("--print-config")
         .output()
         .unwrap();
     assert!(out.status.success(), "{out:?}");
-    let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(
-        toml::from_str::<Settings>(&text).unwrap(),
-        Settings::default()
-    );
-    let table: toml::Table = text.parse().unwrap();
-    assert_eq!(
-        ThemeSettings::from_value(&table["theme"]),
-        ThemeSettings::default()
+        String::from_utf8(out.stdout).unwrap(),
+        shiftfix::config::DEFAULT_CONFIG
     );
 }
 

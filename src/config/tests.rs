@@ -8,22 +8,21 @@ fn temp(name: &str) -> PathBuf {
 
 #[test]
 fn default_text_matches_defaults() {
-    assert_eq!(
-        toml::from_str::<Settings>(DEFAULT_CONFIG).unwrap(),
-        Settings::default()
-    );
+    // Все секции и значения как таблицы: разбор в Settings не годится, [theme]
+    // разбирается мягко, и неверное значение в тексте тихо стало бы умолчанием.
     let table: toml::Table = DEFAULT_CONFIG.parse().unwrap();
-    let mut keys: Vec<String> = table.keys().cloned().collect();
-    let mut known = known_keys();
-    assert_eq!(known.len(), 19);
-    keys.sort_unstable();
-    known.sort_unstable();
-    assert_eq!(keys, known);
-    // [theme] в тексте перечисляет все поля темы и стоит перед [devices].
-    let theme_keys: Vec<&String> = table["theme"].as_table().unwrap().keys().collect();
-    let defaults = toml::Value::try_from(ThemeSettings::default()).unwrap();
-    let field_keys: Vec<&String> = defaults.as_table().unwrap().keys().collect();
-    assert_eq!(theme_keys, field_keys);
+    assert_eq!(table, toml::Table::try_from(Settings::default()).unwrap());
+    // [theme] перечисляет поля в порядке структуры и стоит перед [devices].
+    // Порядок — через toml_edit: toml::Table ключи сортирует.
+    let keys = |table: &toml_edit::Table| -> Vec<String> {
+        table.iter().map(|(key, _)| key.to_owned()).collect()
+    };
+    let text: toml_edit::DocumentMut = DEFAULT_CONFIG.parse().unwrap();
+    let fields: toml_edit::DocumentMut = toml::to_string(&ThemeSettings::default())
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(keys(text["theme"].as_table().unwrap()), keys(&fields));
     let pos = |s: &str| DEFAULT_CONFIG.find(s).unwrap();
     assert!(pos("\n[theme]\n") < pos("# Роли устройств"));
     assert!(DEFAULT_CONFIG.ends_with("[devices]\n"));
