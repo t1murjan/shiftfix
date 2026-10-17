@@ -1,9 +1,22 @@
 use super::*;
+use crate::testutil::TempDir;
 
-fn temp(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("shiftfix-config-{name}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    dir.join("config.toml")
+/// Каталог теста и путь к config.toml в нём; самого файла нет.
+fn temp(tag: &str) -> (TempDir, PathBuf) {
+    let dir = TempDir::new(&format!("config-{tag}"));
+    let path = dir.join("config.toml");
+    (dir, path)
+}
+
+/// Каталог теста с config.toml из `text`.
+fn write(tag: &str, text: &str) -> (TempDir, PathBuf) {
+    let (dir, path) = temp(tag);
+    fs::write(&path, text).unwrap();
+    (dir, path)
+}
+
+fn count_lines(text: &str, pred: impl Fn(&str) -> bool) -> usize {
+    text.lines().filter(|l| pred(l)).count()
 }
 
 #[test]
@@ -28,16 +41,13 @@ fn default_text_matches_defaults() {
     assert!(DEFAULT_CONFIG.ends_with("[devices]\n"));
 
     // `--print-config > config.toml`, как делает install.sh.
-    let path = temp("print-config");
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(&path, DEFAULT_CONFIG).unwrap();
+    let (_dir, path) = write("print-config", DEFAULT_CONFIG);
     assert_eq!(Settings::load(&path).unwrap(), Settings::default());
     assert_eq!(
         ThemeSettings::load(&path).unwrap(),
         ThemeSettings::default()
     );
     Config::load(&path).unwrap();
-    fs::remove_dir_all(path.parent().unwrap()).unwrap();
 }
 
 #[test]
@@ -57,7 +67,7 @@ fn partial_config_and_errors() {
 
 #[test]
 fn save_keeps_comments_and_round_trips() {
-    let path = temp("save");
+    let (_dir, path) = temp("save");
     let mut settings = Settings {
         double_tap_ms: 333,
         tray: false,
@@ -87,15 +97,12 @@ fn save_keeps_comments_and_round_trips() {
     let again = fs::read_to_string(&path).unwrap();
     assert!(again.contains("# мой комментарий"), "{again}");
     assert_eq!(
-        again
-            .lines()
-            .filter(|l| l.starts_with("double_tap_ms"))
-            .count(),
-        1
+        count_lines(&again, |l| l.starts_with("double_tap_ms")),
+        1,
+        "{again}"
     );
     assert!(!again.contains("Logitech"));
     assert_eq!(Settings::load(&path).unwrap(), settings);
-    fs::remove_dir_all(path.parent().unwrap()).unwrap();
 }
 
 /// config.toml версии 0.3.0: тогдашний `--print-config`, без [theme].
@@ -158,25 +165,10 @@ hotkey_layouts = ["us", "ru", "de"]
 "046d:c52b Logitech USB Receiver" = "ignore"
 "#;
 
-fn write(name: &str, text: &str) -> PathBuf {
-    let path = temp(name);
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(&path, text).unwrap();
-    path
-}
-
-fn cleanup(path: &Path) {
-    fs::remove_dir_all(path.parent().unwrap()).unwrap();
-}
-
-fn count_lines(text: &str, pred: impl Fn(&str) -> bool) -> usize {
-    text.lines().filter(|l| pred(l)).count()
-}
-
 #[test]
 fn old_config_without_theme() {
     for (name, text) in [("old", CONFIG_0_3_0), ("old-custom", CUSTOM_0_3_0)] {
-        let path = write(name, text);
+        let (_dir, path) = write(name, text);
         let settings = Settings::load(&path).unwrap();
         assert_eq!(settings.theme, ThemeSettings::default());
         assert_eq!(
@@ -185,7 +177,6 @@ fn old_config_without_theme() {
         );
         Config::from_settings(settings).unwrap();
         Config::load(&path).unwrap();
-        cleanup(&path);
     }
     assert_eq!(
         toml::from_str::<Settings>(CONFIG_0_3_0).unwrap(),
@@ -219,7 +210,7 @@ fn partial_theme_uses_defaults() {
 fn bad_theme_values_fall_back() {
     let text = "key_delay_ms = 7\n[theme]\nmode = 1\nlight_accent = 5\n\
                 dark_palette = \"nord\"\nsystem_accent = \"да\"\nmdoe = \"dark\"\n";
-    let path = write("bad-theme", text);
+    let (_dir, path) = write("bad-theme", text);
     let settings = Settings::load(&path).unwrap();
     assert_eq!(settings.key_delay_ms, 7);
     assert_eq!(
@@ -232,7 +223,6 @@ fn bad_theme_values_fall_back() {
     assert_eq!(ThemeSettings::load(&path).unwrap(), settings.theme);
     Config::from_settings(settings).unwrap();
     Config::load(&path).unwrap();
-    cleanup(&path);
 
     for text in [
         "theme = 5\n",
@@ -244,13 +234,12 @@ fn bad_theme_values_fall_back() {
     }
 
     // Ошибка в чужом параметре тему не сбрасывает.
-    let path = write(
+    let (_dir, path) = write(
         "foreign-error",
         "key_delay_ms = \"x\"\n[theme]\nmode = \"light\"\n",
     );
     assert!(Settings::load(&path).is_err());
     assert_eq!(ThemeSettings::load(&path).unwrap().mode, ThemeMode::Light);
-    cleanup(&path);
 }
 
 #[test]
@@ -281,7 +270,7 @@ fn theme_round_trips() {
 #[test]
 fn theme_save_touches_only_theme() {
     let old = CONFIG_0_3_0.replace("double_tap_ms = 400", "double_tap_ms = 350");
-    let path = write("theme-save", &old);
+    let (_dir, path) = write("theme-save", &old);
     let theme = ThemeSettings {
         mode: ThemeMode::Dark,
         dark_palette: "nord".into(),
@@ -317,10 +306,19 @@ fn theme_save_touches_only_theme() {
     assert_eq!(count_lines(&again, |l| l == "[theme]"), 1, "{again}");
     assert_eq!(count_lines(&again, |l| l.starts_with("mode =")), 1);
     assert_eq!(ThemeSettings::load(&path).unwrap(), light);
-    cleanup(&path);
+}
 
-    // Нет файла — основа DEFAULT_CONFIG со всеми комментариями.
-    let path = temp("theme-new");
+#[test]
+fn theme_save_without_file_starts_from_default() {
+    // Нет ни файла, ни каталога: каталог создаётся, основа — DEFAULT_CONFIG
+    // со всеми комментариями.
+    let dir = TempDir::new("config-theme-new");
+    let path = dir.join("shiftfix").join("config.toml");
+    let theme = ThemeSettings {
+        mode: ThemeMode::Dark,
+        dark_palette: "nord".into(),
+        ..ThemeSettings::default()
+    };
     theme.save(&path).unwrap();
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
@@ -331,16 +329,15 @@ fn theme_save_touches_only_theme() {
     assert_eq!(
         Settings::load(&path).unwrap(),
         Settings {
-            theme: theme.clone(),
+            theme,
             ..Settings::default()
         }
     );
-    cleanup(&path);
 }
 
 #[test]
 fn accent_reset_reaches_file() {
-    let path = write("accent", CONFIG_0_3_0);
+    let (_dir, path) = write("accent", CONFIG_0_3_0);
     let mut theme = ThemeSettings {
         light_accent: "#ff8800".into(),
         ..ThemeSettings::default()
@@ -367,19 +364,17 @@ fn accent_reset_reaches_file() {
     settings.save(&path).unwrap();
     assert!(!fs::read_to_string(&path).unwrap().contains("#123456"));
     assert_eq!(Settings::load(&path).unwrap(), settings);
-    cleanup(&path);
 }
 
 #[test]
 fn theme_save_refuses_broken_toml() {
     let broken = "double_tap_ms = = 1\n[theme\nmode = \"dark\"\n";
-    let path = write("broken", broken);
+    let (_dir, path) = write("broken", broken);
     let err = ThemeSettings::default().save(&path).unwrap_err();
     assert!(format!("{err:#}").contains("ошибка TOML"), "{err:#}");
     assert_eq!(fs::read(&path).unwrap(), broken.as_bytes());
     assert!(!path.with_extension("toml.tmp").exists());
     assert!(ThemeSettings::load(&path).is_err());
-    cleanup(&path);
 }
 
 #[test]
@@ -394,7 +389,7 @@ fn settings_save_merges_theme() {
             "system_accent = false\nfuture_key = 1",
         )
         + "\"1:2 mouse\" = \"mouse\"\n\"3:4 pad\" = \"touchpad\"\n";
-    let path = write("merge", &text);
+    let (_dir, path) = write("merge", &text);
     let mut settings = Settings::load(&path).unwrap();
     assert_eq!(settings.theme.mode, ThemeMode::Dark);
     assert_eq!(settings.devices.len(), 2);
@@ -432,11 +427,13 @@ fn settings_save_merges_theme() {
         "{saved}"
     );
     assert_eq!(Settings::load(&path).unwrap(), settings);
-    cleanup(&path);
+}
 
+#[test]
+fn settings_save_adds_theme_to_old_config() {
     // Старый конфиг без [theme]: таблица появляется один раз, роли и
     // комментарии на месте, повторное сохранение ничего не меняет.
-    let path = write("merge-old", CUSTOM_0_3_0);
+    let (_dir, path) = write("merge-old", CUSTOM_0_3_0);
     let mut settings = Settings::load(&path).unwrap();
     settings.theme.mode = ThemeMode::Light;
     settings.save(&path).unwrap();
@@ -447,14 +444,12 @@ fn settings_save_merges_theme() {
     assert_eq!(count_lines(&saved, |l| l == "[theme]"), 1, "{saved}");
     assert!(saved.contains("\"046d:c52b Logitech USB Receiver\" = \"ignore\""));
     assert_eq!(Settings::load(&path).unwrap(), settings);
-    cleanup(&path);
 }
 
 #[test]
 fn save_through_symlink_keeps_link_and_mode() {
     use std::os::unix::fs::{PermissionsExt, symlink};
-    let path = temp("symlink");
-    let dir = path.parent().unwrap().to_path_buf();
+    let (dir, path) = temp("symlink");
     let real = dir.join("dotfiles").join("shiftfix.toml");
     fs::create_dir_all(real.parent().unwrap()).unwrap();
     fs::write(&real, CONFIG_0_3_0).unwrap();
@@ -493,7 +488,6 @@ fn save_through_symlink_keeps_link_and_mode() {
         }
     }
     assert!(!names.iter().any(|n| n.ends_with(".tmp")), "{names:?}");
-    cleanup(&path);
 }
 
 #[test]
