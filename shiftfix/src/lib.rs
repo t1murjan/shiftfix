@@ -17,6 +17,8 @@ pub mod portal;
 pub mod selection;
 pub mod service;
 pub mod sys;
+#[cfg(test)]
+mod testutil;
 pub mod tray;
 pub mod x11;
 pub mod xkb;

@@ -15,7 +15,6 @@ use log::{debug, info};
 use x11rb::connection::Connection as _;
 use x11rb::protocol::Event;
 use x11rb::protocol::xfixes::{ConnectionExt as _, SelectionEventMask};
-use x11rb::protocol::xkb::{self, ConnectionExt as _};
 use x11rb::protocol::xproto::{
     AtomEnum, ChangeWindowAttributesAux, ConnectionExt as _, CreateWindowAux, EventMask,
     WindowClass,
@@ -23,8 +22,6 @@ use x11rb::protocol::xproto::{
 use x11rb::rust_connection::{DefaultStream, RustConnection};
 
 use crate::daemon::Msg;
-use crate::engine::{Backend, Keys};
-use crate::keys::norm_layout;
 use crate::sys::env;
 use crate::xkb::{Keymap, keymap_from_names};
 
@@ -176,87 +173,6 @@ pub fn rules_names(x: &XConn) -> Result<Vec<String>> {
         .collect())
 }
 
-// ─── Раскладка через XKB ────────────────────────────────────────────────────
-
-/// Переключение группы XKB — работает в любом окружении X11.
-#[derive(Default)]
-pub struct XkbLayout {
-    x: Option<XConn>,
-}
-
-impl XkbLayout {
-    fn with<R>(&mut self, f: impl FnOnce(&XConn) -> Result<R>) -> Result<R> {
-        if self.x.is_none() {
-            let x = connect()?;
-            let reply = x.conn.xkb_use_extension(1, 0)?.reply()?;
-            if !reply.supported {
-                bail!("у X-сервера нет расширения XKB");
-            }
-            self.x = Some(x);
-        }
-        let result = f(self.x.as_ref().expect("connection"));
-        if result.is_err() {
-            self.x = None; // X-сервер мог перезапуститься
-        }
-        result
-    }
-}
-
-impl Backend for XkbLayout {
-    fn name(&self) -> &'static str {
-        "X11"
-    }
-
-    fn layouts(&mut self) -> Result<Vec<String>> {
-        self.with(|x| {
-            let names = rules_names(x)?;
-            let layouts = names.get(2).map(String::as_str).unwrap_or_default();
-            if layouts.is_empty() {
-                bail!("раскладки X11 неизвестны");
-            }
-            Ok(layouts.split(',').map(norm_layout).collect())
-        })
-    }
-
-    fn current(&mut self) -> Result<Option<usize>> {
-        self.with(|x| {
-            let state = x
-                .conn
-                .xkb_get_state(xkb::ID::USE_CORE_KBD.into())?
-                .reply()?;
-            Ok(Some(usize::from(u8::from(state.locked_group))))
-        })
-    }
-
-    fn set(&mut self, index: usize, _keys: &mut dyn Keys) -> Result<()> {
-        let group = u8::try_from(index)
-            .ok()
-            .filter(|g| *g < 4)
-            .context("в X11 не больше четырёх раскладок")?;
-        self.with(|x| {
-            x.conn
-                .xkb_latch_lock_state(
-                    xkb::ID::USE_CORE_KBD.into(),
-                    0u8.into(),
-                    0u8.into(),
-                    true,
-                    xkb::Group::from(group),
-                    0u8.into(),
-                    false,
-                    0,
-                )?
-                .check()?;
-            Ok(())
-        })
-    }
-
-    fn toggle(&mut self, keys: &mut dyn Keys) -> Result<()> {
-        let count = self.layouts()?.len().max(1);
-        let current = self.current()?.unwrap_or(0);
-        self.set((current + 1) % count, keys)
-    }
-}
-
 // ─── Keymap ─────────────────────────────────────────────────────────────────
 
 /// Раскладки сеанса X11 из `_XKB_RULES_NAMES` (`None` — нет libxkbcommon).
@@ -346,6 +262,9 @@ pub fn watch(tx: &Sender<Msg>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::XkbLayout;
+    use crate::engine::Backend;
+    use crate::testutil::NoKeys;
 
     fn record(display: &str, name: &[u8], cookie: &[u8]) -> Vec<u8> {
         let mut out = vec![1, 0]; // FamilyLocal
@@ -426,18 +345,6 @@ mod tests {
         };
         assert!(x("setxkbmap", &["-layout", "us,ru"]).success());
 
-        struct NoKeys;
-        impl Keys for NoKeys {
-            fn backspace(&mut self, _: usize) -> Result<()> {
-                Ok(())
-            }
-            fn type_strokes(&mut self, _: &[crate::engine::Stroke]) -> Result<()> {
-                Ok(())
-            }
-            fn combo(&mut self, _: &[evdev::KeyCode]) -> Result<()> {
-                Ok(())
-            }
-        }
         let mut xkb = XkbLayout::default();
         let mut keys = NoKeys;
         assert_eq!(xkb.layouts().unwrap(), ["us", "ru"]);
