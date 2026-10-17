@@ -754,6 +754,41 @@ fn typing_over_selection_switches_to_word_mode() {
 }
 
 #[test]
+fn records_what_was_fixed() {
+    let mut r = Rig::new();
+    r.type_text("ghbdtn ");
+    r.shift2();
+    r.shift2(); // повтор по слову — тоже слово
+    r.select_text("Ghbdtn vbh");
+    r.shift2();
+    r.shift2(); // повтор по выделению — возврат
+    let actions = r.eng.actions();
+    let got: Vec<_> = actions
+        .iter()
+        .map(|a| (a.kind, a.chars, a.from.as_str(), a.to.as_str()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (ActionKind::Word, 7, "us", "ru"),
+            (ActionKind::Word, 7, "ru", "us"),
+            (ActionKind::Selection, 10, "us", "ru"),
+            (ActionKind::Undo, 10, "ru", "us"),
+        ]
+    );
+
+    // Раскладка неизвестна (переключение хоткеем) — «?».
+    let mut r = Rig::build(&["us", "ru"], SelectionMethod::Paste, false);
+    r.type_text("ghbdtn");
+    r.shift2();
+    let actions = r.eng.actions();
+    assert_eq!(
+        (actions[0].from.as_str(), actions[0].to.as_str()),
+        ("?", "?")
+    );
+}
+
+#[test]
 fn three_layouts_cycle() {
     let mut r = Rig::build(&["us", "ru", "us2"], SelectionMethod::Paste, true);
     r.type_text("ghbdtn");
