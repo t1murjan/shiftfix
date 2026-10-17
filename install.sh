@@ -256,10 +256,10 @@ check_versions() {
 # Недостающие команды и Rust; sudo — только если чего-то нет.
 install_dependencies() {
     step "Зависимости"
-    local pm='' candidate tool pkg missing=() pkgs=()
-    if ! rust_ok && [[ -f $HOME/.cargo/env ]]; then
+    local pm='' candidate tool pkg missing=() pkgs=() cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+    if ! rust_ok && [[ -f $cargo_home/env ]]; then
         # shellcheck source=/dev/null
-        source "$HOME/.cargo/env"
+        source "$cargo_home/env"
     fi
     if have pacman; then
         pm=pacman
@@ -319,20 +319,32 @@ install_dependencies() {
             note "Поставьте Rust (https://rustup.rs) или curl и запустите снова."
             exit 1
         fi
-        if ! ask "Установить свежий Rust через rustup в ~/.cargo?" y; then exit 1; fi
+        if ! ask "Установить свежий Rust через rustup в $(pretty "$cargo_home")?" y; then exit 1; fi
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs 9>&- | sh -s -- -y --profile minimal 9>&-
         # shellcheck source=/dev/null
-        source "$HOME/.cargo/env"
+        source "$cargo_home/env"
     fi
+}
+
+# Куда cargo положил программы (CARGO_TARGET_DIR, build.target-dir, build.target в его
+# настройках…), знает только он сам: путь — из его отчёта о сборке ($1, JSON). jq есть
+# не везде — достаём регулярным выражением.
+find_target() {
+    local re='"executable":"([^"\\]*)/shiftfix"'
+    if [[ ! $1 =~ $re ]]; then
+        echo "install.sh: cargo не сообщил, куда положил shiftfix, — не знаю, что ставить." >&2
+        exit 1
+    fi
+    TARGET=${BASH_REMATCH[1]}
 }
 
 # Сборка — до того, как что-то трогать: не удалась — установленное не тронуто.
 build() {
     step "Сборка (первый раз — несколько минут)"
-    local name got
-    TARGET="${CARGO_TARGET_DIR:-target}/release"
+    local name got json
+    # Отчёт о сборке (JSON) идёт в stdout, ход сборки и ошибки — как обычно, в stderr.
     # Без fd 9: сервер сборки (sccache) живёт дольше скрипта и держал бы блокировку install.sh.
-    if ! cargo build --release --locked 9>&-; then
+    if ! json="$(cargo build --release --locked --message-format=json-render-diagnostics 9>&-)"; then
         echo >&2
         if [[ -z $OLD ]]; then
             echo "Сборка не удалась — ничего не установлено." >&2
@@ -341,6 +353,7 @@ build() {
         fi
         exit 1
     fi
+    find_target "$json"
     for name in shiftfix shiftfix-gui; do
         got="$("$TARGET/$name" --version 2>/dev/null)" || got=
         if [[ $got != "$name $NEW" ]]; then
