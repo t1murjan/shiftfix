@@ -8,6 +8,16 @@ use shiftfix::engine::{Backend, Keys, Stroke};
 use shiftfix::sys::env;
 use shiftfix::{keymap, selection};
 
+/// Пропуск теста, которому не хватает программы или библиотеки; с
+/// `SHIFTFIX_TEST_STRICT=1` (так в CI) — падение. Копия `testutil::skip`
+/// библиотеки: её тестовый код (`cfg(test)`) интеграционным тестам недоступен.
+fn skip(reason: &str) {
+    if std::env::var_os("SHIFTFIX_TEST_STRICT").is_some_and(|v| v == "1") {
+        panic!("{reason}, а пропуск запрещён: SHIFTFIX_TEST_STRICT=1");
+    }
+    eprintln!("— пропуск: {reason}");
+}
+
 struct NoKeys;
 
 impl Keys for NoKeys {
@@ -38,11 +48,11 @@ fn xkb_and_primary_on_xvfb() {
         .iter()
         .all(|t| env::in_path(t))
     {
-        eprintln!("нет Xvfb, setxkbmap или xclip — пропуск");
-        return;
+        return skip("нет Xvfb, setxkbmap или xclip");
     }
     if env::x11_display().is_some() {
-        eprintln!("есть живой X-сервер — пропуск");
+        // Не нехватка программ, а защита живого сеанса: пропуск и в строгом режиме.
+        eprintln!("— пропуск: есть живой X-сервер");
         return;
     }
     let Ok(mut server) = Command::new("Xvfb")
@@ -51,8 +61,7 @@ fn xkb_and_primary_on_xvfb() {
         .stderr(Stdio::null())
         .spawn()
     else {
-        eprintln!("Xvfb не запустился — пропуск");
-        return;
+        return skip("Xvfb не запустился");
     };
     struct Kill(std::process::Child);
     impl Drop for Kill {
@@ -65,8 +74,7 @@ fn xkb_and_primary_on_xvfb() {
     while env::x11_display().as_deref() != Some(DISPLAY) {
         if started.elapsed() > Duration::from_secs(5) {
             let _ = server.kill();
-            eprintln!("Xvfb не поднялся — пропуск");
-            return;
+            return skip("Xvfb не поднялся");
         }
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -108,7 +116,7 @@ fn xkb_and_primary_on_xvfb() {
         assert!(x("setxkbmap", &["-layout", "us,ru,de"]).success());
         assert_eq!(layouts(), 3);
     } else {
-        eprintln!("нет libxkbcommon — keymap X11 не проверяется");
+        skip("нет libxkbcommon — keymap X11 не проверяется");
     }
 
     let (tx, rx) = mpsc::channel();

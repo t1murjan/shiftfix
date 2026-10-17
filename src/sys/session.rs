@@ -54,7 +54,7 @@ pub fn blocked(logind: &mut Logind) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutil::TestBus;
+    use crate::testutil::{TestBus, skip};
 
     struct FakeSession {
         active: bool,
@@ -71,8 +71,7 @@ mod tests {
     #[test]
     fn reads_active_flag_from_logind() {
         let Some(bus) = TestBus::start() else {
-            eprintln!("нет dbus-daemon — пропуск");
-            return;
+            return skip("нет dbus-daemon");
         };
 
         // logind ещё нет — значит, не мешаем.

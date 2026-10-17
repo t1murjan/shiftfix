@@ -30,6 +30,16 @@ impl Keys for NoKeys {
     }
 }
 
+/// Пропуск теста, которому не хватает внешней программы или библиотеки:
+/// `return skip("нет dbus-daemon")`. С `SHIFTFIX_TEST_STRICT=1` (так в CI)
+/// тест вместо этого падает — там всё нужное установлено.
+pub fn skip(reason: &str) {
+    if std::env::var_os("SHIFTFIX_TEST_STRICT").is_some_and(|v| v == "1") {
+        panic!("{reason}, а пропуск запрещён: SHIFTFIX_TEST_STRICT=1");
+    }
+    eprintln!("— пропуск: {reason}");
+}
+
 /// Пустой временный каталог `shiftfix-<tag>-<pid>-<n>`, свой у каждого вызова:
 /// тесты идут параллельно. Удаляется в Drop, в том числе при панике.
 pub struct TempDir(PathBuf);

@@ -205,13 +205,13 @@ mod tests {
     use super::*;
 
     use crate::keymap::{ROW_KEYS, builtin, convert_text};
+    use crate::testutil::skip;
 
     /// Встроенные таблицы должны совпадать с тем, что даёт настоящий xkb.
     #[test]
     fn builtin_tables_match_xkb() {
         let Some(keymap) = from_names("us,ru", ",", "") else {
-            eprintln!("libxkbcommon недоступна — пропуск");
-            return;
+            return skip("libxkbcommon недоступна");
         };
         assert_eq!(keymap.layouts.len(), 2);
         assert!(
@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn variants_and_options_come_from_xkb() {
         let Some(keymap) = from_names("us,ua", "dvorak,", "grp:caps_toggle") else {
-            return;
+            return skip("libxkbcommon недоступна");
         };
         let (dvorak, ua) = (&keymap.layouts[0], &keymap.layouts[1]);
         assert_eq!(dvorak.char_at(KeyCode::KEY_Q, false), Some('\''));
@@ -251,7 +251,7 @@ mod tests {
     #[test]
     fn dead_keys_are_marked() {
         let Some(keymap) = from_names("us,ru", "intl,", "") else {
-            return;
+            return skip("libxkbcommon недоступна");
         };
         let (intl, ru) = (&keymap.layouts[0], &keymap.layouts[1]);
         // US International: ' и Shift+6 — мёртвые, буквы — нет.
@@ -265,7 +265,7 @@ mod tests {
     #[test]
     fn keymap_text_round_trip() {
         let Some(from_names) = from_names("us,ru", ",", "") else {
-            return;
+            return skip("libxkbcommon недоступна");
         };
         assert!(from_text("не keymap").is_none());
         assert_eq!(from_names.layouts.len(), 2);

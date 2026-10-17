@@ -87,7 +87,7 @@ impl Backend for Kde {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutil::{NoKeys, TestBus};
+    use crate::testutil::{NoKeys, TestBus, skip};
 
     /// Поддельный KWin на отдельной шине DBus: имена методов и типы как в Plasma.
     struct FakeKwin {
@@ -121,8 +121,7 @@ mod tests {
     #[test]
     fn kde_over_dbus() {
         let Some(bus) = TestBus::start() else {
-            eprintln!("нет dbus-daemon — пропуск");
-            return;
+            return skip("нет dbus-daemon");
         };
         let _server = zbus::blocking::connection::Builder::address(bus.address.as_str())
             .unwrap()

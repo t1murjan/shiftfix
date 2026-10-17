@@ -335,6 +335,16 @@ mod tests {
 
     // ─── свой dbus-daemon с поддельным порталом ───
 
+    /// Пропуск теста, которому не хватает dbus-daemon; с `SHIFTFIX_TEST_STRICT=1`
+    /// (так в CI) — падение. Копия `testutil::skip` библиотеки: её тестовый код
+    /// (`cfg(test)`) окну недоступен.
+    fn skip(reason: &str) {
+        if std::env::var_os("SHIFTFIX_TEST_STRICT").is_some_and(|v| v == "1") {
+            panic!("{reason}, а пропуск запрещён: SHIFTFIX_TEST_STRICT=1");
+        }
+        eprintln!("— пропуск: {reason}");
+    }
+
     /// Без servicedirs: иначе на машине с настоящим xdg-desktop-portal шина
     /// запустила бы его сама. Сокет — в каталоге теста (`{dir}`), он удаляется
     /// вместе с каталогом даже после kill.
@@ -529,8 +539,7 @@ mod tests {
     #[test]
     fn follows_fake_portal() {
         let Some(bus) = Bus::start() else {
-            eprintln!("нет dbus-daemon — пропуск");
-            return;
+            return skip("нет dbus-daemon");
         };
 
         // Шина есть, портала нет — недоступен, и сразу (активировать нечего).
@@ -590,8 +599,7 @@ mod tests {
     #[test]
     fn reads_old_portal() {
         let Some(bus) = Bus::start() else {
-            eprintln!("нет dbus-daemon — пропуск");
-            return;
+            return skip("нет dbus-daemon");
         };
         // Только Read (ответ завёрнут дважды) и без accent-color (NotFound).
         let _server = bus.serve(OldSettings(Values {
@@ -608,8 +616,7 @@ mod tests {
     #[test]
     fn missing_keys_are_not_errors() {
         let Some(bus) = Bus::start() else {
-            eprintln!("нет dbus-daemon — пропуск");
-            return;
+            return skip("нет dbus-daemon");
         };
         // Портал есть, но бэкенд ничего не сообщает (как Hyprland без gtk-портала).
         let _server = bus.serve(FakeSettings(Values::default()));
