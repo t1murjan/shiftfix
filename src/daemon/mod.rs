@@ -314,7 +314,6 @@ impl Daemon {
                     debug!("IPC: {req:?} не дождался очереди — пропущен");
                     return true;
                 }
-                let quit = req == Request::Quit;
                 let response = match req {
                     Request::Status => Response {
                         status: Some(Box::new(self.status())),
@@ -333,12 +332,11 @@ impl Daemon {
                         Ok(()) => Response::ok(),
                         Err(err) => Response::error(format!("{err:#}")),
                     },
+                    // Выход — по Msg::Quit: сокет шлёт его, когда ответ уже
+                    // записан (daemon/socket.rs).
                     Request::Quit => Response::ok(),
                 };
                 let _ = reply.send(response);
-                if quit {
-                    return false;
-                }
             }
         }
         true
@@ -449,8 +447,10 @@ mod tests {
         let (_, resp) = ask(&mut d, Request::Reload);
         assert!(!resp.ok && resp.error.unwrap().contains("backend"));
 
+        // На quit — только ответ; выход — по Msg::Quit.
         let (alive, resp) = ask(&mut d, Request::Quit);
-        assert!(!alive && resp.ok);
+        assert!(alive && resp.ok);
+        assert!(!d.handle(Msg::Quit));
     }
 
     #[test]

@@ -57,15 +57,22 @@ pub fn serve(path: PathBuf, tx: Sender<Msg>) -> Result<Socket> {
 fn handle(stream: UnixStream, tx: &Sender<Msg>) {
     let _ = stream.set_read_timeout(Some(ipc::TIMEOUT));
     let _ = stream.set_write_timeout(Some(ipc::TIMEOUT));
-    let Ok(mut writer) = stream.try_clone() else {
-        return;
-    };
+    if let Ok(writer) = stream.try_clone() {
+        respond(stream, writer, tx);
+    }
+}
+
+/// Один запрос: прочитать из `reader`, передать главному циклу, ответ
+/// записать в `writer`. Отдельно от сокета — тест подставляет свой писатель.
+fn respond(reader: impl Read, mut writer: impl Write, tx: &Sender<Msg>) {
     let mut line = Vec::new();
-    let mut reader = BufReader::new(stream.take(ipc::MAX_REQUEST));
+    let mut reader = BufReader::new(reader.take(ipc::MAX_REQUEST));
     if reader.read_until(b'\n', &mut line).is_err() {
         return;
     }
-    let response = match serde_json::from_slice::<Request>(&line) {
+    let request = serde_json::from_slice::<Request>(&line);
+    let quit = matches!(request, Ok(Request::Quit));
+    let response = match request {
         Ok(req) => {
             debug!("IPC: {req:?}");
             let (reply, answer) = mpsc::channel();
@@ -90,10 +97,16 @@ fn handle(stream: UnixStream, tx: &Sender<Msg>) {
         text.push('\n');
         let _ = writer.write_all(text.as_bytes());
     }
+    // На quit главный цикл только отвечает: выйди он сразу, с ним вышел бы и
+    // процесс, и ответ мог бы не уйти. Выход — когда ответ уже записан.
+    if quit && response.ok {
+        let _ = tx.send(Msg::Quit);
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::io;
     use std::path::Path;
     use std::sync::mpsc::Receiver;
 
@@ -191,13 +204,58 @@ mod tests {
             assert!(service.daemon.handle(msg));
         }
         assert!(service.daemon.engine.enabled(), "пауза не включилась");
-        assert!(
-            service
-                .ask(Request::Status)
-                .unwrap()
-                .status
-                .unwrap()
-                .enabled
-        );
+        let status = service.ask(Request::Status).unwrap().status.unwrap();
+        assert!(status.enabled);
+    }
+
+    /// Писатель, который сообщает о записи и ждёт разрешения её закончить.
+    struct Gate {
+        writing: Sender<()>,
+        go: Receiver<()>,
+    }
+
+    impl Write for Gate {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let _ = self.writing.send(());
+            let _ = self.go.recv();
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn quit_is_answered_before_exit() {
+        let mut daemon = daemon(std::env::temp_dir().join("shiftfix-none.toml"));
+        let (tx, rx) = mpsc::channel();
+        let (writing, written) = mpsc::channel();
+        let (go, wait) = mpsc::channel();
+        let gate = Gate { writing, go: wait };
+        let server = thread::spawn(move || respond(&b"{\"cmd\":\"quit\"}\n"[..], gate, &tx));
+        // Главный цикл отвечает на quit, но не выходит…
+        let msg = rx.recv_timeout(ipc::TIMEOUT).unwrap();
+        assert!(matches!(
+            msg,
+            Msg::Ipc {
+                req: Request::Quit,
+                ..
+            }
+        ));
+        assert!(daemon.handle(msg));
+        // …пока ответ пишется, сообщения о выходе нет…
+        written.recv_timeout(ipc::TIMEOUT).unwrap();
+        assert!(rx.try_recv().is_err(), "выход раньше ответа");
+        // …а записан — главный цикл выходит.
+        go.send(()).unwrap();
+        let msg = rx.recv_timeout(ipc::TIMEOUT).unwrap();
+        assert!(!daemon.handle(msg));
+        server.join().unwrap();
+
+        // Через сокет: ответ ok.
+        let dir = TempDir::new("ipc");
+        let mut service = Service::start(&dir);
+        assert!(service.ask(Request::Quit).unwrap().ok);
     }
 }

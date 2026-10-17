@@ -117,6 +117,9 @@ pub(crate) fn request_at(path: &Path, req: &Request) -> Result<Response> {
     BufReader::new(stream)
         .read_line(&mut answer)
         .context("служба не ответила")?;
+    if answer.is_empty() {
+        bail!("служба закрыла соединение");
+    }
     let response: Response = serde_json::from_str(&answer).context("непонятный ответ службы")?;
     if !response.ok {
         bail!(
@@ -129,8 +132,12 @@ pub(crate) fn request_at(path: &Path, req: &Request) -> Result<Response> {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::net::UnixListener;
+    use std::thread;
+
     use super::*;
     use crate::devices::Role;
+    use crate::testutil::TempDir;
 
     #[test]
     fn requests_are_tagged_json() {
@@ -173,5 +180,20 @@ mod tests {
         let status: Status =
             serde_json::from_str(r#"{"version":"9.0.0","uptime_secs":5,"future":[1]}"#).unwrap();
         assert_eq!(status.version, "9.0.0");
+    }
+
+    #[test]
+    fn closed_connection_is_reported() {
+        let dir = TempDir::new("ipc");
+        let path = dir.join("shiftfix.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(stream).read_line(&mut line).unwrap();
+        });
+        let err = request_at(&path, &Request::Status).unwrap_err();
+        assert_eq!(err.to_string(), "служба закрыла соединение");
+        server.join().unwrap();
     }
 }
