@@ -18,7 +18,7 @@
 - `daemon/` — служба: главный цикл (`mod.rs`), виртуальная клавиатура (`uinput.rs`), сигналы, трей.
 - `ipc.rs` — сокет `$XDG_RUNTIME_DIR/shiftfix.sock` (JSON-строки).
 - `src/bin/shiftfix-gui/portal.rs` — XDG Desktop Portal (`org.freedesktop.appearance`: `color-scheme`, `accent-color`) на zbus blocking, со сменой на лету; нужен только окну.
-- `src/bin/shiftfix-gui/theme.rs` — палитры (данными в `PALETTES`), режим, акцент и контраст текста на нём (WCAG) → `egui::Visuals`; тема хранится в `[theme]` конфига (`config::ThemeSettings`).
+- `src/bin/shiftfix-gui/theme/` — оформление окна: палитры данными (`palettes.rs`), контраст WCAG и hex (`color.rs`), тема системы из портала (`system.rs`), стиль egui и шрифты (`style.rs`), перенос старого `gui-theme` (`legacy.rs`); итоговые цвета — `resolve` в `mod.rs`. Тема хранится в `[theme]` конфига (`config::ThemeSettings`).
 - `install.sh` — установка и обновление одним идемпотентным скриптом: версии (установка / обновление / уже установлена / более старая — с вопросом), сборка до остановки, атомарная замена, sudo только для недостающего, служба запускается снова, только если работала; конфиг и выбор автозапуска не трогает.
 - `uninstall.sh` — удаление: откатывает то, что ставят install.sh и GUI, в том числе правило udev и группу input; настройки и `target/` — только с `--purge` (ещё `--yes`, `--keep-group`, `--keep-build`).
 - `BUGS.md` — найденные при ревью ошибки: место в коде, сценарий и как исправлено.
