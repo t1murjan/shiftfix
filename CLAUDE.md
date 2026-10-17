@@ -24,7 +24,7 @@
 ```sh
 cargo test                       # тест на Xvfb сам поднимает :97 (нужны Xvfb, setxkbmap, xclip)
 cargo clippy --all-targets
-shellcheck install.sh uninstall.sh tests/install/run.sh tests/install/fakes/*
+shellcheck -x install.sh uninstall.sh scripts/common.sh tests/install/run.sh tests/install/fakes/*
 cargo run --bin shiftfix -- --check
 cargo run --bin shiftfix-gui -- --page settings --theme light
 ```

@@ -1,0 +1,94 @@
+# shellcheck shell=bash
+# Общее для install.sh и uninstall.sh: пути, имена файлов и помощники.
+# Подключается из обоих скриптов (source) и сам не запускается.
+
+# Не от root и с домашним каталогом. $@ — строки, почему без sudo.
+check_user() {
+    if ((EUID == 0)); then
+        printf '%s\n' "$@" >&2
+        exit 1
+    fi
+    if [[ -z ${HOME:-} || ! -d $HOME ]]; then
+        echo "${0##*/}: не задан домашний каталог (HOME)" >&2
+        exit 1
+    fi
+}
+
+# Куда что ставится — одни пути для установки и удаления.
+# shellcheck disable=SC2034 # переменные читают install.sh и uninstall.sh
+init_paths() {
+    ME="$(id -un)"
+    MY_UID="$(id -u)"
+    BIN="$HOME/.local/bin"
+    DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
+    CONF="${XDG_CONFIG_HOME:-$HOME/.config}"
+    ICONS="$DATA/icons/hicolor/scalable/apps"
+    APPS="$DATA/applications"
+    UNITS="$CONF/systemd/user"
+    UNIT="$UNITS/shiftfix.service"
+    AUTOSTART="$CONF/autostart/shiftfix.desktop"
+    SETTINGS="$CONF/shiftfix"
+    CONFIG="$SETTINGS/config.toml"
+    UDEV_RULE=/etc/udev/rules.d/80-shiftfix-uinput.rules
+    UDEV_TEXT='KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"'
+    MODULES=/etc/modules-load.d/shiftfix-uinput.conf
+    MODULES_TEXT=uinput
+    # Как в службе (env.rs): из консоли или по ssh XDG_RUNTIME_DIR бывает не задан —
+    # тогда systemctl --user не видит службу, хотя она запущена.
+    if [[ -z ${XDG_RUNTIME_DIR:-} && -d /run/user/$MY_UID ]]; then
+        export XDG_RUNTIME_DIR="/run/user/$MY_UID"
+    fi
+    RUNTIME="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+    # Блокировки и сокеты службы и окна (имена — в src/) и блокировка install.sh.
+    DAEMON_LOCK="$RUNTIME/shiftfix.lock"
+    DAEMON_SOCK="$RUNTIME/shiftfix.sock"
+    GUI_LOCK="$RUNTIME/shiftfix-gui.lock"
+    GUI_SOCK="$RUNTIME/shiftfix-gui.sock"
+    INSTALL_LOCK="$RUNTIME/shiftfix-install.lock"
+}
+
+# Помощники.
+
+step() { printf '\n\033[1;36m==>\033[0m %s\n' "$*"; }
+note() { printf '    %s\n' "$*"; }
+have() { command -v "$1" >/dev/null 2>&1; }
+pretty() { printf '%s' "${1/#"$HOME"/\~}"; }
+user_systemd() { have systemctl && systemctl --user show-environment >/dev/null 2>&1; }
+
+# «Да»: y, yes, д, да. Через case, а не [YyДд]: без UTF-8 локали скобка сравнивает
+# байты, и «н» (тот же первый байт, что у «Д») сошло бы за «да».
+is_yes() {
+    case $1 in
+    [Yy]* | Д* | д*) return 0 ;;
+    *) return 1 ;;
+    esac
+}
+# Спросить да/нет; $2 — ответ по умолчанию (y|n). С --yes (yes=1) — «да»,
+# без терминала — выход: спросить некого.
+# shellcheck disable=SC2154 # yes задаёт parse_args скрипта
+ask() {
+    local answer
+    if ((yes)); then return 0; fi
+    if [[ ! -t 0 ]]; then
+        echo "Нет терминала, чтобы спросить, — запустите с --yes." >&2
+        exit 1
+    fi
+    if [[ $2 == y ]]; then
+        read -r -p "    $1 [Y/n] " answer || answer=n
+        [[ -z $answer ]] || is_yes "$answer"
+    else
+        read -r -p "    $1 [y/N] " answer || answer=
+        is_yes "$answer"
+    fi
+}
+
+# Два install.sh одновременно поставили бы файлы наперегонки. Блокировку держит
+# fd 9 до выхода; дочерним процессам, которые живут дольше скрипта, — 9>&-.
+take_lock() {
+    if have flock && { exec 9>"$INSTALL_LOCK"; } 2>/dev/null; then
+        if ! flock -n 9; then
+            echo "install.sh уже запущен в другом терминале — дождитесь его." >&2
+            exit 1
+        fi
+    fi
+}
