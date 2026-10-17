@@ -395,6 +395,24 @@ fn dead_key_in_target_layout_blocks_fix() {
 }
 
 #[test]
+fn dead_key_while_typing_forgets_word() {
+    let mut r = Rig::new();
+    r.eng.set_keymap(Keymap {
+        layouts: vec![
+            with_dead("us", &[(KeyCode::KEY_APOSTROPHE, false)]),
+            keymap::builtin("ru").unwrap(),
+        ],
+        caps_switches_group: false,
+    });
+    // В us(intl) апостроф мёртвый: с ним и следующей буквой приложение
+    // напечатает один символ — сколько стирать, уже не узнать.
+    r.type_text("it'");
+    r.shift2();
+    r.assert_shows("it'", 0);
+    assert_eq!(r.emitted(), 0);
+}
+
+#[test]
 fn fixes_last_word_and_toggles_back() {
     let mut r = Rig::new();
     r.type_as("привет", "ru");
