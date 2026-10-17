@@ -693,7 +693,7 @@ print_summary() {
     same)
         if ((daemon_changed || gui_changed)); then
             summary="shiftfix $NEW переустановлен (файлы изменились)"
-        elif ((${#changed[@]})) || [[ $system_state != "уже были" ]]; then
+        elif ((${#changed[@]} || need_udev + need_modules + need_group)); then
             summary="shiftfix $NEW уже был установлен — недостающее поставлено"
         else
             summary="shiftfix $NEW уже установлен — всё на месте, ничего не менялось"

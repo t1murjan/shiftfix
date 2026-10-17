@@ -233,3 +233,6 @@ as_user "systemctl --user stop shiftfix.service && mkdir '$SPACE_HOME' && ln -s 
 scenario 25-home-with-space "HOME='$SPACE_HOME' ./install.sh &&
     grep '^Exec=' '$SPACE_HOME/.local/share/applications/shiftfix.desktop'"
 scenario 26-home-with-space-uninstall "HOME='$SPACE_HOME' ./uninstall.sh --yes --keep-group"
+
+# Та же версия, но правила udev нет (его убрало удаление выше): ставится только оно.
+scenario 27-same-system-repaired './install.sh'
