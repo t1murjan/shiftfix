@@ -198,12 +198,15 @@ impl Rig {
             Box::new(move || ck.get()),
             Box::new(move || gw.borrow().inactive.then(|| "сеанс неактивен".into())),
         );
-        Rig {
+        let mut r = Rig {
             w,
             eng,
             t: 1000.0,
             clock,
-        }
+        };
+        // Как служба при запуске: список раскладок известен до первого нажатия.
+        r.eng.layout_info();
+        r
     }
 
     fn ev(&mut self, key: KeyCode, value: i32, dt: f64) {
@@ -362,6 +365,7 @@ fn layout_info_is_cached_until_switch() {
 fn layout_info_reports_backend_error() {
     let mut r = Rig::new();
     r.w.borrow_mut().backend_down = true;
+    r.clock.set(r.clock.get() + LAYOUT_INFO_TTL);
     let info = r.eng.layout_info();
     assert_eq!(info.error.as_deref(), Some("переключатель не отвечает"));
     assert!(info.codes.is_empty() && info.current.is_none());
@@ -395,6 +399,28 @@ fn dead_key_in_target_layout_blocks_fix() {
 }
 
 #[test]
+fn keymap_for_other_layout_list_is_ignored() {
+    // В keymap две раскладки, у переключателя три: номера не совпадают, и
+    // мёртвый апостроф us(intl) под №1 в keymap — не про ru под №1.
+    let mut r = Rig::build(&["us", "ru", "us2"], SelectionMethod::Paste, true);
+    r.eng.set_keymap(Keymap {
+        layouts: vec![
+            keymap::builtin("ru").unwrap(),
+            with_dead("us", &[(KeyCode::KEY_APOSTROPHE, false)]),
+        ],
+        caps_switches_group: false,
+    });
+    // Исправление на ru: «э» на клавише апострофа.
+    r.type_as("это", "ru");
+    r.shift2();
+    r.assert_shows("это", 1);
+    // Набор в ru.
+    r.type_text(" это");
+    r.shift2();
+    r.assert_shows("это 'nj", 2);
+}
+
+#[test]
 fn dead_key_while_typing_forgets_word() {
     let mut r = Rig::new();
     r.eng.set_keymap(Keymap {
@@ -406,6 +432,37 @@ fn dead_key_while_typing_forgets_word() {
     });
     // В us(intl) апостроф мёртвый: с ним и следующей буквой приложение
     // напечатает один символ — сколько стирать, уже не узнать.
+    r.type_text("it'");
+    r.shift2();
+    r.assert_shows("it'", 0);
+    assert_eq!(r.emitted(), 0);
+}
+
+#[test]
+fn dead_key_while_typing_without_layout_list() {
+    // Список раскладок переключателя неизвестен: сверить keymap не с чем, и
+    // мёртвые клавиши берутся из неё как есть.
+    let keymap = Keymap {
+        layouts: vec![
+            with_dead("us", &[(KeyCode::KEY_APOSTROPHE, false)]),
+            keymap::builtin("ru").unwrap(),
+        ],
+        caps_switches_group: false,
+    };
+    // Служба запустилась раньше переключателя: на её вопрос он не ответил.
+    let mut r = Rig::new();
+    r.eng.codes.clear();
+    r.eng.set_keymap(keymap.clone());
+    r.type_text("it'");
+    r.shift2();
+    r.assert_shows("it'", 0);
+    assert_eq!(r.emitted(), 0);
+
+    // Сменился переключатель: прежний список из трёх раскладок — уже не его.
+    let mut r = Rig::build(&["us", "ru", "us2"], SelectionMethod::Paste, true);
+    r.eng.set_keymap(keymap);
+    r.w.borrow_mut().layouts.pop();
+    r.eng.set_backend(Box::new(FakeBackend(r.w.clone())));
     r.type_text("it'");
     r.shift2();
     r.assert_shows("it'", 0);

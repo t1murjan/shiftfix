@@ -143,7 +143,8 @@ pub struct Engine {
     /// Раскладка, в которой сейчас набираются буквы.
     layout: Option<usize>,
     layout_dirty: bool,
-    /// Коды раскладок с последнего обращения к переключателю (для журнала).
+    /// Коды раскладок с последнего обращения к переключателю (для журнала и
+    /// сверки с keymap); пусто — список неизвестен.
     codes: Vec<String>,
     actions: VecDeque<Action>,
     /// Последний ответ `layout_info()` и когда он получен.
@@ -207,6 +208,7 @@ impl Engine {
 
     pub fn set_backend(&mut self, backend: Box<dyn Backend>) {
         self.backend = backend;
+        self.codes.clear(); // список прежнего переключателя
         self.info_cache = None;
         self.layout_dirty = true;
         self.reset("сменился переключатель раскладки");
@@ -238,8 +240,7 @@ impl Engine {
         };
         // Имя — после layouts(): Auto выбирает переключатель при первом обращении.
         let backend = self.backend.name().to_owned();
-        let from_keymap =
-            !self.keymap.layouts.is_empty() && self.keymap.layouts.len() == codes.len();
+        let from_keymap = self.keymap_layouts(&codes).is_some();
         let names = if from_keymap {
             self.keymap.layouts.iter().map(|l| l.name.clone()).collect()
         } else {
@@ -437,10 +438,16 @@ impl Engine {
             self.layout_dirty = false;
         }
         // Мёртвая клавиша (´, ¨ в раскладках с акцентами) печатает не символ, а
-        // часть следующего: сколько символов стирать — уже не узнать.
+        // часть следующего: сколько символов стирать — уже не узнать. Пока
+        // список переключателя неизвестен, сверить keymap не с чем — она как есть.
+        let layouts = if self.codes.is_empty() {
+            Some(self.keymap.layouts.as_slice())
+        } else {
+            self.keymap_layouts(&self.codes)
+        };
         let dead = self
             .layout
-            .and_then(|i| self.keymap.layouts.get(i))
+            .and_then(|i| layouts?.get(i))
             .is_some_and(|l| l.is_dead(key, shift));
         if dead {
             self.reset("мёртвая клавиша");
@@ -598,19 +605,25 @@ impl Engine {
 
     /// Есть ли среди `strokes` мёртвая клавиша раскладки `layout`.
     fn has_dead_key(&self, layout: usize, strokes: &[Stroke]) -> bool {
-        self.keymap
-            .layouts
-            .get(layout)
+        self.keymap_layouts(&self.codes)
+            .and_then(|l| l.get(layout))
             .is_some_and(|l| strokes.iter().any(|s| l.is_dead(s.key, s.shift)))
+    }
+
+    /// Раскладки keymap, если их столько же, сколько у переключателя (`codes`).
+    /// Иначе один и тот же номер в keymap и у переключателя может означать
+    /// разные раскладки.
+    fn keymap_layouts(&self, codes: &[String]) -> Option<&[Arc<Layout>]> {
+        let layouts = &self.keymap.layouts;
+        (!layouts.is_empty() && layouts.len() == codes.len()).then_some(layouts.as_slice())
     }
 
     /// Таблицы по индексам раскладок: из keymap, если она совпадает со списком
     /// переключателя, иначе встроенные по кодам.
     fn tables(&self, codes: &[String]) -> Vec<Option<Arc<Layout>>> {
-        if !self.keymap.layouts.is_empty() && self.keymap.layouts.len() == codes.len() {
-            self.keymap.layouts.iter().cloned().map(Some).collect()
-        } else {
-            codes.iter().map(|c| keymap::builtin(c)).collect()
+        match self.keymap_layouts(codes) {
+            Some(layouts) => layouts.iter().cloned().map(Some).collect(),
+            None => codes.iter().map(|c| keymap::builtin(c)).collect(),
         }
     }
 
