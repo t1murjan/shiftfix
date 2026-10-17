@@ -126,6 +126,9 @@ pub struct Engine {
     keymap: Keymap,
     enabled: bool,
     buf: Vec<Stroke>,
+    /// Начало буфера отрезано (BUF_MAX): первое слово в нём может быть
+    /// неполным, и Backspace этого не меняет.
+    cut: bool,
     /// Буфер — только что вставленный фрагмент целиком.
     segment: bool,
     /// Зажатые физические клавиши.
@@ -172,6 +175,7 @@ impl Engine {
             keymap: Keymap::default(),
             enabled: true,
             buf: Vec::new(),
+            cut: false,
             segment: false,
             down: HashSet::new(),
             shift_press: None,
@@ -461,6 +465,7 @@ impl Engine {
         if self.buf.len() > BUF_MAX {
             let extra = self.buf.len() - BUF_MAX;
             self.buf.drain(..extra);
+            self.cut = true;
         }
     }
 
@@ -475,6 +480,7 @@ impl Engine {
             debug!("буфер сброшен: {why}");
         }
         self.buf.clear();
+        self.cut = false;
         self.segment = false;
     }
 
@@ -523,6 +529,12 @@ impl Engine {
             }
             if start == end {
                 debug!("⇧⇧: после пробелов нет слова");
+                return Ok(());
+            }
+            if start == 0 && self.cut {
+                // Начало слова вытеснено из буфера, а исправить только хвост —
+                // исправить полслова.
+                debug!("⇧⇧: слово не поместилось в буфер, пропускаю");
                 return Ok(());
             }
             if end - start > self.cfg.max_word_len {
@@ -693,6 +705,7 @@ impl Engine {
         match plan {
             Some(strokes) if strokes.len() <= SEGMENT_MAX => {
                 self.buf = strokes; // повторный ⇧⇧ вернёт как было
+                self.cut = false;
                 self.segment = true;
             }
             _ => self.reset("выделение заменено"),

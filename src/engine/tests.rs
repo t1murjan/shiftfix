@@ -690,6 +690,49 @@ fn ignores_long_words_and_spaces_only() {
 }
 
 #[test]
+fn word_cut_by_buffer_limit_is_not_fixed() {
+    // Начало слова вытеснено из буфера: исправился бы только хвост. Backspace
+    // буфер укорачивает, но начала слова не возвращает.
+    for backspace in [false, true] {
+        // Длинное слово, за ним столько пробелов, что хвост короче max_word_len.
+        let mut r = Rig::new();
+        r.type_text(&"g".repeat(r.eng.cfg.max_word_len + 10));
+        r.type_text(&" ".repeat(BUF_MAX - 20));
+        if backspace {
+            r.tap(KeyCode::KEY_BACKSPACE, false);
+        }
+        r.shift2();
+        assert_eq!(r.emitted(), 0, "Backspace: {backspace}");
+        // После сброса буфера слово с его начала — целое.
+        r.click();
+        r.type_text("ghbdtn");
+        r.shift2();
+        assert!(r.text().ends_with(" привет"), "{}", r.text());
+
+        // Слово длиннее буфера — при обычном max_word_len и при max_word_len
+        // больше BUF_MAX.
+        for max in [Config::default().max_word_len, BUF_MAX * 2] {
+            let mut r = Rig::new();
+            r.eng.cfg.max_word_len = max;
+            r.type_text(&"g".repeat(BUF_MAX + 10));
+            if backspace {
+                r.tap(KeyCode::KEY_BACKSPACE, false);
+            }
+            r.shift2();
+            assert_eq!(
+                r.emitted(),
+                0,
+                "max_word_len = {max}, Backspace: {backspace}"
+            );
+            // Следующее слово — целое.
+            r.type_text(" ghbdtn");
+            r.shift2();
+            assert!(r.text().ends_with("g привет"), "{}", r.text());
+        }
+    }
+}
+
+#[test]
 fn selection_is_pasted_and_cycles_back() {
     let mut r = Rig::new();
     r.select_text("Ghbdtn vbh");
