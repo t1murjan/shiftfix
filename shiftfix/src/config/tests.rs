@@ -496,3 +496,14 @@ fn save_through_symlink_keeps_link_and_mode() {
     assert!(!names.iter().any(|n| n.ends_with(".tmp")), "{names:?}");
     cleanup(&path);
 }
+
+#[test]
+fn enum_names_round_trip() {
+    for backend in BackendKind::ALL {
+        assert_eq!(BackendKind::parse(backend.as_str()), Some(backend));
+    }
+    for method in SelectionMethod::ALL {
+        assert_eq!(SelectionMethod::parse(method.as_str()), Some(method));
+    }
+    assert_eq!(BackendKind::parse("windows"), None);
+}

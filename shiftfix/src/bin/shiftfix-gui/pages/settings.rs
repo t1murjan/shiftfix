@@ -7,7 +7,7 @@ use eframe::egui::{
     TextStyle, Ui,
 };
 use egui_phosphor::regular as icons;
-use shiftfix::config::{Config, Settings, ThemeMode};
+use shiftfix::config::{BackendKind, Config, SelectionMethod, Settings, ThemeMode};
 
 use crate::app::{App, ToastKind, shown_path};
 use crate::link::ServiceAction;
@@ -29,16 +29,6 @@ const HOTKEYS: [(&str, &str); 5] = [
     ("KEY_LEFTCTRL+KEY_LEFTSHIFT", "Ctrl+Shift"),
     ("KEY_CAPSLOCK", "Caps Lock"),
     ("KEY_LEFTMETA+KEY_LEFTALT+KEY_K", "Meta+Alt+K (KDE)"),
-];
-
-const BACKENDS: [(&str, &str); 7] = [
-    ("auto", "Автоматически"),
-    ("kde", "KDE Plasma (KWin)"),
-    ("gnome", "GNOME"),
-    ("hyprland", "Hyprland"),
-    ("sway", "Sway"),
-    ("x11", "X11 (XKB)"),
-    ("hotkey", "Нажатием сочетания клавиш"),
 ];
 
 /// Строка настройки: название и пояснение слева, элемент управления справа.
@@ -468,8 +458,13 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
                 "Вставка надёжнее. Набор обходится без буфера обмена, но переводы строк и символы, которых нет на клавиатуре, всё равно вставляются через него.",
                 220.0,
                 |ui| {
-                    ui.radio_value(&mut s.selection_method, "type".to_owned(), "Набором");
-                    ui.radio_value(&mut s.selection_method, "paste".to_owned(), "Вставкой");
+                    for method in [SelectionMethod::Type, SelectionMethod::Paste] {
+                        ui.radio_value(
+                            &mut s.selection_method,
+                            method.as_str().to_owned(),
+                            method.title(),
+                        );
+                    }
                 },
             );
             // Нужны и при наборе: текст, который клавишами не набрать, вставляется.
@@ -496,10 +491,11 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             "«Автоматически» сам найдёт KDE, GNOME, Hyprland, Sway или X11.",
             280.0,
             |ui| {
-                combo(ui, "backend", &mut s.backend, &BACKENDS);
+                let backends = BackendKind::ALL.map(|b| (b.as_str(), b.title()));
+                combo(ui, "backend", &mut s.backend, &backends);
             },
         );
-        if s.backend == "hotkey" {
+        if s.backend == BackendKind::Hotkey.as_str() {
             row(
                 ui,
                 p,

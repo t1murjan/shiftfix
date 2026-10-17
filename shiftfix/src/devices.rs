@@ -90,18 +90,11 @@ impl Role {
     }
 
     fn from_u8(v: u8) -> Role {
-        [
-            Role::Keyboard,
-            Role::Mouse,
-            Role::Touchpad,
-            Role::Touchscreen,
-            Role::Tablet,
-            Role::Ignore,
-            Role::Other,
-        ]
-        .get(usize::from(v))
-        .copied()
-        .unwrap_or(Role::Other)
+        // CHOICES идут в порядке объявления, Other — последней.
+        Role::CHOICES
+            .get(usize::from(v))
+            .copied()
+            .unwrap_or(Role::Other)
     }
 }
 

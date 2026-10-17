@@ -18,6 +18,7 @@ use evdev::KeyCode;
 use log::warn;
 use serde::{Deserialize, Serialize};
 
+use crate::devices::Role;
 use crate::keymap::norm_layout;
 use crate::keys::parse_keys;
 use crate::sys::env;
@@ -139,12 +140,40 @@ impl Settings {
     }
 }
 
+/// Как заменять выделенный текст (`selection_method`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectionMethod {
+    /// Вставить через буфер обмена.
     Paste,
+    /// Перенабрать клавишами.
     Type,
 }
 
+impl SelectionMethod {
+    pub const ALL: [SelectionMethod; 2] = [SelectionMethod::Paste, SelectionMethod::Type];
+
+    /// Значение в config.toml.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SelectionMethod::Paste => "paste",
+            SelectionMethod::Type => "type",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<SelectionMethod> {
+        SelectionMethod::ALL.into_iter().find(|m| m.as_str() == s)
+    }
+
+    /// Название в окне.
+    pub fn title(self) -> &'static str {
+        match self {
+            SelectionMethod::Paste => "Вставкой",
+            SelectionMethod::Type => "Набором",
+        }
+    }
+}
+
+/// Чем переключать раскладку (`backend`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendKind {
     Auto,
@@ -154,6 +183,48 @@ pub enum BackendKind {
     Sway,
     X11,
     Hotkey,
+}
+
+impl BackendKind {
+    pub const ALL: [BackendKind; 7] = [
+        BackendKind::Auto,
+        BackendKind::Kde,
+        BackendKind::Gnome,
+        BackendKind::Hyprland,
+        BackendKind::Sway,
+        BackendKind::X11,
+        BackendKind::Hotkey,
+    ];
+
+    /// Значение в config.toml.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BackendKind::Auto => "auto",
+            BackendKind::Kde => "kde",
+            BackendKind::Gnome => "gnome",
+            BackendKind::Hyprland => "hyprland",
+            BackendKind::Sway => "sway",
+            BackendKind::X11 => "x11",
+            BackendKind::Hotkey => "hotkey",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<BackendKind> {
+        BackendKind::ALL.into_iter().find(|b| b.as_str() == s)
+    }
+
+    /// Название в окне.
+    pub fn title(self) -> &'static str {
+        match self {
+            BackendKind::Auto => "Автоматически",
+            BackendKind::Kde => "KDE Plasma (KWin)",
+            BackendKind::Gnome => "GNOME",
+            BackendKind::Hyprland => "Hyprland",
+            BackendKind::Sway => "Sway",
+            BackendKind::X11 => "X11 (XKB)",
+            BackendKind::Hotkey => "Нажатием сочетания клавиш",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -197,25 +268,20 @@ impl Config {
     }
 
     pub fn from_settings(raw: Settings) -> Result<Config> {
-        let selection_method = match raw.selection_method.as_str() {
-            "paste" => SelectionMethod::Paste,
-            "type" => SelectionMethod::Type,
-            other => bail!("selection_method = {other:?}: допустимо paste или type"),
+        let Some(selection_method) = SelectionMethod::parse(&raw.selection_method) else {
+            bail!(
+                "selection_method = {:?}: допустимо paste или type",
+                raw.selection_method
+            );
         };
-        let backend = match raw.backend.as_str() {
-            "auto" => BackendKind::Auto,
-            "kde" => BackendKind::Kde,
-            "gnome" => BackendKind::Gnome,
-            "hyprland" => BackendKind::Hyprland,
-            "sway" => BackendKind::Sway,
-            "x11" => BackendKind::X11,
-            "hotkey" => BackendKind::Hotkey,
-            other => bail!(
-                "backend = {other:?}: допустимо auto, kde, gnome, hyprland, sway, x11 или hotkey"
-            ),
+        let Some(backend) = BackendKind::parse(&raw.backend) else {
+            bail!(
+                "backend = {:?}: допустимо auto, kde, gnome, hyprland, sway, x11 или hotkey",
+                raw.backend
+            );
         };
         for (device, role) in &raw.devices {
-            if crate::devices::Role::parse(role).is_none() {
+            if Role::parse(role).is_none() {
                 bail!(
                     "devices.{device:?} = {role:?}: допустимо keyboard, mouse, touchpad, touchscreen, tablet или ignore"
                 );
