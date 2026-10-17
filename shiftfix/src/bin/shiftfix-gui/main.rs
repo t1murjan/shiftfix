@@ -8,9 +8,8 @@ mod portal;
 mod theme;
 mod widgets;
 
-use std::fs::{self, File};
+use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -20,7 +19,7 @@ use std::thread;
 use std::time::Duration;
 
 use eframe::egui;
-use shiftfix::sys::{env, proc};
+use shiftfix::sys::{env, lock, proc};
 
 const USAGE: &str = "\
 shiftfix-gui — настройки и состояние shiftfix
@@ -40,15 +39,8 @@ static SHOWN: AtomicBool = AtomicBool::new(false);
 /// и stderr туда не попадает. Критическое уведомление само не исчезает.
 fn report(text: &str, critical: bool) {
     eprintln!("shiftfix-gui: {text}");
-    if env::in_path("notify-send") {
-        let urgency = if critical { "critical" } else { "normal" };
-        let _ = proc::spawn_detached(
-            "notify-send",
-            &[
-                "-a", "shiftfix", "-i", "shiftfix", "-u", urgency, "shiftfix", text,
-            ],
-        );
-    }
+    let urgency = if critical { "critical" } else { "normal" };
+    proc::notify(text, &["-u", urgency]);
 }
 
 /// Сокет, через который второй запуск просит открытое окно показаться.
@@ -87,23 +79,6 @@ fn listen_for_raise(ctx: egui::Context) {
     if let Err(err) = spawned {
         eprintln!("shiftfix-gui: {err}");
     }
-}
-
-/// Второе окно рядом с первым только путает: настройки сохранялись бы наперегонки.
-/// `None` — окно уже открыто; `Some(None)` — файл блокировки не создать, открываемся без него.
-fn single_instance() -> Option<Option<File>> {
-    let path = env::runtime_dir().join("shiftfix-gui.lock");
-    let Ok(file) = fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .open(&path)
-    else {
-        return Some(None);
-    };
-    // SAFETY: flock на собственном открытом дескрипторе.
-    let locked = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
-    locked.then_some(Some(file))
 }
 
 fn main() -> eframe::Result {
@@ -156,11 +131,17 @@ fn main() -> eframe::Result {
         }
     }));
 
-    let Some(_lock) = single_instance() else {
-        if !raise_existing() {
-            report("окно shiftfix уже открыто", false);
+    // Второе окно рядом с первым только путает: настройки сохранялись бы наперегонки.
+    let _lock = match lock::try_lock(&env::runtime_dir().join("shiftfix-gui.lock")) {
+        Ok(Some(file)) => Some(file),
+        Ok(None) => {
+            if !raise_existing() {
+                report("окно shiftfix уже открыто", false);
+            }
+            return Ok(());
         }
-        return Ok(());
+        // Файл блокировки не создать — открываемся без него.
+        Err(_) => None,
     };
 
     // Портал отвечает не сразу: спрашиваем, пока создаётся окно.

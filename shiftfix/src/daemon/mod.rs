@@ -8,7 +8,6 @@ mod tray;
 pub mod uinput;
 
 use std::fs::{self, File};
-use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, LazyLock};
@@ -26,7 +25,7 @@ use crate::ipc::{Request, Response, Status};
 use crate::keymap::{self, Keymap};
 use crate::selection::{self, Active};
 use crate::sys::session::{self, Logind};
-use crate::sys::{env, proc};
+use crate::sys::{env, lock, proc};
 use crate::{backend, ipc, logbuf};
 use tray::TrayIcon;
 use uinput::Injector;
@@ -71,28 +70,9 @@ fn monotonic() -> f64 {
 
 /// Два экземпляра исправляли бы одно слово дважды.
 pub fn lock_file(path: &Path) -> Result<File> {
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .open(path)
-        .with_context(|| format!("не открывается {}", path.display()))?;
-    // SAFETY: flock на собственном открытом дескрипторе.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        bail!("shiftfix уже запущен (если это служба: systemctl --user stop shiftfix)");
-    }
-    Ok(file)
-}
-
-fn notify(enabled: bool, text: &str) {
-    if enabled && env::in_path("notify-send") {
-        let _ = proc::spawn_detached(
-            "notify-send",
-            &[
-                "-a", "shiftfix", "-i", "shiftfix", "-t", "1500", "shiftfix", text,
-            ],
-        );
-    }
+    lock::try_lock(path)
+        .with_context(|| format!("не открывается {}", path.display()))?
+        .context("shiftfix уже запущен (если это служба: systemctl --user stop shiftfix)")
 }
 
 struct Daemon {
@@ -230,7 +210,9 @@ impl Daemon {
             "на паузе"
         };
         info!("shiftfix {state}");
-        notify(self.cfg.notify, state);
+        if self.cfg.notify {
+            proc::notify(state, &["-t", "1500"]);
+        }
         let codes = self.engine.layout_info().codes;
         self.update_tray(&codes);
     }

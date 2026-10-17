@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 
-use crate::sys::env::session_command;
+use crate::sys::env::{self, session_command};
 
 pub const TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -122,6 +122,18 @@ pub fn spawn_detached(cmd: impl AsRef<std::ffi::OsStr>, args: &[&str]) -> Result
         .with_context(|| format!("{program}: не запускается"))?;
     thread::spawn(move || child.wait());
     Ok(())
+}
+
+/// Уведомление на рабочем столе через notify-send, если он установлен.
+/// `options` — дополнительные параметры notify-send (срок показа, важность).
+pub fn notify(text: &str, options: &[&str]) {
+    if !env::in_path("notify-send") {
+        return;
+    }
+    let mut args = vec!["-a", "shiftfix", "-i", "shiftfix"];
+    args.extend_from_slice(options);
+    args.extend(["shiftfix", text]);
+    let _ = spawn_detached("notify-send", &args);
 }
 
 #[cfg(test)]
