@@ -29,21 +29,30 @@ use crate::sys::wayland as compositor;
 use wayland::WlClipboard;
 use x11::XClipboard;
 
-const NONE: u8 = 0;
-const WAYLAND: u8 = 1;
-const X11: u8 = 2;
+/// Источник выделения.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum Source {
+    None,
+    Wayland,
+    X11,
+}
 
 /// Какой источник выделения сейчас работает (его выставляет поток слежения).
 #[derive(Clone, Default)]
 pub struct Active(Arc<AtomicU8>);
 
 impl Active {
-    fn set(&self, value: u8) {
-        self.0.store(value, Ordering::Relaxed);
+    fn set(&self, source: Source) {
+        self.0.store(source as u8, Ordering::Relaxed);
     }
 
-    fn get(&self) -> u8 {
-        self.0.load(Ordering::Relaxed)
+    fn get(&self) -> Source {
+        match self.0.load(Ordering::Relaxed) {
+            1 => Source::Wayland,
+            2 => Source::X11,
+            _ => Source::None,
+        }
     }
 }
 
@@ -57,17 +66,17 @@ pub struct AutoSelection {
 impl Selection for AutoSelection {
     fn read_primary(&mut self) -> Option<String> {
         match self.active.get() {
-            WAYLAND => self.wayland.read_primary(),
-            X11 => self.x11.read_primary(),
-            _ => None,
+            Source::Wayland => self.wayland.read_primary(),
+            Source::X11 => self.x11.read_primary(),
+            Source::None => None,
         }
     }
 
     fn paste(&mut self, text: &str, keys: &mut dyn Keys) -> Result<()> {
         match self.active.get() {
-            WAYLAND => self.wayland.paste(text, keys),
-            X11 => self.x11.paste(text, keys),
-            _ => bail!("выделение сейчас недоступно"),
+            Source::Wayland => self.wayland.paste(text, keys),
+            Source::X11 => self.x11.paste(text, keys),
+            Source::None => bail!("выделение сейчас недоступно"),
         }
     }
 }
@@ -143,18 +152,18 @@ fn run(tx: &Sender<Msg>, active: &Active) {
         let (reason, wait) = match decide() {
             Choice::Wait(reason, secs) => (reason, Some(secs)),
             Choice::Wayland => {
-                active.set(WAYLAND);
+                active.set(Source::Wayland);
                 let result = wayland::watch(tx);
-                active.set(NONE);
+                active.set(Source::None);
                 match result {
                     Some(reason) => (reason, None),
                     None => return, // служба завершается
                 }
             }
             Choice::X11 => {
-                active.set(X11);
+                active.set(Source::X11);
                 let result = x11::watch(tx);
-                active.set(NONE);
+                active.set(Source::None);
                 match result {
                     Ok(()) => return,
                     Err(err) => (format!("X11: {err:#}"), None),

@@ -260,7 +260,8 @@ impl Engine {
         info
     }
 
-    // ─── входящие события ───
+    // Входящие события.
+
     pub fn key(&mut self, key: KeyCode, value: i32, ts: f64) {
         match value {
             1 => {
@@ -345,7 +346,7 @@ impl Engine {
         });
     }
 
-    // ─── разбор нажатий ───
+    // Разбор нажатий.
 
     fn press(&mut self, key: KeyCode, held: Held, ts: f64) {
         if is_shift(key) {
@@ -477,7 +478,7 @@ impl Engine {
         })
     }
 
-    // ─── исправление ───
+    // Исправление.
 
     pub fn trigger(&mut self) {
         if let Some(reason) = (self.guard)() {
@@ -586,23 +587,21 @@ impl Engine {
         Ok(())
     }
 
+    /// Переключить с `current` на `target`: текущая неизвестна — просто на
+    /// следующую, `target` уже включена — ничего не делать.
+    fn switch_from(&mut self, current: Option<usize>, target: usize) -> Result<()> {
+        if current == Some(target) {
+            return Ok(());
+        }
+        self.switch(current.map(|_| target))
+    }
+
     /// Есть ли среди `strokes` мёртвая клавиша раскладки `layout`.
     fn has_dead_key(&self, layout: usize, strokes: &[Stroke]) -> bool {
         self.keymap
             .layouts
             .get(layout)
             .is_some_and(|l| strokes.iter().any(|s| l.is_dead(s.key, s.shift)))
-    }
-
-    fn switch_to(&mut self, target: usize, current: Option<usize>) -> Result<()> {
-        self.info_cache = None;
-        match current {
-            None => self.backend.toggle(self.keys.as_mut())?,
-            Some(c) if c != target => self.backend.set(target, self.keys.as_mut())?,
-            Some(_) => return Ok(()),
-        }
-        thread::sleep(self.cfg.switch_delay);
-        Ok(())
     }
 
     /// Таблицы по индексам раскладок: из keymap, если она совпадает со списком
@@ -655,7 +654,7 @@ impl Engine {
 
         let how = match &plan {
             Some(strokes) if self.cfg.selection_method == SelectionMethod::Type => {
-                self.switch_to(tgt, current)?;
+                self.switch_from(current, tgt)?;
                 self.keys.type_strokes(strokes)?; // набор поверх выделения заменяет его
                 "набор"
             }
@@ -670,7 +669,7 @@ impl Engine {
                 if let Some(clip) = self.clip.as_mut() {
                     clip.paste(&converted, self.keys.as_mut())?;
                 }
-                self.switch_to(tgt, current)?;
+                self.switch_from(current, tgt)?;
                 "вставка"
             }
         };
