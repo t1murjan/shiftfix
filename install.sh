@@ -79,9 +79,6 @@ EOF
 
 # Помощники; общие с uninstall.sh — в scripts/common.sh.
 
-in_group() { [[ " $1 " == *" input "* ]]; }
-not() { ! "$@"; }
-
 version_ok() { # $1 >= $2
     [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" == "$2" ]]
 }
@@ -103,30 +100,11 @@ daemon_running() {
 gui_running() {
     held "$GUI_LOCK" || { have pgrep && pgrep -x -u "$MY_UID" shiftfix-gui >/dev/null; }
 }
-# Повторять команду до успеха: $1 попыток по 0.1 с.
-wait_for() {
-    local tries=$1
-    shift
-    while ((tries-- > 0)); do
-        if "$@"; then return 0; fi
-        sleep 0.1
-    done
-    return 1
-}
 # Команда, но не дольше $1 секунд (если есть timeout).
 bounded() {
     local secs=$1
     shift
     if have timeout; then timeout "$secs" "$@"; else "$@"; fi
-}
-# Остановить процессы $1: TERM, ждать $3 попыток по 0.1 с, пока $2 не скажет, что их
-# нет, потом KILL.
-terminate() { # $1 — имя процесса, $2 — проверка «ещё работает», $3 — попыток
-    pkill -TERM -x -u "$MY_UID" "$1" 2>/dev/null || true
-    if ! wait_for "$3" not "$2"; then
-        pkill -KILL -x -u "$MY_UID" "$1" 2>/dev/null || true
-        wait_for 10 not "$2" || true
-    fi
 }
 # Запустить отдельно от скрипта и терминала; блокировку install.sh (fd 9) не передаём.
 launch() {

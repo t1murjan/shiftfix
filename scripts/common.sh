@@ -63,6 +63,29 @@ note() { printf '    %s\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 pretty() { printf '%s' "${1/#"$HOME"/\~}"; }
 user_systemd() { have systemctl && systemctl --user show-environment >/dev/null 2>&1; }
+not() { ! "$@"; }
+# Есть ли input среди групп $1 (вывод id -nG).
+in_group() { [[ " $1 " == *" input "* ]]; }
+
+# Повторять команду до успеха: $1 попыток по 0.1 с.
+wait_for() {
+    local tries=$1
+    shift
+    while ((tries-- > 0)); do
+        if "$@"; then return 0; fi
+        sleep 0.1
+    done
+    return 1
+}
+# Остановить процессы $1: TERM, ждать $3 попыток по 0.1 с, пока $2 не скажет, что их
+# нет, потом KILL.
+terminate() { # $1 — имя процесса (шаблон pkill -x), $2 — проверка «ещё работает», $3 — попыток
+    pkill -TERM -x -u "$MY_UID" "$1" 2>/dev/null || true
+    if ! wait_for "$3" not "$2"; then
+        pkill -KILL -x -u "$MY_UID" "$1" 2>/dev/null || true
+        wait_for 10 not "$2" || true
+    fi
+}
 
 # «Да»: y, yes, д, да. Через case, а не [YyДд]: без UTF-8 локали скобка сравнивает
 # байты, и «н» (тот же первый байт, что у «Д») сошло бы за «да».

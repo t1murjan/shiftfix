@@ -63,6 +63,7 @@ check_system() {
 # Помощники; общие с install.sh — в scripts/common.sh.
 
 running() { if have pgrep; then pgrep -x -u "$MY_UID" 'shiftfix(-gui)?' || true; fi; }
+any_running() { [[ -n $(running) ]]; }
 
 # Добавить в to_remove те пути, что существуют (и висячие ссылки).
 found() {
@@ -94,7 +95,7 @@ find_installed() {
         if [[ -e $path ]]; then system+=("$path"); fi
     done
     leave_group=0
-    if ((!keep_group)) && [[ " $(id -nG "$ME") " == *" input "* ]]; then
+    if ((!keep_group)) && in_group "$(id -nG "$ME")"; then
         leave_group=1
     fi
     processes="$(running)"
@@ -168,14 +169,7 @@ stop_running() {
     if [[ -x $BIN/shiftfix ]]; then
         "$BIN/shiftfix" --quit >/dev/null 2>&1 || true # запущена без systemd
     fi
-    if have pkill; then
-        pkill -x -u "$MY_UID" 'shiftfix(-gui)?' || true
-        for _ in {1..30}; do
-            if [[ -z $(running) ]]; then break; fi
-            sleep 0.1
-        done
-        pkill -KILL -x -u "$MY_UID" 'shiftfix(-gui)?' || true
-    fi
+    if have pkill; then terminate 'shiftfix(-gui)?' any_running 30; fi
 }
 
 # Файлы в домашнем каталоге, сокеты, сборка (с --purge), кеши меню.
