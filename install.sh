@@ -576,11 +576,14 @@ setup_autostart() {
                 fi
             fi
         fi
-        # Службу запускает юнит — второй запуск из автозапуска сеанса не нужен.
-        # Если юнит не включился, автозапуск сеанса оставляем: иначе не останется никакого.
-        if ((enabled || unit_existed)); then rm -f -- "$AUTOSTART"; fi
+        # Службу запускает включённый юнит — второй запуск из автозапуска сеанса не нужен.
+        # Юнит выключен (или не включился) — файл автозапуска сеанса не трогаем: его мог
+        # записать сеанс без systemd, и иначе не осталось бы никакого автозапуска.
         if ((enabled)); then
+            rm -f -- "$AUTOSTART"
             autostart_state="юнит systemd $(pretty "$UNIT") — включён"
+        elif autostart_on; then
+            autostart_state="автозапуск сеанса $(pretty "$AUTOSTART") — включён (юнит systemd выключен)"
         else
             autostart_state="юнит systemd $(pretty "$UNIT") — выключен (как было)"
         fi
