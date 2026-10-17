@@ -1,4 +1,4 @@
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, RefCell, RefMut};
 use std::rc::Rc;
 
 use super::*;
@@ -17,6 +17,10 @@ struct World {
     clipboard: String,
     caps: bool,
     known_layout: bool,
+    /// Переключатель раскладки не отвечает.
+    backend_down: bool,
+    /// Сеанс неактивен: вошёл другой пользователь, открыта консоль.
+    inactive: bool,
     paste_keys: Vec<KeyCode>,
     log: Vec<String>,
 }
@@ -97,23 +101,33 @@ impl Keys for FakeKeys {
 
 struct FakeBackend(Rc<RefCell<World>>);
 
+impl FakeBackend {
+    fn world(&self) -> Result<RefMut<'_, World>> {
+        let w = self.0.borrow_mut();
+        if w.backend_down {
+            bail!("переключатель не отвечает");
+        }
+        Ok(w)
+    }
+}
+
 impl Backend for FakeBackend {
     fn name(&self) -> &'static str {
         "fake"
     }
     fn layouts(&mut self) -> Result<Vec<String>> {
-        Ok(self.0.borrow().layouts.clone())
+        Ok(self.world()?.layouts.clone())
     }
     fn current(&mut self) -> Result<Option<usize>> {
-        let w = self.0.borrow();
+        let w = self.world()?;
         Ok(w.known_layout.then_some(w.cur))
     }
     fn set(&mut self, index: usize, _keys: &mut dyn Keys) -> Result<()> {
-        self.0.borrow_mut().cur = index;
+        self.world()?.cur = index;
         Ok(())
     }
     fn toggle(&mut self, _keys: &mut dyn Keys) -> Result<()> {
-        let mut w = self.0.borrow_mut();
+        let mut w = self.world()?;
         w.cur = (w.cur + 1) % w.layouts.len();
         Ok(())
     }
@@ -168,11 +182,13 @@ impl Rig {
             clipboard: "OLD".into(),
             caps: false,
             known_layout,
+            backend_down: false,
+            inactive: false,
             paste_keys: cfg.paste_keys.clone(),
             log: Vec::new(),
         }));
         let clock = Rc::new(Cell::new(100.0));
-        let (cw, ck) = (w.clone(), clock.clone());
+        let (cw, ck, gw) = (w.clone(), clock.clone(), w.clone());
         let eng = Engine::new(
             cfg,
             Box::new(FakeBackend(w.clone())),
@@ -180,7 +196,7 @@ impl Rig {
             Some(Box::new(FakeClip(w.clone()))),
             Box::new(move || cw.borrow().caps),
             Box::new(move || ck.get()),
-            Box::new(|| None),
+            Box::new(move || gw.borrow().inactive.then(|| "сеанс неактивен".into())),
         );
         Rig {
             w,
@@ -336,6 +352,15 @@ fn layout_info_is_cached_until_switch() {
 }
 
 #[test]
+fn layout_info_reports_backend_error() {
+    let mut r = Rig::new();
+    r.w.borrow_mut().backend_down = true;
+    let info = r.eng.layout_info();
+    assert_eq!(info.error.as_deref(), Some("переключатель не отвечает"));
+    assert!(info.codes.is_empty() && info.current.is_none());
+}
+
+#[test]
 fn dead_key_in_target_layout_blocks_fix() {
     let mut r = Rig::new();
     r.eng.set_keymap(Keymap {
@@ -467,6 +492,53 @@ fn resync_uses_keys_held_by_kernel() {
     r.type_text("x"); // значит, это Ctrl+X, а не буква
     r.shift2();
     assert_eq!(r.emitted(), 0);
+}
+
+#[test]
+fn inactive_session_blocks_fix_and_forgets() {
+    let mut r = Rig::new();
+    r.type_text("ghbdtn");
+    r.w.borrow_mut().inactive = true;
+    r.shift2();
+    r.assert_shows("ghbdtn", 0);
+    assert_eq!(r.emitted(), 0, "ни Backspace, ни букв в чужой сеанс");
+    // Сеанс вернулся, но слово набиралось до ухода — его уже не исправить.
+    r.w.borrow_mut().inactive = false;
+    r.shift2();
+    assert_eq!(r.emitted(), 0);
+
+    // Выделение тоже забывается.
+    r.select_text("ghbdtn");
+    r.w.borrow_mut().inactive = true;
+    r.shift2();
+    r.w.borrow_mut().inactive = false;
+    r.shift2();
+    assert_eq!((r.text().as_str(), r.emitted()), ("ghbdtn", 0));
+}
+
+#[test]
+fn backend_error_forgets_word_and_types_nothing() {
+    for layouts in [&["us"][..], &["us", "ru"]] {
+        let mut r = Rig::build(layouts, SelectionMethod::Paste, true);
+        r.type_text("ghbdtn");
+        // Одна раскладка — переключать некуда; две — переключатель не отвечает.
+        r.w.borrow_mut().backend_down = layouts.len() == 2;
+        r.shift2();
+        r.assert_shows("ghbdtn", 0);
+        assert_eq!(r.emitted(), 0, "{layouts:?}");
+        // Всё починилось, но слово уже забыто.
+        {
+            let mut w = r.w.borrow_mut();
+            w.backend_down = false;
+            w.layouts = vec!["us".into(), "ru".into()];
+        }
+        r.shift2();
+        assert_eq!(
+            (r.text().as_str(), r.emitted()),
+            ("ghbdtn", 0),
+            "{layouts:?}"
+        );
+    }
 }
 
 #[test]
