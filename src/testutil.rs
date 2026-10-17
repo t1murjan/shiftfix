@@ -3,7 +3,6 @@
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::ops::Deref;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -75,10 +74,20 @@ impl Drop for TempDir {
 }
 
 /// Исполняемый скрипт `dir/name`: `#!/bin/sh` и `body`. Возвращает путь к нему.
+///
+/// Файл пишет отдельный процесс `sh`, а не этот. Иначе, пока файл открыт на
+/// запись, соседний тест может запустить свой процесс: копия дескриптора
+/// живёт в нём от fork до exec, и запуск скрипта в это время падает с
+/// ETXTBSY («Text file busy»). Дескриптор, открытый в `sh`, к нам не попадает.
 pub fn write_script(dir: &Path, name: &str, body: &str) -> String {
     let path = dir.join(name);
-    fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    let written = Command::new("sh")
+        .args(["-c", r#"printf '%s' "$1" > "$0" && chmod 755 "$0""#])
+        .arg(&path)
+        .arg(format!("#!/bin/sh\n{body}"))
+        .status()
+        .unwrap();
+    assert!(written.success(), "не записать {}", path.display());
     path.to_string_lossy().into_owned()
 }
 
