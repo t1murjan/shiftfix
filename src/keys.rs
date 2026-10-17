@@ -6,6 +6,7 @@ use evdev::KeyCode;
 
 use crate::keymap::ROW_KEYS;
 
+/// Печатает символ: пробел или клавиша основного блока (`ROW_KEYS`).
 pub fn is_char(key: KeyCode) -> bool {
     key == KeyCode::KEY_SPACE || ROW_KEYS.contains(&key)
 }
@@ -18,6 +19,7 @@ pub fn is_ctrl(key: KeyCode) -> bool {
     matches!(key, KeyCode::KEY_LEFTCTRL | KeyCode::KEY_RIGHTCTRL)
 }
 
+/// Ctrl/Alt/Meta, без Shift: с ними нажатие — сочетание, а не символ.
 pub fn is_modifier(key: KeyCode) -> bool {
     is_ctrl(key)
         || matches!(
@@ -74,9 +76,14 @@ pub fn is_click(key: KeyCode) -> bool {
     )
 }
 
-/// Коды `BTN_*`; всё остальное в `EV_KEY` — клавиши.
+/// Коды `BTN_*` (мышь, тачпад, перо, джойстик); всё остальное в `EV_KEY` — клавиши.
 pub fn is_button(key: KeyCode) -> bool {
-    (0x100..0x160).contains(&key.code())
+    let code = key.code();
+    // BTN_MISC (он же BTN_0) … BTN_GEAR_UP; с KEY_OK снова идут клавиши.
+    (KeyCode::BTN_0.code()..KeyCode::KEY_OK.code()).contains(&code)
+        || (KeyCode::BTN_DPAD_UP.code()..=KeyCode::BTN_DPAD_RIGHT.code()).contains(&code)
+        || (KeyCode::BTN_TRIGGER_HAPPY1.code()..=KeyCode::BTN_TRIGGER_HAPPY40.code())
+            .contains(&code)
 }
 
 /// `KEY_LEFTCTRL+KEY_V` или `leftctrl+v` → коды клавиш.
@@ -108,6 +115,15 @@ mod tests {
         );
         assert!(is_modifier(KeyCode::KEY_RIGHTMETA) && !is_modifier(KeyCode::KEY_LEFTSHIFT));
         assert!(is_button(KeyCode::BTN_TOUCH) && !is_button(KeyCode::KEY_MICMUTE));
+        // Кнопки геймпада — не только в 0x100…0x15f.
+        assert!(
+            is_button(KeyCode::BTN_DPAD_LEFT)
+                && is_button(KeyCode::BTN_TRIGGER_HAPPY1)
+                && is_button(KeyCode::BTN_TRIGGER_HAPPY40)
+                && !is_button(KeyCode::KEY_OK)
+                && !is_button(KeyCode::KEY_LIGHTS_TOGGLE)
+                && !is_button(KeyCode::KEY_SELECTIVE_SCREENSHOT)
+        );
         assert!(is_click(KeyCode::BTN_LEFT) && !is_click(KeyCode::BTN_TOUCH));
     }
 
