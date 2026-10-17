@@ -57,24 +57,25 @@ impl Response {
     }
 }
 
-/// Состояние службы для GUI.
+/// Состояние службы для GUI. Окно и служба обновляются вместе, но между
+/// установкой и перезапуском службы окно бывает новее: полей, которых
+/// служба ещё не знает, в ответе нет — они берутся по умолчанию. Так же
+/// в записях `devices` и `log`; у `LayoutInfo` и `Action` умолчаний пока нет.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Status {
     pub version: String,
     pub pid: u32,
-    pub uptime_secs: u64,
     pub enabled: bool,
     pub layouts: LayoutInfo,
     pub selection: bool,
     /// Почему выделение не исправляется (если не исправляется).
     pub selection_note: Option<String>,
     /// Чем сейчас берётся выделение: wl-clipboard или X11.
-    #[serde(default)]
     pub selection_via: Option<String>,
     /// Значок показан на панели.
     pub tray: bool,
     /// Значок включён, но панели (StatusNotifierWatcher) пока нет.
-    #[serde(default)]
     pub tray_waiting: bool,
     pub devices: Vec<DeviceInfo>,
     pub actions: Vec<Action>,
@@ -112,6 +113,7 @@ pub(crate) fn request_at(path: &Path, req: &Request, timeout: Duration) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::devices::Role;
 
     #[test]
     fn requests_are_tagged_json() {
@@ -124,5 +126,35 @@ mod tests {
         assert_eq!(req, Request::SetEnabled { enabled: false });
         let resp: Response = serde_json::from_str(r#"{"ok":true}"#).unwrap();
         assert!(resp.ok && resp.status.is_none());
+    }
+
+    #[test]
+    fn status_from_other_version() {
+        // Служба старее окна: чего нет в ответе — по умолчанию.
+        let resp: Response =
+            serde_json::from_str(r#"{"ok":true,"status":{"version":"0.3.0","enabled":true}}"#)
+                .unwrap();
+        let status = resp.status.unwrap();
+        assert_eq!((status.version.as_str(), status.enabled), ("0.3.0", true));
+        assert_eq!(status.pid, 0);
+        assert!(status.devices.is_empty() && status.selection_via.is_none());
+        assert!(status.layouts.codes.is_empty() && !status.tray_waiting);
+        // То же в записях устройств и журнала.
+        let status: Status = serde_json::from_str(
+            r#"{"devices":[{"name":"kbd","role":"keyboard"}],"log":[{"text":"готов"}]}"#,
+        )
+        .unwrap();
+        let device = &status.devices[0];
+        assert_eq!((device.name.as_str(), device.role), ("kbd", Role::Keyboard));
+        assert_eq!((device.detected, device.idle_ms), (Role::Other, None));
+        assert_eq!(
+            (status.log[0].text.as_str(), status.log[0].time),
+            ("готов", 0)
+        );
+        // Незнакомые поля пропускаются: служба новее окна или прежняя,
+        // с uptime_secs.
+        let status: Status =
+            serde_json::from_str(r#"{"version":"9.0.0","uptime_secs":5,"future":[1]}"#).unwrap();
+        assert_eq!(status.version, "9.0.0");
     }
 }

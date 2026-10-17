@@ -240,7 +240,6 @@ impl Daemon {
         Status {
             version: env!("CARGO_PKG_VERSION").into(),
             pid: std::process::id(),
-            uptime_secs: START.elapsed().as_secs(),
             enabled: self.engine.enabled(),
             layouts,
             selection: self.engine.selection_enabled() && self.selection_note.is_none(),

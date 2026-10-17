@@ -24,7 +24,7 @@ pub use registry::{Registry, ScanStats};
 /// слушает саму себя.
 pub const OWN_KEYBOARD: &str = "shiftfix virtual keyboard";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     Keyboard,
@@ -35,6 +35,7 @@ pub enum Role {
     /// Определено, но пользователь попросил не слушать.
     Ignore,
     /// Не клавиатура и не указатель: кнопка питания, датчики, гнёзда звука…
+    #[default]
     Other,
 }
 
@@ -159,8 +160,10 @@ pub fn device_key(vendor: u16, product: u16, name: &str) -> String {
     format!("{vendor:04x}:{product:04x} {name}")
 }
 
-/// Описание устройства для GUI.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Описание устройства для GUI; полей, которых служба не прислала, — по
+/// умолчанию, как в `ipc::Status`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DeviceInfo {
     pub path: String,
     pub name: String,

@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 
 const KEEP: usize = 300;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LogLine {
     /// Unix-время, секунды.
     pub time: u64,
