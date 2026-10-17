@@ -117,8 +117,6 @@ impl Backend for Sway {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
     use super::*;
     use crate::testutil::{NoKeys, fake_command};
 
@@ -126,7 +124,7 @@ mod tests {
     fn sway_over_swaymsg() {
         // Как в sway: Power Button — тоже клавиатура и идёт первой, а раскладки
         // заданы только настоящей (input "1:1:AT_…" { xkb_layout us,ru }).
-        let (dir, swaymsg) = fake_command(
+        let (_dir, swaymsg) = fake_command(
             "swaymsg",
             r#"if [ "$1 $2" = "-t get_inputs" ]; then
   echo '[{"name":"Power Button","type":"keyboard","xkb_layout_names":["English (US)"],"xkb_active_layout_index":0},
@@ -142,6 +140,5 @@ fi"#,
         assert_eq!(sway.current().unwrap(), Some(1));
         assert!(sway.warned, "у виртуальной клавиатуры одна раскладка");
         sway.set(1, &mut NoKeys).unwrap();
-        fs::remove_dir_all(dir).unwrap();
     }
 }

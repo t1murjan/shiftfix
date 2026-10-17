@@ -348,7 +348,8 @@ mod tests {
 
     #[test]
     fn live_reader_survives_udev_touching_node() {
-        let path = std::env::temp_dir().join(format!("shiftfix-node-{}", std::process::id()));
+        let dir = crate::testutil::TempDir::new("node");
+        let path = dir.join("event0");
         fs::write(&path, b"").unwrap();
         let before = stamp(&path);
         // Так udev обновляет время узла на событии change: ctime меняется,

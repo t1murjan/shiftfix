@@ -298,8 +298,7 @@ fi"#,
                 Ok(())
             }
         }
-        gnome.set(0, &mut Shell(dir.clone())).unwrap();
+        gnome.set(0, &mut Shell(dir.to_path_buf())).unwrap();
         assert_eq!(gnome.current().unwrap(), Some(0));
-        fs::remove_dir_all(dir).unwrap();
     }
 }

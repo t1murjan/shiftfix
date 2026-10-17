@@ -336,7 +336,7 @@ impl Daemon {
 mod tests {
     use super::*;
     use crate::engine::{Backend, Keys};
-    use crate::testutil::{NoKeys, temp_dir};
+    use crate::testutil::{NoKeys, TempDir};
 
     struct TwoLayouts(usize);
 
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn answers_gui_requests() {
-        let dir = temp_dir("daemon");
+        let dir = TempDir::new("daemon");
         let path = dir.join("config.toml");
         let mut d = daemon(path.clone());
 
@@ -419,7 +419,6 @@ mod tests {
 
         // Перечитать конфиг: нет файла — значения по умолчанию, плохой файл — ошибка.
         assert!(ask(&mut d, Request::Reload).1.ok);
-        fs::create_dir_all(&dir).unwrap();
         fs::write(
             &path,
             "tray = false\nselection = false\ndouble_tap_ms = 250\n",
@@ -433,7 +432,6 @@ mod tests {
 
         let (alive, resp) = ask(&mut d, Request::Quit);
         assert!(!alive && resp.ok);
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -467,11 +465,11 @@ mod tests {
 
     #[test]
     fn second_instance_is_refused() {
-        let path = std::env::temp_dir().join(format!("shiftfix-lock-{}", std::process::id()));
+        let dir = TempDir::new("lock");
+        let path = dir.join("shiftfix.lock");
         let first = lock_file(&path).unwrap();
         assert!(lock_file(&path).is_err());
         drop(first);
         assert!(lock_file(&path).is_ok());
-        fs::remove_file(path).unwrap();
     }
 }

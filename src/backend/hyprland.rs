@@ -133,6 +133,5 @@ fi"#,
         );
         // А раскладку определяет настоящая клавиатура, не виртуальная.
         assert_eq!(hypr.current().unwrap(), Some(1));
-        fs::remove_dir_all(dir).unwrap();
     }
 }

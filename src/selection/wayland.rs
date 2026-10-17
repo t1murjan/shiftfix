@@ -181,7 +181,7 @@ mod tests {
 
     use super::*;
     use crate::engine::Stroke;
-    use crate::testutil::temp_dir;
+    use crate::testutil::TempDir;
 
     /// Фальшивые wl-paste/wl-copy: буферы — файлы `clip`/`primary` и их типы.
     fn fake_tools(dir: &Path) -> (String, String) {
@@ -240,7 +240,7 @@ cat > "$d/clip"; printf '%s\n' "$2" > "$d/clip.types""#;
 
     #[test]
     fn reads_primary_text_only() {
-        let dir = temp_dir("clip-primary");
+        let dir = TempDir::new("clip-primary");
         let mut clip = clipboard(&dir);
         assert_eq!(clip.read_primary(), None);
         fs::write(dir.join("primary"), "Ghbdtn").unwrap();
@@ -252,18 +252,17 @@ cat > "$d/clip"; printf '%s\n' "$2" > "$d/clip.types""#;
         assert_eq!(clip.read_primary().as_deref(), Some("Ghbdtn"));
         fs::write(dir.join("primary.types"), "image/png\n").unwrap();
         assert_eq!(clip.read_primary(), None);
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn pastes_and_restores_previous_clipboard() {
-        let dir = temp_dir("clip-paste");
+        let dir = TempDir::new("clip-paste");
         let mut clip = clipboard(&dir);
         fs::write(dir.join("clip"), [0x89, b'P', b'N', b'G']).unwrap();
         fs::write(dir.join("clip.types"), "image/png\n").unwrap();
         let pasted = Rc::new(RefCell::new(Vec::new()));
         let mut app = App {
-            dir: dir.clone(),
+            dir: dir.to_path_buf(),
             pasted: pasted.clone(),
         };
         clip.paste("Привет мир", &mut app).unwrap();
@@ -293,6 +292,5 @@ cat > "$d/clip"; printf '%s\n' "$2" > "$d/clip.types""#;
         clip.paste("и ещё", &mut app).unwrap();
         assert_eq!(pasted.borrow().last().unwrap(), "и ещё");
         assert!(!dir.join("clip").exists(), "пароль не вернулся в буфер");
-        fs::remove_dir_all(dir).unwrap();
     }
 }

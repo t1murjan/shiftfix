@@ -157,11 +157,10 @@ mod tests {
 
     #[test]
     fn feeds_stdin() {
-        let dir = crate::testutil::temp_dir("feed");
+        let dir = crate::testutil::TempDir::new("feed");
         let file = dir.join("out");
         let script = format!("cat > {}", file.display());
         feed("sh", &["-c", &script], "привет".as_bytes()).unwrap();
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "привет");
-        std::fs::remove_dir_all(dir).unwrap();
     }
 }
