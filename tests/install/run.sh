@@ -219,3 +219,9 @@ scenario 21-first-install-interrupted './install.sh'
 scenario 22-uninstall-interrupted './uninstall.sh --yes --keep-group'
 as_user './install.sh >/dev/null 2>&1; rm ~/.fakesd/reload-fail ~/log/*.log' # снова обрыв, без журнала
 scenario 23-first-install-resumed './install.sh'
+
+# Юнит выключен, а служба запускается из автозапуска сеанса (его записал сеанс без
+# systemd): install.sh этот файл не трогает.
+as_user 'systemctl --user disable shiftfix.service && mkdir -p ~/.config/autostart &&
+    ~/.local/bin/shiftfix --print-autostart >~/.config/autostart/shiftfix.desktop'
+scenario 24-unit-off-session-autostart './install.sh'
