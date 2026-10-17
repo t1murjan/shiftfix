@@ -17,11 +17,11 @@ use evdev::{EventType, InputEvent, KeyCode, LedCode, SynchronizationCode};
 use log::{info, warn};
 
 use super::{
-    DeviceInfo, Role, Rules, caps_of, classify, device_key, event_nodes, is_virtual, node_number,
+    DeviceInfo, OWN_KEYBOARD, Role, Rules, caps_of, classify, device_key, event_nodes, is_virtual,
+    node_number,
 };
 use crate::config::Config;
 use crate::daemon::Msg;
-use crate::daemon::uinput;
 use crate::keys::{is_button, is_click};
 
 struct Shared {
@@ -126,7 +126,7 @@ impl Registry {
         let name = dev.name().unwrap_or_default().to_owned();
         let id = dev.input_id();
         let key = device_key(id.vendor(), id.product(), &name);
-        let detected = if name == uinput::NAME {
+        let detected = if name == OWN_KEYBOARD {
             Role::Other
         } else {
             classify(&caps_of(&dev))

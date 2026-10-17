@@ -5,7 +5,7 @@
 
 mod signals;
 mod tray;
-pub mod uinput;
+mod uinput;
 
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};

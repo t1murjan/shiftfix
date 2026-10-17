@@ -18,8 +18,11 @@ use evdev::{KeyCode, PropType, RelativeAxisCode};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
-use crate::daemon::uinput;
 pub use registry::{Registry, ScanStats};
+
+/// Имя виртуальной клавиатуры службы (`daemon/uinput.rs`): по нему служба не
+/// слушает саму себя.
+pub const OWN_KEYBOARD: &str = "shiftfix virtual keyboard";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -189,7 +192,7 @@ impl Rules {
 
     /// (роль, задана ли вручную)
     fn role(&self, key: &str, name: &str, detected: Role) -> (Role, bool) {
-        if name == uinput::NAME {
+        if name == OWN_KEYBOARD {
             return (Role::Other, false); // собственную виртуальную клавиатуру не слушаем никогда
         }
         if let Some(&role) = self.overrides.get(key) {
@@ -208,7 +211,7 @@ pub fn describe(path: &Path, cfg: &Config) -> Option<DeviceInfo> {
     let name = dev.name().unwrap_or_default().to_owned();
     let id = dev.input_id();
     let key = device_key(id.vendor(), id.product(), &name);
-    let detected = if name == uinput::NAME {
+    let detected = if name == OWN_KEYBOARD {
         Role::Other
     } else {
         classify(&caps_of(&dev))
@@ -360,7 +363,7 @@ mod tests {
             (Role::Ignore, false)
         );
         assert_eq!(
-            rules.role("x", uinput::NAME, Role::Keyboard),
+            rules.role("x", OWN_KEYBOARD, Role::Keyboard),
             (Role::Other, false)
         );
         assert_eq!(
