@@ -3,6 +3,10 @@
 //! Все источники событий (evdev, PRIMARY, keymap, сигналы, GUI) шлют сообщения
 //! в один канал; движок обрабатывает их по очереди в главном потоке.
 
+mod signals;
+mod tray;
+pub mod uinput;
+
 use std::fs::{self, File};
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -18,15 +22,16 @@ use log::{error, info, warn};
 use crate::config::Config;
 use crate::devices::Registry;
 use crate::engine::Engine;
-use crate::input::Injector;
 use crate::ipc::{Request, Response, Status};
 use crate::keymap::{self, Keymap};
 use crate::selection::{self, Active};
 use crate::sys::session::{self, Logind};
 use crate::sys::{env, proc};
-use crate::tray::TrayIcon;
-use crate::{backend, input, ipc, logbuf};
+use crate::{backend, ipc, logbuf};
+use tray::TrayIcon;
+use uinput::Injector;
 
+/// Событие для главного цикла службы.
 pub enum Msg {
     Key {
         key: KeyCode,
@@ -139,7 +144,7 @@ pub fn run(path: PathBuf, cfg: Config) -> Result<()> {
                 scanner.scan();
             }
         })?;
-    input::spawn_signals(tx.clone())?;
+    signals::spawn(tx.clone())?;
     ipc::serve(tx.clone())?;
     let keymap_tx = tx.clone();
     keymap::spawn_watcher(move |keymap| {

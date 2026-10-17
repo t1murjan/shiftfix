@@ -10,7 +10,7 @@ use ksni::menu::{CheckmarkItem, StandardItem};
 use ksni::{Icon, MenuItem, OfflineReason, ToolTip, Tray};
 use log::{info, warn};
 
-use crate::daemon::Msg;
+use super::Msg;
 use crate::icon;
 use crate::sys::env;
 

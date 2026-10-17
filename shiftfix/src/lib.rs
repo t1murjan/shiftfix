@@ -8,7 +8,6 @@ pub mod daemon;
 pub mod devices;
 pub mod engine;
 pub mod icon;
-pub mod input;
 pub mod ipc;
 pub mod keymap;
 pub mod keys;
@@ -19,4 +18,3 @@ pub mod service;
 pub mod sys;
 #[cfg(test)]
 mod testutil;
-pub mod tray;
