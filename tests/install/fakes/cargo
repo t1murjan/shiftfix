@@ -1,6 +1,6 @@
 #!/bin/bash
-# Поддельный cargo: «сборка» — копирование готовых бинарников из $FAKE_BUILD.
-# ~/.fakesd/cargo-fail — сборка падает.
+# Поддельный cargo: «сборка» — копирование готовых бинарников из $FAKE_BUILD и отчёт,
+# как у --message-format=json, — пути к программам. ~/.fakesd/cargo-fail — сборка падает.
 mkdir -p "$HOME/log"
 echo "$*" >>"$HOME/log/cargo.log"
 if [[ -e $HOME/.fakesd/cargo-fail ]]; then
@@ -11,4 +11,5 @@ out="${CARGO_TARGET_DIR:-target}/release"
 mkdir -p "$out"
 for f in shiftfix shiftfix-gui; do
     cmp -s "$FAKE_BUILD/$f" "$out/$f" || cp "$FAKE_BUILD/$f" "$out/$f"
+    printf '{"reason":"compiler-artifact","executable":"%s","fresh":false}\n' "$(readlink -m "$out/$f")"
 done
