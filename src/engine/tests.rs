@@ -248,8 +248,9 @@ impl Rig {
         self.eng.button(0, self.t + 0.05);
     }
 
-    /// Выделить всё мышью: клик, приложение публикует PRIMARY.
-    fn select_all(&mut self) {
+    /// В поле `text`, его выделили мышью: клик, приложение публикует PRIMARY.
+    fn select_text(&mut self, text: &str) {
+        self.w.borrow_mut().set_text(text);
         self.click();
         {
             let mut w = self.w.borrow_mut();
@@ -258,9 +259,9 @@ impl Rig {
             w.cursor = len;
             w.primary = Some(w.text());
         }
-        self.clock.set(self.clock.get() + 3.0);
-        let size = self.w.borrow().primary.as_ref().map_or(0, |p| p.len());
-        self.eng.primary_changed(size);
+        // Выделяют не сразу после прошлой вставки: это не её эхо.
+        self.clock.set(self.clock.get() + SELF_CHANGE_GRACE + 1.0);
+        self.eng.primary_changed(text.len());
     }
 
     fn text(&self) -> String {
@@ -271,8 +272,15 @@ impl Rig {
         self.w.borrow().cur
     }
 
-    fn actions(&self) -> usize {
+    /// Сколько раз движок что-то нажал: Backspace, набор, сочетание.
+    fn emitted(&self) -> usize {
         self.w.borrow().log.len()
+    }
+
+    /// В поле `text`, включена раскладка `layout`.
+    #[track_caller]
+    fn assert_shows(&self, text: &str, layout: usize) {
+        assert_eq!((self.text().as_str(), self.layout()), (text, layout));
     }
 }
 
@@ -341,17 +349,17 @@ fn dead_key_in_target_layout_blocks_fix() {
     r.w.borrow_mut().cur = 1;
     r.type_as("it's", "us");
     assert_eq!(r.text(), "шеэы");
-    let before = r.actions();
+    let before = r.emitted();
     r.shift2();
     // В us(intl) апостроф мёртвый: «itś» и Backspace×4 на повторном ⇧⇧ — не надо.
-    assert_eq!((r.text().as_str(), r.layout()), ("шеэы", 1));
-    assert_eq!(r.actions(), before, "ни переключения, ни нажатий");
+    r.assert_shows("шеэы", 1);
+    assert_eq!(r.emitted(), before, "ни переключения, ни нажатий");
 
     // Слово без мёртвых клавиш исправляется как обычно.
     r.tap(KeyCode::KEY_SPACE, false);
     r.type_as("ok", "us");
     r.shift2();
-    assert_eq!((r.text().as_str(), r.layout()), ("шеэы ok", 0));
+    r.assert_shows("шеэы ok", 0);
 }
 
 #[test]
@@ -360,9 +368,9 @@ fn fixes_last_word_and_toggles_back() {
     r.type_as("привет", "ru");
     assert_eq!(r.text(), "ghbdtn");
     r.shift2();
-    assert_eq!((r.text().as_str(), r.layout()), ("привет", 1));
+    r.assert_shows("привет", 1);
     r.shift2();
-    assert_eq!((r.text().as_str(), r.layout()), ("ghbdtn", 0));
+    r.assert_shows("ghbdtn", 0);
 }
 
 #[test]
@@ -401,7 +409,7 @@ fn continues_in_new_layout() {
     r.type_text(" мир");
     assert_eq!(r.text(), "привет мир");
     r.shift2();
-    assert_eq!((r.text().as_str(), r.layout()), ("привет vbh", 0));
+    r.assert_shows("привет vbh", 0);
 }
 
 #[test]
@@ -415,7 +423,7 @@ fn uses_layout_of_typing_not_current() {
     r.ev(LS, 0, 0.05);
     r.ev(KeyCode::KEY_LEFTALT, 0, 0.05);
     r.shift2();
-    assert_eq!((r.text().as_str(), r.layout()), ("привет", 1));
+    r.assert_shows("привет", 1);
 }
 
 #[test]
@@ -458,7 +466,7 @@ fn resync_uses_keys_held_by_kernel() {
     r.eng.resync(HashSet::from([KeyCode::KEY_LEFTCTRL])); // Ctrl зажат, пока события терялись
     r.type_text("x"); // значит, это Ctrl+X, а не буква
     r.shift2();
-    assert_eq!(r.actions(), 0);
+    assert_eq!(r.emitted(), 0);
 }
 
 #[test]
@@ -482,7 +490,7 @@ fn cursor_moves_and_shortcuts_reset_buffer() {
             }
         }
         r.shift2();
-        assert_eq!(r.actions(), 0, "действие {action}");
+        assert_eq!(r.emitted(), 0, "действие {action}");
     }
 }
 
@@ -514,60 +522,55 @@ fn touchpad_tap_is_a_click_but_drag_is_not() {
 #[test]
 fn ignores_long_words_and_spaces_only() {
     let mut r = Rig::new();
-    r.type_text(&"w".repeat(60));
+    r.type_text(&"w".repeat(r.eng.cfg.max_word_len + 1));
     r.shift2();
     r.click();
     r.type_text("   ");
     r.shift2();
-    assert_eq!(r.actions(), 0);
+    assert_eq!(r.emitted(), 0);
 }
 
 #[test]
 fn selection_is_pasted_and_cycles_back() {
     let mut r = Rig::new();
-    r.w.borrow_mut().set_text("Ghbdtn vbh");
-    r.select_all();
+    r.select_text("Ghbdtn vbh");
     r.shift2();
-    assert_eq!((r.text().as_str(), r.layout()), ("Привет мир", 1));
+    r.assert_shows("Привет мир", 1);
     assert_eq!(r.w.borrow().clipboard, "OLD");
     r.shift2();
-    assert_eq!((r.text().as_str(), r.layout()), ("Ghbdtn vbh", 0));
+    r.assert_shows("Ghbdtn vbh", 0);
 }
 
 #[test]
 fn selection_mixed_and_reverse() {
     let mut r = Rig::new();
-    r.w.borrow_mut().set_text("ghbdtn мир");
-    r.select_all();
+    r.select_text("ghbdtn мир");
     r.shift2();
     assert_eq!(r.text(), "привет мир");
 
     let mut r = Rig::new();
     r.w.borrow_mut().cur = 1;
-    r.w.borrow_mut().set_text("руддщ цщкдв");
-    r.select_all();
+    r.select_text("руддщ цщкдв");
     r.shift2();
-    assert_eq!((r.text().as_str(), r.layout()), ("hello world", 0));
+    r.assert_shows("hello world", 0);
 }
 
 #[test]
 fn multiline_selection_is_pasted_without_cycle() {
     let mut r = Rig::new();
-    r.w.borrow_mut().set_text("ghbdtn\nvbh");
-    r.select_all();
+    r.select_text("ghbdtn\nvbh");
     r.shift2();
     assert_eq!(r.text(), "привет\nмир");
-    let before = r.actions();
+    let before = r.emitted();
     r.shift2();
-    assert_eq!(r.actions(), before);
+    assert_eq!(r.emitted(), before);
 }
 
 #[test]
 fn selection_by_typing_handles_capslock() {
     let mut r = Rig::build(&["us", "ru"], SelectionMethod::Type, true);
     r.w.borrow_mut().caps = true;
-    r.w.borrow_mut().set_text("Ghbdtn");
-    r.select_all();
+    r.select_text("Ghbdtn");
     r.shift2();
     assert_eq!(r.text(), "Привет");
     assert!(!r.w.borrow().log.contains(&"combo".to_string()));
@@ -576,19 +579,17 @@ fn selection_by_typing_handles_capslock() {
 #[test]
 fn stale_primary_after_click_is_ignored() {
     let mut r = Rig::new();
-    r.w.borrow_mut().set_text("ghbdtn");
-    r.select_all();
+    r.select_text("ghbdtn");
     r.click(); // выделение снято, но PRIMARY ещё хранит старый текст
     r.w.borrow_mut().sel = None;
     r.shift2();
-    assert_eq!((r.text().as_str(), r.actions()), ("ghbdtn", 0));
+    assert_eq!((r.text().as_str(), r.emitted()), ("ghbdtn", 0));
 }
 
 #[test]
 fn own_paste_does_not_revalidate_selection() {
     let mut r = Rig::new();
-    r.w.borrow_mut().set_text("ghbdtn");
-    r.select_all();
+    r.select_text("ghbdtn");
     r.shift2();
     r.eng.primary_changed(6); // эхо нашей же вставки
     r.shift2(); // значит, это повтор по буферу, а не новое выделение
@@ -598,8 +599,7 @@ fn own_paste_does_not_revalidate_selection() {
 #[test]
 fn typing_over_selection_switches_to_word_mode() {
     let mut r = Rig::new();
-    r.w.borrow_mut().set_text("abc");
-    r.select_all();
+    r.select_text("abc");
     r.type_text("x");
     r.shift2();
     assert_eq!(r.text(), "ч");
@@ -610,11 +610,11 @@ fn three_layouts_cycle() {
     let mut r = Rig::build(&["us", "ru", "us2"], SelectionMethod::Paste, true);
     r.type_text("ghbdtn");
     r.shift2();
-    assert_eq!((r.text().as_str(), r.layout()), ("привет", 1));
+    r.assert_shows("привет", 1);
     r.shift2();
-    assert_eq!((r.text().as_str(), r.layout()), ("ghbdtn", 2));
+    r.assert_shows("ghbdtn", 2);
     r.shift2();
-    assert_eq!((r.text().as_str(), r.layout()), ("ghbdtn", 0));
+    r.assert_shows("ghbdtn", 0);
 }
 
 #[test]
@@ -633,7 +633,7 @@ fn paused_engine_does_nothing() {
     r.eng.set_enabled(false);
     r.type_text("ghbdtn");
     r.shift2();
-    assert_eq!(r.actions(), 0);
+    assert_eq!(r.emitted(), 0);
     r.eng.set_enabled(true);
     r.type_text(" ntcn");
     r.shift2();
