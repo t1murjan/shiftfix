@@ -37,6 +37,10 @@ impl Keys for NoKeys {
     fn combo(&mut self, _: &[KeyCode]) -> Result<()> {
         Ok(())
     }
+
+    fn chord(&mut self, _: &[KeyCode], _: KeyCode, _: usize) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Xvfb на время теста; при выходе, в том числе при панике, — SIGTERM и wait.

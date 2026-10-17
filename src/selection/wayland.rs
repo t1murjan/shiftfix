@@ -221,6 +221,9 @@ cat > "$d/clip"; printf '%s\n' "$2" > "$d/clip.types""#;
                 .push(fs::read_to_string(self.dir.join("clip"))?);
             Ok(())
         }
+        fn chord(&mut self, _: &[KeyCode], _: KeyCode, _: usize) -> Result<()> {
+            Ok(())
+        }
     }
 
     fn clipboard(dir: &Path) -> WlClipboard {

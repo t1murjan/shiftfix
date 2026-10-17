@@ -99,6 +99,10 @@ impl Keys for FakeKeys {
         }
         Ok(())
     }
+    fn chord(&mut self, _: &[KeyCode], _: KeyCode, _: usize) -> Result<()> {
+        self.0.borrow_mut().log.push("chord".into());
+        Ok(())
+    }
 }
 
 struct FakeBackend(Rc<RefCell<World>>);

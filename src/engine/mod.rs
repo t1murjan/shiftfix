@@ -51,10 +51,7 @@ pub trait Keys {
     fn type_strokes(&mut self, strokes: &[Stroke]) -> Result<()>;
     fn combo(&mut self, keys: &[KeyCode]) -> Result<()>;
     /// Зажать `hold`, нажать `tap` `times` раз, отпустить (Super+Space+Space в GNOME).
-    fn chord(&mut self, hold: &[KeyCode], tap: KeyCode, times: usize) -> Result<()> {
-        let keys: Vec<KeyCode> = hold.iter().copied().chain([tap]).collect();
-        (0..times).try_for_each(|_| self.combo(&keys))
-    }
+    fn chord(&mut self, hold: &[KeyCode], tap: KeyCode, times: usize) -> Result<()>;
 }
 
 /// Переключение раскладки.

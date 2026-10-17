@@ -27,6 +27,10 @@ impl Keys for NoKeys {
     fn combo(&mut self, _: &[KeyCode]) -> Result<()> {
         Ok(())
     }
+
+    fn chord(&mut self, _: &[KeyCode], _: KeyCode, _: usize) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Пропуск теста, которому не хватает внешней программы или библиотеки:
