@@ -88,6 +88,19 @@ ask() {
     fi
 }
 
+# Меню приложений и значки: иначе там ещё повисит старое. Кеш значков — только если
+# он уже есть: без него GTK читает каталог сам. kbuildsycoca — кеш меню KDE (6 и 5).
+refresh_menu_caches() {
+    local tool
+    if have update-desktop-database; then update-desktop-database "$APPS" 2>/dev/null 9>&- || true; fi
+    if have gtk-update-icon-cache && [[ -f $DATA/icons/hicolor/icon-theme.cache ]]; then
+        gtk-update-icon-cache -q "$DATA/icons/hicolor" 2>/dev/null 9>&- || true
+    fi
+    for tool in kbuildsycoca6 kbuildsycoca5; do
+        if have "$tool"; then "$tool" >/dev/null 2>&1 9>&- || true; fi
+    done
+}
+
 # Два install.sh одновременно поставили бы файлы наперегонки. Блокировку держит
 # fd 9 до выхода; дочерним процессам, которые живут дольше скрипта, — 9>&-.
 take_lock() {

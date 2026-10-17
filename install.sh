@@ -487,12 +487,7 @@ install_files() {
         note "$(pretty "${FILES[i]}")"
     done
     if ((${#changed[@]} == 0)); then note "всё как в сборке — ничего не заменялось"; fi
-    if ((menu_changed)); then
-        # Меню приложений и значки: иначе там ещё повисит старое.
-        if have update-desktop-database; then update-desktop-database "$APPS" 2>/dev/null || true; fi
-        if have gtk-update-icon-cache; then gtk-update-icon-cache -q "$DATA/icons/hicolor" 2>/dev/null || true; fi
-        if have kbuildsycoca6; then kbuildsycoca6 >/dev/null 2>&1 9>&- || true; fi
-    fi
+    if ((menu_changed)); then refresh_menu_caches; fi
 
     # Конфиг пользователя не перезаписываем: новых параметров в нём нет — берутся по умолчанию.
     if [[ -e $CONFIG || -L $CONFIG ]]; then

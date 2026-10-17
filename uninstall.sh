@@ -191,7 +191,6 @@ stop_running() {
 
 # Файлы в домашнем каталоге, сокеты, сборка (с --purge), кеши меню.
 remove_files() {
-    local tool
     step "Файлы в домашнем каталоге"
     if ((${#files[@]})); then rm -rf -- "${files[@]}"; fi
     rm -f -- "$DAEMON_SOCK" "$DAEMON_LOCK" "$GUI_LOCK" "$GUI_SOCK" "$INSTALL_LOCK"
@@ -200,14 +199,7 @@ remove_files() {
         systemctl --user daemon-reload || true
         systemctl --user reset-failed shiftfix.service >/dev/null 2>&1 || true
     fi
-    # Меню приложений и значки: иначе ярлык ещё повисит в кешах.
-    if have update-desktop-database; then update-desktop-database "$APPS" 2>/dev/null || true; fi
-    if have gtk-update-icon-cache && [[ -f $DATA/icons/hicolor/icon-theme.cache ]]; then
-        gtk-update-icon-cache -q "$DATA/icons/hicolor" 2>/dev/null || true
-    fi
-    for tool in kbuildsycoca6 kbuildsycoca5; do
-        if have "$tool"; then "$tool" >/dev/null 2>&1 || true; fi
-    done
+    refresh_menu_caches
     note "Готово."
 }
 
