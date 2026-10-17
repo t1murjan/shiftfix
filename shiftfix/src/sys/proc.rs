@@ -157,8 +157,7 @@ mod tests {
 
     #[test]
     fn feeds_stdin() {
-        let dir = std::env::temp_dir().join(format!("shiftfix-feed-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testutil::temp_dir("feed");
         let file = dir.join("out");
         let script = format!("cat > {}", file.display());
         feed("sh", &["-c", &script], "привет".as_bytes()).unwrap();

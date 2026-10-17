@@ -181,6 +181,7 @@ mod tests {
 
     use super::*;
     use crate::engine::Stroke;
+    use crate::testutil::temp_dir;
 
     /// Фальшивые wl-paste/wl-copy: буферы — файлы `clip`/`primary` и их типы.
     fn fake_tools(dir: &Path) -> (String, String) {
@@ -204,13 +205,6 @@ cat > "$d/clip"; printf '%s\n' "$2" > "$d/clip.types""#;
         }
         let tool = |n: &str| dir.join(n).to_string_lossy().into_owned();
         (tool("wl-paste"), tool("wl-copy"))
-    }
-
-    fn temp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("shiftfix-clip-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
     }
 
     /// «Приложение»: на Ctrl+V читает текущий буфер обмена.
@@ -246,7 +240,7 @@ cat > "$d/clip"; printf '%s\n' "$2" > "$d/clip.types""#;
 
     #[test]
     fn reads_primary_text_only() {
-        let dir = temp_dir("primary");
+        let dir = temp_dir("clip-primary");
         let mut clip = clipboard(&dir);
         assert_eq!(clip.read_primary(), None);
         fs::write(dir.join("primary"), "Ghbdtn").unwrap();
@@ -263,7 +257,7 @@ cat > "$d/clip"; printf '%s\n' "$2" > "$d/clip.types""#;
 
     #[test]
     fn pastes_and_restores_previous_clipboard() {
-        let dir = temp_dir("paste");
+        let dir = temp_dir("clip-paste");
         let mut clip = clipboard(&dir);
         fs::write(dir.join("clip"), [0x89, b'P', b'N', b'G']).unwrap();
         fs::write(dir.join("clip.types"), "image/png\n").unwrap();

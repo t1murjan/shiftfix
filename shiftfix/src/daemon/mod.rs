@@ -335,21 +335,8 @@ impl Daemon {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{Backend, Keys, Stroke};
-
-    struct NullKeys;
-
-    impl Keys for NullKeys {
-        fn backspace(&mut self, _: usize) -> Result<()> {
-            Ok(())
-        }
-        fn type_strokes(&mut self, _: &[Stroke]) -> Result<()> {
-            Ok(())
-        }
-        fn combo(&mut self, _: &[KeyCode]) -> Result<()> {
-            Ok(())
-        }
-    }
+    use crate::engine::{Backend, Keys};
+    use crate::testutil::{NoKeys, temp_dir};
 
     struct TwoLayouts(usize);
 
@@ -385,7 +372,7 @@ mod tests {
         let engine = Engine::new(
             cfg.clone(),
             Box::new(TwoLayouts(0)),
-            Box::new(NullKeys),
+            Box::new(NoKeys),
             None,
             Box::new(|| false),
             Box::new(monotonic),
@@ -413,8 +400,7 @@ mod tests {
 
     #[test]
     fn answers_gui_requests() {
-        let dir = std::env::temp_dir().join(format!("shiftfix-daemon-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = temp_dir("daemon");
         let path = dir.join("config.toml");
         let mut d = daemon(path.clone());
 

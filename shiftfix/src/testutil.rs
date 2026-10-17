@@ -26,11 +26,18 @@ impl Keys for NoKeys {
     }
 }
 
+/// Пустой временный каталог `shiftfix-<tag>-<pid>`; прежний с тем же именем удаляется.
+pub fn temp_dir(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("shiftfix-{tag}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
 /// Временный исполняемый скрипт вместо внешней команды (hyprctl, swaymsg,
 /// gsettings…): каталог со скриптом и путь к нему.
 pub fn fake_command(name: &str, body: &str) -> (PathBuf, String) {
-    let dir = std::env::temp_dir().join(format!("shiftfix-{name}-{}", std::process::id()));
-    fs::create_dir_all(&dir).unwrap();
+    let dir = temp_dir(name);
     let path = dir.join(name);
     fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();

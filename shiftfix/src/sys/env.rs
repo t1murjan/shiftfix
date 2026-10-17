@@ -318,9 +318,7 @@ mod tests {
 
     #[test]
     fn dead_socket_is_not_alive() {
-        let dir = std::env::temp_dir().join(format!("shiftfix-env-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testutil::temp_dir("env");
         let path = dir.join("wayland-9");
         let listener = UnixListener::bind(&path).unwrap();
         assert!(is_socket(&path) && alive(&path));
