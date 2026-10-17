@@ -7,7 +7,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use crate::proc;
+use crate::sys::proc;
 
 pub const UNIT: &str = "shiftfix.service";
 

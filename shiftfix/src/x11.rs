@@ -24,8 +24,8 @@ use x11rb::rust_connection::{DefaultStream, RustConnection};
 
 use crate::daemon::Msg;
 use crate::engine::{Backend, Keys};
-use crate::env;
 use crate::keys::norm_layout;
+use crate::sys::env;
 use crate::xkb::{Keymap, keymap_from_names};
 
 pub struct XConn {

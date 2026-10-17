@@ -14,7 +14,7 @@ use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use crate::dbus::{Bus, Client};
+use crate::sys::dbus::{Bus, Client};
 
 /// Сколько помнить найденное: адреса нужны при каждом запуске внешней команды.
 const CACHE_TTL: Duration = Duration::from_secs(2);

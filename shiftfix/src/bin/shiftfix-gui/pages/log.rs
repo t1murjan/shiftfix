@@ -64,7 +64,7 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
                     let _ = app.saved.save(&path);
                 }
                 if let Err(err) =
-                    shiftfix::proc::spawn_detached("xdg-open", &[&path.to_string_lossy()])
+                    shiftfix::sys::proc::spawn_detached("xdg-open", &[&path.to_string_lossy()])
                 {
                     app.toast(ToastKind::Error, format!("{err:#}"));
                 }

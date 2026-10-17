@@ -12,11 +12,11 @@ use log::{info, warn};
 use serde_json::Value;
 
 use crate::config::{BackendKind, Config};
-use crate::dbus::{Bus, Client};
 use crate::engine::{Backend, Keys};
-use crate::env;
 use crate::keys::{code_from_long_name, norm_layout};
-use crate::proc::run_text;
+use crate::sys::dbus::{Bus, Client};
+use crate::sys::env;
+use crate::sys::proc::run_text;
 use crate::x11::XkbLayout;
 
 // ─── KDE Plasma ─────────────────────────────────────────────────────────────

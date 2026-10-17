@@ -286,11 +286,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
 }
 
 fn connect() -> Option<Connection> {
-    let display = crate::env::wayland_display()?;
+    let display = crate::sys::env::wayland_display()?;
     let path = if display.starts_with('/') {
         display.into()
     } else {
-        crate::env::runtime_dir().join(display)
+        crate::sys::env::runtime_dir().join(display)
     };
     Connection::from_socket(UnixStream::connect(path).ok()?).ok()
 }
@@ -331,7 +331,8 @@ pub fn spawn_watcher(on_change: impl Fn(Keymap) + Send + 'static) {
         loop {
             if let Some(conn) = connect() {
                 watch(&conn, &on_change);
-            } else if crate::env::wayland_display().is_none() && crate::env::x11_display().is_some()
+            } else if crate::sys::env::wayland_display().is_none()
+                && crate::sys::env::x11_display().is_some()
             {
                 // Сеанс X11: keymap строится из свойства корневого окна — и тогда,
                 // когда выделение не исправляется.

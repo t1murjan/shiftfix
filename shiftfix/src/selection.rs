@@ -21,7 +21,8 @@ use crate::clipboard::{WlClipboard, XClipboard};
 use crate::config::Config;
 use crate::daemon::Msg;
 use crate::engine::{Keys, Selection};
-use crate::{env, x11, xkb};
+use crate::sys::env;
+use crate::{x11, xkb};
 
 const NONE: u8 = 0;
 const WAYLAND: u8 = 1;

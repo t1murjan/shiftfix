@@ -21,10 +21,11 @@ use crate::engine::Engine;
 use crate::input::Injector;
 use crate::ipc::{Request, Response, Status};
 use crate::selection::{self, Active};
-use crate::session::{self, Logind};
+use crate::sys::session::{self, Logind};
+use crate::sys::{env, proc};
 use crate::tray::TrayIcon;
 use crate::xkb::Keymap;
-use crate::{backend, env, input, ipc, logbuf, proc, xkb};
+use crate::{backend, input, ipc, logbuf, xkb};
 
 pub enum Msg {
     Key {

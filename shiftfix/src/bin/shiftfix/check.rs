@@ -7,8 +7,9 @@ use std::process::ExitCode;
 use shiftfix::config::Config;
 use shiftfix::devices::{self, Role};
 use shiftfix::selection::{self, Choice};
-use shiftfix::session::Logind;
-use shiftfix::{backend, env, proc, x11, xkb};
+use shiftfix::sys::session::Logind;
+use shiftfix::sys::{env, proc};
+use shiftfix::{backend, x11, xkb};
 
 /// Строки отчёта и счётчик проблем.
 #[derive(Default)]

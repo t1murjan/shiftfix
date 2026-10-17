@@ -15,8 +15,8 @@ use log::{debug, warn};
 
 use crate::config::Config;
 use crate::engine::{Keys, Selection};
-use crate::env;
-use crate::proc::{TIMEOUT, feed, run};
+use crate::sys::env;
+use crate::sys::proc::{TIMEOUT, feed, run};
 
 const TEXT_TYPES: [&str; 5] = [
     "text/plain;charset=utf-8",

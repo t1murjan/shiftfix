@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 
-use crate::env::session_command;
+use crate::sys::env::session_command;
 
 pub const TIMEOUT: Duration = Duration::from_secs(2);
 

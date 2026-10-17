@@ -9,9 +9,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use eframe::egui;
-use shiftfix::env;
 use shiftfix::ipc::{self, Request, Status};
-use shiftfix::{proc, service};
+use shiftfix::service;
+use shiftfix::sys::env;
+use shiftfix::sys::proc;
 
 use crate::app::{Toast, ToastKind};
 

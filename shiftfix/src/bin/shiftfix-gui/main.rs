@@ -19,7 +19,7 @@ use std::thread;
 use std::time::Duration;
 
 use eframe::egui;
-use shiftfix::{env, proc};
+use shiftfix::sys::{env, proc};
 
 const USAGE: &str = "\
 shiftfix-gui — настройки и состояние shiftfix

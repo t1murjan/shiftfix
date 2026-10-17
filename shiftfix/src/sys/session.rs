@@ -2,8 +2,8 @@
 //! когда за компьютером другой пользователь или открыта текстовая консоль:
 //! в такой момент Backspace и буквы ушли бы в чужой сеанс.
 
-use crate::dbus::{Bus, Client};
-use crate::env;
+use crate::sys::dbus::{Bus, Client};
+use crate::sys::env;
 
 /// Состояние сеанса пользователя по данным logind.
 pub struct Logind {

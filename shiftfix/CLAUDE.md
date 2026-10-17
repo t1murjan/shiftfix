@@ -11,8 +11,8 @@
 - `backend.rs` — переключение раскладки: KDE (DBus), GNOME (gsettings + Super+Space), Hyprland, Sway, X11 (XKB), хоткей.
 - `xkb.rs` — keymap от композитора через libxkbcommon, загружаемую dlopen.
 - `selection.rs`, `clipboard.rs`, `x11.rs` — выделение. Wayland с data-control идёт через wl-clipboard, X11 и GNOME через XWayland — через xclip и XFixes.
-- `env.rs` — поиск сеанса: своё окружение, окружение systemd, живые сокеты.
-- `session.rs` — проверка logind `session/auto` Active, чтобы не печатать в чужой сеанс.
+- `sys/env.rs` — поиск сеанса: своё окружение, окружение systemd, живые сокеты.
+- `sys/session.rs` — проверка logind `session/auto` Active, чтобы не печатать в чужой сеанс.
 - `service.rs` — тексты юнита systemd и файла автозапуска (`.desktop`): их печатают `--print-unit` и `--print-autostart` и пишет окно.
 - `ipc.rs` — сокет `$XDG_RUNTIME_DIR/shiftfix.sock` (JSON-строки).
 - `portal.rs` — XDG Desktop Portal (`org.freedesktop.appearance`: `color-scheme`, `accent-color`) на zbus blocking, со сменой на лету; служба его не вызывает, только окно.

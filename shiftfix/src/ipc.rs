@@ -19,7 +19,7 @@ use crate::engine::{Action, LayoutInfo};
 use crate::logbuf::LogLine;
 
 pub fn socket_path() -> PathBuf {
-    crate::env::runtime_dir().join("shiftfix.sock")
+    crate::sys::env::runtime_dir().join("shiftfix.sock")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

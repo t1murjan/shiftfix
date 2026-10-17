@@ -11,8 +11,8 @@ use ksni::{Icon, MenuItem, OfflineReason, ToolTip, Tray};
 use log::{info, warn};
 
 use crate::daemon::Msg;
-use crate::env;
 use crate::icon;
+use crate::sys::env;
 
 struct ShiftTray {
     tx: Sender<Msg>,
@@ -35,9 +35,9 @@ fn open_gui(page: Option<&str>) {
     let result = if in_service {
         let mut scoped = vec!["--user", "--scope", "--quiet", "--collect"];
         scoped.extend(args);
-        crate::proc::spawn_detached("systemd-run", &scoped)
+        crate::sys::proc::spawn_detached("systemd-run", &scoped)
     } else {
-        crate::proc::spawn_detached(&gui, &args[1..])
+        crate::sys::proc::spawn_detached(&gui, &args[1..])
     };
     if let Err(err) = result {
         warn!("не удалось открыть {}: {err:#}", gui.display());
