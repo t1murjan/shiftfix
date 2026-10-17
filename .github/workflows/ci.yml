@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Тестам нужны Xvfb, setxkbmap и xclip (tests/x11.rs), dbus-daemon (KDE,
+      # портал) и libxkbcommon (таблицы раскладок); без них тесты пропускаются.
+      - name: Пакеты для тестов
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb x11-xkb-utils xclip dbus libxkbcommon0 shellcheck
+
+      - name: Форматирование
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Тесты
+        run: cargo test --locked
+
+      - name: Shellcheck
+        run: shellcheck install.sh uninstall.sh tests/install/run.sh tests/install/fakes/*
