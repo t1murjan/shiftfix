@@ -193,7 +193,7 @@ stop_running() {
 remove_files() {
     step "Файлы в домашнем каталоге"
     if ((${#files[@]})); then rm -rf -- "${files[@]}"; fi
-    rm -f -- "$DAEMON_SOCK" "$DAEMON_LOCK" "$GUI_LOCK" "$GUI_SOCK" "$INSTALL_LOCK"
+    rm -f -- "$DAEMON_SOCK" "$DAEMON_LOCK" "$GUI_LOCK" "$GUI_SOCK"
     if [[ -n $build ]]; then rm -rf -- "$build"; fi
     if user_systemd; then
         systemctl --user daemon-reload || true
@@ -259,6 +259,7 @@ main() {
     parse_args "$@"
     check_system
     init_paths
+    take_lock
     find_installed
     show_plan
     confirm
