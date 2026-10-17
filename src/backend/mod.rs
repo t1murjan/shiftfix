@@ -42,12 +42,16 @@ mod tests {
 
     #[test]
     fn auto_falls_back_to_hotkey() {
-        // В песочнице тестов нет ни KDE, ни Hyprland, ни Sway.
         let cfg = Config::default();
         let mut auto = make(&cfg);
-        if auto.layouts().is_ok_and(|l| l == ["us", "ru"]) {
-            assert_eq!(auto.current().unwrap(), None);
-            assert_eq!(auto.name(), "хоткей");
+        let layouts = auto.layouts(); // здесь Auto ищет окружение
+        if auto.name() != Hotkey::new(Vec::new(), Vec::new()).name() {
+            // На рабочем столе (KDE, Hyprland, X11…) проверять нечего. Это не
+            // нехватка программ — пропуск и в строгом режиме.
+            eprintln!("— пропуск: раскладку переключает {}", auto.name());
+            return;
         }
+        assert_eq!(layouts.unwrap(), cfg.hotkey_layouts);
+        assert_eq!(auto.current().unwrap(), None);
     }
 }

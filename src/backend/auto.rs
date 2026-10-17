@@ -86,7 +86,9 @@ impl Auto {
 
 impl Backend for Auto {
     fn name(&self) -> &'static str {
-        self.found.as_ref().map_or("хоткей", |b| b.name())
+        self.found
+            .as_ref()
+            .map_or(self.fallback.name(), |b| b.name())
     }
 
     fn layouts(&mut self) -> Result<Vec<String>> {
