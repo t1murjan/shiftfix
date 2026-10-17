@@ -4,6 +4,7 @@
 
 mod check;
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
@@ -39,7 +40,7 @@ shiftfix — двойной Shift исправляет раскладку пос
 Настройки, устройства и инструкция — в программе shiftfix-gui.
 ";
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum Command {
     Run,
     Check,
@@ -59,13 +60,14 @@ struct Args {
     debug: bool,
 }
 
-fn parse_args() -> Result<Args> {
+/// Параметры без имени программы.
+fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Args> {
+    let mut it = args.into_iter();
     let mut args = Args {
         command: Command::Run,
         config: None,
         debug: false,
     };
-    let mut it = std::env::args_os().skip(1);
     while let Some(arg) = it.next() {
         let command = match arg.to_str() {
             Some("--config") => {
@@ -99,7 +101,7 @@ fn parse_args() -> Result<Args> {
 }
 
 fn main() -> ExitCode {
-    let args = match parse_args() {
+    let args = match parse_args(std::env::args_os().skip(1)) {
         Ok(args) => args,
         Err(err) => {
             eprintln!("shiftfix: {err}\n\n{USAGE}");
@@ -220,5 +222,85 @@ fn status() -> ExitCode {
             eprintln!("shiftfix: {err:#}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::ffi::OsStringExt;
+
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Args> {
+        parse_args(args.iter().map(OsString::from))
+    }
+
+    fn error(args: &[&str]) -> String {
+        parse(args).err().expect("ожидалась ошибка").to_string()
+    }
+
+    #[test]
+    fn without_arguments_runs_service() {
+        let args = parse(&[]).unwrap();
+        assert_eq!(args.command, Command::Run);
+        assert!(args.config.is_none() && !args.debug);
+    }
+
+    #[test]
+    fn options_and_actions() {
+        let args = parse(&["--debug", "--config", "/tmp/my config.toml", "--check"]).unwrap();
+        assert_eq!(args.command, Command::Check);
+        assert_eq!(args.config, Some(PathBuf::from("/tmp/my config.toml")));
+        assert!(args.debug);
+
+        for (arg, command) in [
+            ("--check", Command::Check),
+            ("--print-config", Command::PrintConfig),
+            ("--print-unit", Command::PrintUnit),
+            ("--print-autostart", Command::PrintAutostart),
+            ("-h", Command::Help),
+            ("--help", Command::Help),
+            ("-V", Command::Version),
+            ("--version", Command::Version),
+            ("--status", Command::Status),
+            ("--toggle", Command::Send(Request::Toggle)),
+            (
+                "--pause",
+                Command::Send(Request::SetEnabled { enabled: false }),
+            ),
+            (
+                "--resume",
+                Command::Send(Request::SetEnabled { enabled: true }),
+            ),
+            ("--reload", Command::Send(Request::Reload)),
+            ("--quit", Command::Send(Request::Quit)),
+        ] {
+            assert_eq!(parse(&[arg]).unwrap().command, command, "{arg}");
+        }
+
+        // Путь к конфигу — любые байты, не только UTF-8.
+        let path = OsString::from_vec(b"/tmp/\xff.toml".to_vec());
+        let args = parse_args([OsString::from("--config"), path.clone()]).unwrap();
+        assert_eq!(args.config, Some(PathBuf::from(path)));
+    }
+
+    #[test]
+    fn mistakes() {
+        assert_eq!(
+            error(&["--status", "--toggle"]),
+            "можно указать только одно действие"
+        );
+        assert_eq!(
+            error(&["--pause", "--pause"]),
+            "можно указать только одно действие"
+        );
+        assert_eq!(error(&["--config"]), "--config: нужен путь");
+        assert_eq!(error(&["--bogus"]), "неизвестный параметр --bogus");
+        assert_eq!(error(&["status"]), "неизвестный параметр status");
+        let bad = parse_args([OsString::from_vec(b"--\xff".to_vec())]);
+        assert_eq!(
+            bad.err().unwrap().to_string(),
+            "неизвестный параметр --\u{fffd}"
+        );
     }
 }
