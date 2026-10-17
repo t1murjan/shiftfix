@@ -1,22 +1,23 @@
 //! Окно: боковая панель, страницы, всплывающие сообщения.
 
-use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use eframe::egui::{
-    self, Align, Align2, Color32, CornerRadius, Frame, Image, Layout, Margin, Order, RichText,
-    ScrollArea, Sense, Stroke, TextureHandle, TextureOptions, Ui, load::SizedTexture, vec2,
+    self, Align, Align2, Color32, CornerRadius, Frame, Image, Layout, Margin, RichText, ScrollArea,
+    Sense, Stroke, TextureHandle, TextureOptions, Ui, load::SizedTexture, vec2,
 };
 use egui_phosphor::regular as icons;
 use shiftfix::config::{Config, Settings, ThemeMode, ThemeSettings};
 use shiftfix::devices::{self, DeviceInfo, Role};
 use shiftfix::ipc::{Request, Status};
 
+use crate::format::versions_differ;
 use crate::link::{Link, ServiceAction, Snapshot};
 use crate::pages;
 use crate::theme::{self, Palette};
+use crate::toast::{Toast, ToastKind, Toasts};
 use crate::widgets::{self, bold};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,55 +73,6 @@ impl Page {
 /// Версия окна; у службы своя — в `Status.version`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Служба другой версии, чем окно: после обновления её не перезапустили.
-/// Пустая версия службы (не сообщила) — не расхождение.
-pub fn versions_differ(window: &str, service: &str) -> bool {
-    let norm = |v: &str| v.trim().trim_start_matches('v').to_owned();
-    let service = norm(service);
-    !service.is_empty() && service != norm(window)
-}
-
-/// Путь для показа: домашний каталог — «~».
-pub fn short_path(path: &Path, home: Option<&Path>) -> String {
-    match home.filter(|h| !h.as_os_str().is_empty()) {
-        Some(home) => match path.strip_prefix(home) {
-            Ok(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
-            Ok(rest) => format!("~/{}", rest.display()),
-            Err(_) => path.display().to_string(),
-        },
-        None => path.display().to_string(),
-    }
-}
-
-/// Путь для показа относительно `$HOME`.
-pub fn shown_path(path: &Path) -> String {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    short_path(path, home.as_deref())
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ToastKind {
-    Info,
-    Success,
-    Error,
-}
-
-pub struct Toast {
-    pub kind: ToastKind,
-    pub text: String,
-    born: Instant,
-}
-
-impl Toast {
-    pub fn new(kind: ToastKind, text: impl Into<String>) -> Toast {
-        Toast {
-            kind,
-            text: text.into(),
-            born: Instant::now(),
-        }
-    }
-}
-
 /// Что сейчас со службой — для заголовка и боковой панели.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -134,8 +86,7 @@ pub struct App {
     pub page: Page,
     pub link: Link,
     pub snap: Snapshot,
-    toasts: Vec<Toast>,
-    toast_rx: Receiver<Toast>,
+    toasts: Toasts,
     pub settings: Settings,
     pub saved: Settings,
     pub settings_error: Option<String>,
@@ -158,7 +109,7 @@ impl App {
         watch: theme::SystemWatch,
     ) -> App {
         let ctx = &cc.egui_ctx;
-        let (toast_tx, toast_rx) = mpsc::channel();
+        let (toasts, toast_tx) = Toasts::new();
         let link = Link::start(ctx, toast_tx);
         let logo_image =
             egui::ColorImage::from_rgba_unmultiplied([96, 96], &shiftfix::icon::rgba(96, true));
@@ -181,8 +132,7 @@ impl App {
             page,
             link,
             snap: Snapshot::default(),
-            toasts: Vec::new(),
-            toast_rx,
+            toasts,
             saved: settings.clone(),
             settings,
             settings_error,
@@ -417,63 +367,6 @@ impl App {
             widgets::pill(ui, text, color, color.gamma_multiply(0.14));
         });
     }
-
-    fn draw_toasts(&mut self, ctx: &egui::Context, p: &Palette) {
-        const LIFE: f32 = 3.5;
-        self.toasts
-            .retain(|t| t.born.elapsed().as_secs_f32() < LIFE);
-        if self.toasts.is_empty() {
-            return;
-        }
-        // Пока висит «Выполняю…», а уже пришёл результат — оставляем только результат.
-        if self.toasts.iter().any(|t| t.kind != ToastKind::Info) {
-            self.toasts
-                .retain(|t| t.kind != ToastKind::Info || t.born.elapsed().as_secs_f32() < 0.3);
-        }
-        egui::Area::new(egui::Id::new("toasts"))
-            .anchor(Align2::RIGHT_BOTTOM, vec2(-20.0, -20.0))
-            .order(Order::Foreground)
-            .interactable(false)
-            .show(ctx, |ui| {
-                for toast in self.toasts.iter().rev().take(4) {
-                    let age = toast.born.elapsed().as_secs_f32();
-                    let alpha = ((LIFE - age) / 0.4).clamp(0.0, 1.0) * (age / 0.15).clamp(0.0, 1.0);
-                    let (icon, color) = match toast.kind {
-                        ToastKind::Info => (icons::HOURGLASS_MEDIUM, p.accent),
-                        ToastKind::Success => (icons::CHECK_CIRCLE, p.positive),
-                        ToastKind::Error => (icons::WARNING_CIRCLE, p.negative),
-                    };
-                    Frame::NONE
-                        .fill(p.card.gamma_multiply(alpha))
-                        .stroke(Stroke::new(1.0, color.gamma_multiply(0.6 * alpha)))
-                        .corner_radius(CornerRadius::same(12))
-                        .inner_margin(Margin::symmetric(16, 12))
-                        .shadow(egui::Shadow {
-                            offset: [0, 6],
-                            blur: 20,
-                            spread: 0,
-                            color: Color32::from_black_alpha((60.0 * alpha) as u8),
-                        })
-                        .show(ui, |ui| {
-                            ui.set_max_width(380.0);
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    widgets::icon(icon, 18.0).color(color.gamma_multiply(alpha)),
-                                );
-                                ui.add(
-                                    egui::Label::new(
-                                        RichText::new(&toast.text)
-                                            .color(p.text.gamma_multiply(alpha)),
-                                    )
-                                    .wrap(),
-                                );
-                            });
-                        });
-                    ui.add_space(8.0);
-                }
-            });
-        ctx.request_repaint_after(Duration::from_millis(50));
-    }
 }
 
 pub fn state_label(state: State, p: &Palette) -> (&'static str, Color32) {
@@ -522,9 +415,7 @@ fn nav_item(ui: &mut Ui, p: &Palette, icon: &str, title: &str, selected: bool) -
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.snap = self.link.snapshot();
-        while let Ok(toast) = self.toast_rx.try_recv() {
-            self.toasts.push(toast);
-        }
+        self.toasts.receive();
         let p = self.palette(ui.ctx());
         egui::Panel::left("nav")
             .exact_size(236.0)
@@ -563,58 +454,12 @@ impl eframe::App for App {
                     });
             });
         let ctx = ui.ctx().clone();
-        self.draw_toasts(&ctx, &p);
+        self.toasts.show(&ctx, &p);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if self.theme.unsaved() {
             self.save_theme();
         }
-    }
-}
-
-/// Unix-время → «ЧЧ:ММ:СС» по местному времени.
-pub fn clock(ts: u64) -> String {
-    let t = libc::time_t::try_from(ts).unwrap_or_default();
-    // SAFETY: localtime_r пишет в локальную структуру.
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    if unsafe { libc::localtime_r(&t, &mut tm) }.is_null() {
-        return String::from("--:--:--");
-    }
-    format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn versions_differ_only_on_real_mismatch() {
-        assert!(!versions_differ("0.4.0", "0.4.0"));
-        assert!(!versions_differ("0.4.0", " 0.4.0\n"));
-        assert!(!versions_differ("0.4.0", "v0.4.0"));
-        assert!(versions_differ("0.4.0", "0.3.0"));
-        assert!(versions_differ("0.4.0", "0.4.1"));
-        assert!(versions_differ("0.4.0", "0.4.0-dev"));
-        // Служба версию не сообщила — не о чем предупреждать.
-        assert!(!versions_differ("0.4.0", ""));
-        assert!(!versions_differ("0.4.0", "  "));
-    }
-
-    #[test]
-    fn short_path_replaces_home() {
-        let home = Some(Path::new("/home/u"));
-        let p = |s: &str| short_path(Path::new(s), home);
-        assert_eq!(
-            p("/home/u/.config/shiftfix/config.toml"),
-            "~/.config/shiftfix/config.toml"
-        );
-        assert_eq!(p("/home/u"), "~");
-        // Соседний каталог с тем же началом имени — не домашний.
-        assert_eq!(p("/home/u2/config.toml"), "/home/u2/config.toml");
-        assert_eq!(p("/etc/shiftfix.toml"), "/etc/shiftfix.toml");
-        let path = Path::new("/home/u/x");
-        assert_eq!(short_path(path, None), "/home/u/x");
-        assert_eq!(short_path(path, Some(Path::new(""))), "/home/u/x");
     }
 }

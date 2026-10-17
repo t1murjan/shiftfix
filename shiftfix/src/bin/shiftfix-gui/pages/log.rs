@@ -3,9 +3,11 @@
 use eframe::egui::{RichText, ScrollArea, Ui};
 use egui_phosphor::regular as icons;
 
-use crate::app::{App, ToastKind, clock};
+use crate::app::App;
+use crate::format::clock;
 use crate::link::{self, ServiceAction};
 use crate::theme::Palette;
+use crate::toast::ToastKind;
 use crate::widgets::{self, card, card_title, page_header};
 
 pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {

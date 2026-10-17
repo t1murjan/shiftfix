@@ -3,7 +3,8 @@
 use eframe::egui::{Align, Color32, CornerRadius, Grid, Pos2, RichText, Sense, Ui, vec2};
 use egui_phosphor::regular as icons;
 
-use crate::app::{App, Page, VERSION, shown_path, versions_differ};
+use crate::app::{App, Page, VERSION};
+use crate::format::{shown_path, versions_differ};
 use crate::link::ServiceAction;
 use crate::theme::Palette;
 use crate::widgets::{self, bold, card, card_title, keycap, page_header};

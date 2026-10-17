@@ -9,9 +9,11 @@ use eframe::egui::{
 use egui_phosphor::regular as icons;
 use shiftfix::config::{BackendKind, Config, SelectionMethod, Settings, ThemeMode};
 
-use crate::app::{App, ToastKind, shown_path};
+use crate::app::App;
+use crate::format::shown_path;
 use crate::link::ServiceAction;
 use crate::theme::{self, HexCommit, Palette, SystemNote, Variant};
+use crate::toast::ToastKind;
 use crate::widgets::{self, card, card_title, page_header, toggle_row};
 
 const PASTE_KEYS: [(&str, &str); 3] = [

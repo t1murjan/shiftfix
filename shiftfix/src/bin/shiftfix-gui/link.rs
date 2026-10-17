@@ -14,7 +14,7 @@ use shiftfix::service;
 use shiftfix::sys::env;
 use shiftfix::sys::proc;
 
-use crate::app::{Toast, ToastKind};
+use crate::toast::{Toast, ToastKind};
 
 use shiftfix::service::UNIT;
 

@@ -9,7 +9,8 @@ use shiftfix::devices::Role;
 use shiftfix::engine::ActionKind;
 use shiftfix::ipc::Request;
 
-use crate::app::{App, Page, State, clock};
+use crate::app::{App, Page, State};
+use crate::format::clock;
 use crate::link::ServiceAction;
 use crate::theme::{self, Palette};
 use crate::widgets::{self, bold, card, card_title, keycap};

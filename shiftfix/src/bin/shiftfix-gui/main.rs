@@ -2,10 +2,12 @@
 //! настройки, инструкция и журнал.
 
 mod app;
+mod format;
 mod link;
 mod pages;
 mod portal;
 mod theme;
+mod toast;
 mod widgets;
 
 use std::fs;
