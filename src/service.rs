@@ -64,13 +64,28 @@ fn desktop_exec(path: &str) -> String {
     out
 }
 
+/// Путь для `ExecStart=`: `%` удваивается (иначе systemd подставит
+/// спецификатор), с пробелами, кавычками и `\` — в двойных кавычках, где `\`
+/// и `"` экранируются. Кавычки и `\` в имени программы systemd всё равно не
+/// примет, но скажет об этом прямо, а не запустит другой путь.
+fn unit_exec(path: &str) -> String {
+    let path = path.replace('%', "%%");
+    if !path.contains(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '\\')) {
+        return path;
+    }
+    let mut out = String::from("\"");
+    for c in path.chars() {
+        if matches!(c, '"' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('"');
+    out
+}
+
 pub fn unit_text(binary: &Path, graphical_target: bool) -> String {
-    let binary = binary.to_string_lossy();
-    let exec = if binary.contains(char::is_whitespace) {
-        format!("\"{binary}\"")
-    } else {
-        binary.into_owned()
-    };
+    let exec = unit_exec(&binary.to_string_lossy());
     let wanted_by = if graphical_target {
         "graphical-session.target"
     } else {
@@ -127,5 +142,16 @@ mod tests {
         assert_eq!(desktop_exec("/a b/$x"), r#""/a b/\\$x""#);
         assert_eq!(desktop_exec(r#"/a"b"#), r#""/a\\"b""#);
         assert_eq!(desktop_exec(r"/a\b"), r#""/a\\\\b""#);
+    }
+
+    #[test]
+    fn unit_exec_escaping() {
+        assert_eq!(unit_exec("/home/u/bin/shiftfix"), "/home/u/bin/shiftfix");
+        assert_eq!(unit_exec("/opt/100%/shiftfix"), "/opt/100%%/shiftfix");
+        assert_eq!(unit_exec("/opt/$x/shiftfix"), "/opt/$x/shiftfix");
+        assert_eq!(unit_exec("/a b/shiftfix"), r#""/a b/shiftfix""#);
+        assert_eq!(unit_exec(r#"/a"b"#), r#""/a\"b""#);
+        assert_eq!(unit_exec(r"/a\b"), r#""/a\\b""#);
+        assert_eq!(unit_exec("/a'b"), r#""/a'b""#);
     }
 }
