@@ -1,0 +1,14 @@
+#!/bin/bash
+# Поддельный cargo: «сборка» — копирование готовых бинарников из $FAKE_BUILD.
+# ~/.fakesd/cargo-fail — сборка падает.
+mkdir -p "$HOME/log"
+echo "$*" >>"$HOME/log/cargo.log"
+if [[ -e $HOME/.fakesd/cargo-fail ]]; then
+    echo "error[E0425]: поддельная ошибка" >&2
+    exit 101
+fi
+out="${CARGO_TARGET_DIR:-target}/release"
+mkdir -p "$out"
+for f in shiftfix shiftfix-gui; do
+    cmp -s "$FAKE_BUILD/$f" "$out/$f" || cp "$FAKE_BUILD/$f" "$out/$f"
+done

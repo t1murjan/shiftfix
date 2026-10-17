@@ -1,0 +1,96 @@
+#!/bin/bash
+# Поддельный `systemctl --user`: состояние — файлы в ~/.fakesd, вызовы — в ~/log/systemctl.log.
+# ~/.fakesd/off — systemd недоступен; ~/.fakesd/no-graphical — graphical-session.target
+# не активна; ~/.fakesd/slow-stop — stop идёт 3 секунды.
+SD="$HOME/.fakesd"
+UNITS="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+mkdir -p "$SD" "$HOME/log"
+echo "$*" >>"$HOME/log/systemctl.log"
+[[ -e $SD/off ]] && exit 1
+[[ $1 == --user ]] || exit 1
+shift
+now=0 args=()
+for a in "$@"; do
+    case $a in
+    --quiet | -q | -p | --value | --property=*) ;;
+    --now) now=1 ;;
+    *) args+=("$a") ;;
+    esac
+done
+set -- "${args[@]}"
+cmd=$1 unit=${2:-shiftfix.service}
+unit=${unit%.service}.service
+
+alive() { [[ -f $SD/pid ]] && kill -0 "$(cat "$SD/pid")" 2>/dev/null; }
+wanted() { sed -n 's/^WantedBy=//p' "$UNITS/shiftfix.service" 2>/dev/null; }
+enable() {
+    local t
+    for t in $(wanted); do
+        mkdir -p "$UNITS/$t.wants"
+        ln -sfn "$UNITS/shiftfix.service" "$UNITS/$t.wants/shiftfix.service"
+    done
+}
+disable() { rm -f "$UNITS"/*.wants/shiftfix.service; }
+start() {
+    alive && return 0
+    [[ -f $UNITS/shiftfix.service ]] || return 5
+    local exec
+    exec="$(sed -n 's/^ExecStart=//p' "$UNITS/shiftfix.service")"
+    exec="${exec%\"}"
+    exec="${exec#\"}"
+    # Настоящий systemd запускает службу сам, и открытые файлы вызвавшего (блокировку
+    # install.sh на fd 9) она не наследует.
+    (cd / && exec setsid "$exec" >>"$HOME/log/daemon.log" 2>&1 </dev/null 9>&-) &
+    echo $! >"$SD/pid"
+    rm -f "$SD/failed"
+}
+stop() {
+    [[ -e $SD/slow-stop ]] && sleep 3
+    if alive; then
+        kill "$(cat "$SD/pid")"
+        for _ in {1..30}; do
+            alive || break
+            sleep 0.1
+        done
+    fi
+    rm -f "$SD/pid"
+}
+
+case $cmd in
+show-environment) echo "HOME=$HOME" ;;
+daemon-reload | reset-failed) ;;
+is-active)
+    if [[ $unit == graphical-session.target* ]]; then
+        [[ -e $SD/no-graphical ]] && exit 3
+        exit 0
+    fi
+    alive && exit 0
+    exit 3
+    ;;
+is-failed) [[ -e $SD/failed ]] || exit 1 ;;
+is-enabled)
+    compgen -G "$UNITS/*.wants/shiftfix.service" >/dev/null && exit 0
+    exit 1
+    ;;
+enable)
+    enable
+    ((now)) && start
+    ;;
+disable)
+    disable
+    ((now)) && stop
+    ;;
+reenable)
+    disable
+    enable
+    ;;
+start) start ;;
+stop) stop ;;
+restart)
+    stop
+    start
+    ;;
+show) [[ -f $UNITS/shiftfix.service ]] && echo "$UNITS/shiftfix.service" ;;
+*) exit 1 ;;
+esac
+exit 0

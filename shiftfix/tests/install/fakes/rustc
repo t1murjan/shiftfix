@@ -1,0 +1,2 @@
+#!/bin/sh
+echo "rustc 1.95.0 (fake)"

@@ -1,0 +1,5 @@
+#!/bin/bash
+# Журнал вызовов sudo и настоящий sudo (у тестового пользователя NOPASSWD).
+mkdir -p "$HOME/log"
+echo "$*" >>"$HOME/log/sudo.log"
+exec /usr/bin/sudo "$@"
