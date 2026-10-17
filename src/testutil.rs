@@ -41,14 +41,19 @@ pub fn skip(reason: &str) {
 }
 
 /// Пустой временный каталог `shiftfix-<tag>-<pid>-<n>`, свой у каждого вызова:
-/// тесты идут параллельно. Удаляется в Drop, в том числе при панике.
+/// тесты идут параллельно. Удаляется в Drop, в том числе при панике. В нём
+/// бывают Unix-сокеты, а их путь — не длиннее 107 байт: при длинном TMPDIR
+/// каталог создаётся в /tmp.
 pub struct TempDir(PathBuf);
 
 impl TempDir {
     pub fn new(tag: &str) -> TempDir {
         static N: AtomicUsize = AtomicUsize::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("shiftfix-{tag}-{}-{n}", std::process::id()));
+        let base = Some(std::env::temp_dir())
+            .filter(|t| t.as_os_str().len() <= 60)
+            .unwrap_or_else(|| PathBuf::from("/tmp"));
+        let dir = base.join(format!("shiftfix-{tag}-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&dir); // остаток прогона с тем же pid
         fs::create_dir_all(&dir).unwrap();
         TempDir(dir)

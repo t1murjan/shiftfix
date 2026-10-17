@@ -4,7 +4,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::Duration;
@@ -88,8 +88,11 @@ pub struct Status {
 
 /// Отправить запрос службе.
 pub fn request(req: &Request, timeout: Duration) -> Result<Response> {
-    let path = socket_path();
-    let mut stream = UnixStream::connect(&path)
+    request_at(&socket_path(), req, timeout)
+}
+
+pub(crate) fn request_at(path: &Path, req: &Request, timeout: Duration) -> Result<Response> {
+    let mut stream = UnixStream::connect(path)
         .with_context(|| format!("служба не отвечает ({})", path.display()))?;
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout))?;
@@ -112,11 +115,14 @@ pub fn request(req: &Request, timeout: Duration) -> Result<Response> {
 
 /// Слушать сокет; каждый запрос уходит в главный цикл как `Msg::Ipc`.
 pub fn serve(tx: Sender<Msg>) -> Result<()> {
-    let path = socket_path();
-    let _ = std::fs::remove_file(&path); // второй экземпляр уже исключён блокировкой
-    let listener = UnixListener::bind(&path)
+    serve_at(&socket_path(), tx)
+}
+
+fn serve_at(path: &Path, tx: Sender<Msg>) -> Result<()> {
+    let _ = std::fs::remove_file(path); // второй экземпляр уже исключён блокировкой
+    let listener = UnixListener::bind(path)
         .with_context(|| format!("не создаётся сокет {}", path.display()))?;
-    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
     thread::Builder::new().name("ipc".into()).spawn(move || {
         for stream in listener.incoming() {
             match stream {
@@ -166,6 +172,7 @@ fn handle(stream: UnixStream, tx: &Sender<Msg>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testutil::TempDir;
 
     #[test]
     fn requests_are_tagged_json() {
@@ -178,5 +185,59 @@ mod tests {
         assert_eq!(req, Request::SetEnabled { enabled: false });
         let resp: Response = serde_json::from_str(r#"{"ok":true}"#).unwrap();
         assert!(resp.ok && resp.status.is_none());
+    }
+
+    /// Сервер на сокете во временном каталоге и главный цикл, который
+    /// отвечает на status версией «тест», на остальное — ok.
+    fn server(dir: &TempDir) -> PathBuf {
+        let path = dir.join("shiftfix.sock");
+        let (tx, rx) = mpsc::channel();
+        serve_at(&path, tx).unwrap();
+        thread::spawn(move || {
+            for msg in rx {
+                if let Msg::Ipc(req, reply) = msg {
+                    let status = (req == Request::Status).then(|| {
+                        Box::new(Status {
+                            version: "тест".into(),
+                            ..Status::default()
+                        })
+                    });
+                    let _ = reply.send(Response {
+                        status,
+                        ..Response::ok()
+                    });
+                }
+            }
+        });
+        path
+    }
+
+    /// Послать строку как есть и прочитать ответ.
+    fn raw(path: &Path, line: &str) -> Response {
+        let mut stream = UnixStream::connect(path).unwrap();
+        stream.write_all(line.as_bytes()).unwrap();
+        let mut answer = String::new();
+        BufReader::new(stream).read_line(&mut answer).unwrap();
+        serde_json::from_str(&answer).unwrap()
+    }
+
+    #[test]
+    fn socket_answers_requests() {
+        let dir = TempDir::new("ipc");
+        let path = server(&dir);
+        let timeout = Duration::from_secs(3);
+
+        let resp = request_at(&path, &Request::Status, timeout).unwrap();
+        assert_eq!(resp.status.unwrap().version, "тест");
+        assert!(request_at(&path, &Request::Toggle, timeout).unwrap().ok);
+
+        for line in ["{\"cmd\":\"fly\"}\n", "не json\n", "\n"] {
+            let resp = raw(&path, line);
+            assert!(!resp.ok, "{line}");
+            assert!(
+                resp.error.unwrap().starts_with("непонятный запрос"),
+                "{line}"
+            );
+        }
     }
 }
