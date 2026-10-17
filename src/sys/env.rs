@@ -323,6 +323,12 @@ mod tests {
         let listener = UnixListener::bind(&path).unwrap();
         assert!(is_socket(&path) && alive(&path));
         drop(listener); // композитор упал, файл остался
+        // Копия сокета ещё может жить у процесса, которого как раз запускает
+        // соседний тест (fork до exec), — подождать, пока она закроется.
+        let started = Instant::now();
+        while alive(&path) && started.elapsed() < Duration::from_secs(2) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         assert!(is_socket(&path) && !alive(&path));
     }
 }

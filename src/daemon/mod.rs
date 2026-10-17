@@ -470,6 +470,15 @@ mod tests {
         let first = lock_file(&path).unwrap();
         assert!(lock_file(&path).is_err());
         drop(first);
-        assert!(lock_file(&path).is_ok());
+        // Копия дескриптора с замком ещё может жить у процесса, которого как
+        // раз запускает соседний тест (fork до exec), — подождать, пока она
+        // закроется.
+        let started = Instant::now();
+        let mut second = lock_file(&path);
+        while second.is_err() && started.elapsed() < Duration::from_secs(2) {
+            std::thread::sleep(Duration::from_millis(10));
+            second = lock_file(&path);
+        }
+        assert!(second.is_ok());
     }
 }
