@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 use x11rb::protocol::xkb::{self, ConnectionExt as _};
 
 use crate::engine::{Backend, Keys};
-use crate::keys::norm_layout;
+use crate::keymap::norm_layout;
 use crate::x11::{XConn, connect, rules_names};
 
 /// Группа XKB текущего X-сервера; подключение — при первом обращении.

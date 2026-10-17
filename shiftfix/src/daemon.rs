@@ -20,12 +20,12 @@ use crate::devices::Registry;
 use crate::engine::Engine;
 use crate::input::Injector;
 use crate::ipc::{Request, Response, Status};
+use crate::keymap::{self, Keymap};
 use crate::selection::{self, Active};
 use crate::sys::session::{self, Logind};
 use crate::sys::{env, proc};
 use crate::tray::TrayIcon;
-use crate::xkb::Keymap;
-use crate::{backend, input, ipc, logbuf, xkb};
+use crate::{backend, input, ipc, logbuf};
 
 pub enum Msg {
     Key {
@@ -142,7 +142,7 @@ pub fn run(path: PathBuf, cfg: Config) -> Result<()> {
     input::spawn_signals(tx.clone())?;
     ipc::serve(tx.clone())?;
     let keymap_tx = tx.clone();
-    xkb::spawn_watcher(move |keymap| {
+    keymap::spawn_watcher(move |keymap| {
         let _ = keymap_tx.send(Msg::Keymap(keymap));
     });
 

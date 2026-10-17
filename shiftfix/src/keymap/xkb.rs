@@ -1,38 +1,15 @@
-//! Таблицы раскладок из настоящей keymap.
-//!
-//! Композитор отдаёт keymap любому Wayland-клиенту (событие `wl_keyboard.keymap`),
-//! в ней все раскладки сессии в том же порядке, что и у переключателя. Разбирает
-//! её системная libxkbcommon, загружаемая через dlopen: без неё (или вне Wayland)
-//! остаются встроенные таблицы us/ru. Так перекодировка выделения работает для
-//! любых раскладок и вариантов — украинской, Dvorak, «фонетической» и т.д.
+//! Разбор keymap системной libxkbcommon, загружаемой через dlopen: без неё
+//! остаются встроенные таблицы us/ru. Так перекодировка выделения работает
+//! для любых раскладок и вариантов — украинской, Dvorak, «фонетической» и т.д.
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
-use std::fs::File;
-use std::os::unix::fs::FileExt;
-use std::os::unix::net::UnixStream;
 use std::ptr;
 use std::sync::{Arc, OnceLock};
-use std::thread;
-use std::time::Duration;
 
 use evdev::KeyCode;
 use libloading::Library;
-use log::{debug, info};
-use wayland_client::globals::{GlobalListContents, registry_queue_init};
-use wayland_client::protocol::{wl_keyboard, wl_registry, wl_seat};
-use wayland_client::{Connection, Dispatch, QueueHandle, WEnum};
 
-use crate::keys::{Layout, ROW_KEYS};
-
-/// Раскладки сессии: таблица и человеческое имя каждой группы.
-#[derive(Clone, Debug, Default)]
-pub struct Keymap {
-    pub layouts: Vec<Arc<Layout>>,
-    /// CapsLock переключает раскладку, а не регистр (grp:caps_toggle и подобные).
-    pub caps_switches_group: bool,
-}
-
-// ─── libxkbcommon через dlopen ──────────────────────────────────────────────
+use super::{Keymap, Layout, ROW_KEYS};
 
 type Ctx = *mut c_void;
 type Map = *mut c_void;
@@ -192,7 +169,7 @@ impl Compiled<'_> {
 }
 
 /// Разобрать keymap в текстовом формате xkb (как её присылает композитор).
-pub fn keymap_from_text(text: &str) -> Option<Keymap> {
+pub fn from_text(text: &str) -> Option<Keymap> {
     let text = CString::new(text.trim_end_matches('\0')).ok()?;
     let compiled = Compiled::new(|xkb, ctx| {
         // SAFETY: строка с нулём на конце живёт до конца вызова.
@@ -203,7 +180,7 @@ pub fn keymap_from_text(text: &str) -> Option<Keymap> {
 
 /// Скомпилировать keymap по именам: `layouts = "us,ru"`, `variants = ",phonetic"`,
 /// `options = "grp:caps_toggle"`.
-pub fn keymap_from_names(layouts: &str, variants: &str, options: &str) -> Option<Keymap> {
+pub fn from_names(layouts: &str, variants: &str, options: &str) -> Option<Keymap> {
     let layout = CString::new(layouts).ok()?;
     let variant = CString::new(variants).ok()?;
     let option = CString::new(options).ok()?;
@@ -221,164 +198,18 @@ pub fn keymap_from_names(layouts: &str, variants: &str, options: &str) -> Option
     Some(compiled.keymap())
 }
 
-// ─── keymap от композитора ──────────────────────────────────────────────────
-
-#[derive(Default)]
-struct State {
-    keyboard: Option<wl_keyboard::WlKeyboard>,
-    keymap: Option<String>,
-}
-
-impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
-    fn event(
-        _: &mut Self,
-        _: &wl_registry::WlRegistry,
-        _: wl_registry::Event,
-        _: &GlobalListContents,
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<wl_seat::WlSeat, ()> for State {
-    fn event(
-        state: &mut Self,
-        seat: &wl_seat::WlSeat,
-        event: wl_seat::Event,
-        _: &(),
-        _: &Connection,
-        qh: &QueueHandle<Self>,
-    ) {
-        if let wl_seat::Event::Capabilities {
-            capabilities: WEnum::Value(caps),
-        } = event
-            && caps.contains(wl_seat::Capability::Keyboard)
-            && state.keyboard.is_none()
-        {
-            state.keyboard = Some(seat.get_keyboard(qh, ()));
-        }
-    }
-}
-
-impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
-    fn event(
-        state: &mut Self,
-        _: &wl_keyboard::WlKeyboard,
-        event: wl_keyboard::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        if let wl_keyboard::Event::Keymap {
-            format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1),
-            fd,
-            size,
-        } = event
-        {
-            // fd бывает общим для всех клиентов: читаем со смещения 0, не двигая позицию.
-            let mut buf = vec![0u8; size as usize];
-            if File::from(fd).read_exact_at(&mut buf, 0).is_ok() {
-                state.keymap = Some(String::from_utf8_lossy(&buf).into_owned());
-            }
-        }
-    }
-}
-
-fn connect() -> Option<Connection> {
-    let display = crate::sys::env::wayland_display()?;
-    let path = if display.starts_with('/') {
-        display.into()
-    } else {
-        crate::sys::env::runtime_dir().join(display)
-    };
-    Connection::from_socket(UnixStream::connect(path).ok()?).ok()
-}
-
-/// Есть ли у композитора протокол data-control (без него wl-paste не может
-/// следить за выделением; так в GNOME). `None` — к композитору не подключиться.
-pub fn data_control() -> Option<bool> {
-    let conn = connect()?;
-    let (globals, _queue) = registry_queue_init::<State>(&conn).ok()?;
-    Some(globals.contents().with_list(|list| {
-        list.iter().any(|g| {
-            matches!(
-                g.interface.as_str(),
-                "zwlr_data_control_manager_v1" | "ext_data_control_manager_v1"
-            )
-        })
-    }))
-}
-
-/// Один раз получить keymap композитора.
-pub fn fetch() -> Option<Keymap> {
-    let conn = connect()?;
-    let (globals, mut queue) = registry_queue_init::<State>(&conn).ok()?;
-    let _seat: wl_seat::WlSeat = globals.bind(&queue.handle(), 1..=8, ()).ok()?;
-    let mut state = State::default();
-    for _ in 0..4 {
-        queue.roundtrip(&mut state).ok()?;
-        if let Some(text) = state.keymap.take() {
-            return keymap_from_text(&text);
-        }
-    }
-    None
-}
-
-/// Следить за keymap: при смене списка раскладок композитор пришлёт новую.
-pub fn spawn_watcher(on_change: impl Fn(Keymap) + Send + 'static) {
-    let spawned = thread::Builder::new().name("keymap".into()).spawn(move || {
-        loop {
-            if let Some(conn) = connect() {
-                watch(&conn, &on_change);
-            } else if crate::sys::env::wayland_display().is_none()
-                && crate::sys::env::x11_display().is_some()
-            {
-                // Сеанс X11: keymap строится из свойства корневого окна — и тогда,
-                // когда выделение не исправляется.
-                if let Err(err) = crate::x11::watch_keymap(&on_change) {
-                    debug!("keymap X11: {err:#}");
-                }
-            }
-            thread::sleep(Duration::from_secs(10)); // сессии ещё нет или она перезапущена
-        }
-    });
-    if let Err(err) = spawned {
-        log::warn!("поток keymap не запустился: {err}");
-    }
-}
-
-fn watch(conn: &Connection, on_change: &impl Fn(Keymap)) {
-    let Ok((globals, mut queue)) = registry_queue_init::<State>(conn) else {
-        return;
-    };
-    let Ok(_seat) = globals.bind::<wl_seat::WlSeat, _, _>(&queue.handle(), 1..=8, ()) else {
-        return;
-    };
-    let mut state = State::default();
-    while queue.blocking_dispatch(&mut state).is_ok() {
-        if let Some(text) = state.keymap.take() {
-            match keymap_from_text(&text) {
-                Some(keymap) => {
-                    let names: Vec<&str> = keymap.layouts.iter().map(|l| l.name.as_str()).collect();
-                    info!("раскладки из keymap: {}", names.join(", "));
-                    on_change(keymap);
-                }
-                None => debug!("keymap не разобрана (нет libxkbcommon?)"),
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use evdev::KeyCode;
+
     use super::*;
-    use crate::keys::{builtin, convert_text};
+
+    use crate::keymap::{ROW_KEYS, builtin, convert_text};
 
     /// Встроенные таблицы должны совпадать с тем, что даёт настоящий xkb.
     #[test]
     fn builtin_tables_match_xkb() {
-        let Some(keymap) = keymap_from_names("us,ru", ",", "") else {
+        let Some(keymap) = from_names("us,ru", ",", "") else {
             eprintln!("libxkbcommon недоступна — пропуск");
             return;
         };
@@ -406,7 +237,7 @@ mod tests {
 
     #[test]
     fn variants_and_options_come_from_xkb() {
-        let Some(keymap) = keymap_from_names("us,ua", "dvorak,", "grp:caps_toggle") else {
+        let Some(keymap) = from_names("us,ua", "dvorak,", "grp:caps_toggle") else {
             return;
         };
         let (dvorak, ua) = (&keymap.layouts[0], &keymap.layouts[1]);
@@ -419,7 +250,7 @@ mod tests {
 
     #[test]
     fn dead_keys_are_marked() {
-        let Some(keymap) = keymap_from_names("us,ru", "intl,", "") else {
+        let Some(keymap) = from_names("us,ru", "intl,", "") else {
             return;
         };
         let (intl, ru) = (&keymap.layouts[0], &keymap.layouts[1]);
@@ -433,10 +264,10 @@ mod tests {
 
     #[test]
     fn keymap_text_round_trip() {
-        let Some(from_names) = keymap_from_names("us,ru", ",", "") else {
+        let Some(from_names) = from_names("us,ru", ",", "") else {
             return;
         };
-        assert!(keymap_from_text("не keymap").is_none());
+        assert!(from_text("не keymap").is_none());
         assert_eq!(from_names.layouts.len(), 2);
     }
 }

@@ -22,7 +22,8 @@ use crate::config::Config;
 use crate::daemon::Msg;
 use crate::engine::{Keys, Selection};
 use crate::sys::env;
-use crate::{x11, xkb};
+use crate::sys::wayland;
+use crate::x11;
 
 const NONE: u8 = 0;
 const WAYLAND: u8 = 1;
@@ -92,7 +93,7 @@ pub fn decide() -> Choice {
     let xclip = env::in_path("xclip");
     if env::wayland_display().is_some() {
         let wl_clipboard = env::in_path("wl-paste") && env::in_path("wl-copy");
-        match xkb::data_control() {
+        match wayland::data_control() {
             Some(true) if wl_clipboard => return Choice::Wayland,
             Some(true) if x11 && xclip => return Choice::X11,
             Some(true) => return Choice::Wait("не установлен wl-clipboard".into(), 30),

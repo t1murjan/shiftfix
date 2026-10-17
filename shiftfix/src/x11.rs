@@ -11,19 +11,14 @@ use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
 use anyhow::{Context, Result, anyhow, bail};
-use log::{debug, info};
 use x11rb::connection::Connection as _;
 use x11rb::protocol::Event;
 use x11rb::protocol::xfixes::{ConnectionExt as _, SelectionEventMask};
-use x11rb::protocol::xproto::{
-    AtomEnum, ChangeWindowAttributesAux, ConnectionExt as _, CreateWindowAux, EventMask,
-    WindowClass,
-};
+use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, CreateWindowAux, WindowClass};
 use x11rb::rust_connection::{DefaultStream, RustConnection};
 
 use crate::daemon::Msg;
 use crate::sys::env;
-use crate::xkb::{Keymap, keymap_from_names};
 
 pub struct XConn {
     pub conn: RustConnection,
@@ -173,47 +168,6 @@ pub fn rules_names(x: &XConn) -> Result<Vec<String>> {
         .collect())
 }
 
-// ─── Keymap ─────────────────────────────────────────────────────────────────
-
-/// Раскладки сеанса X11 из `_XKB_RULES_NAMES` (`None` — нет libxkbcommon).
-pub fn keymap(x: &XConn) -> Option<Keymap> {
-    let names = rules_names(x).ok()?;
-    let part = |i: usize| names.get(i).map(String::as_str).unwrap_or_default();
-    let keymap = keymap_from_names(part(2), part(3), part(4));
-    if keymap.is_none() {
-        debug!("keymap X11 не разобрана (нет libxkbcommon?)");
-    }
-    keymap
-}
-
-/// Присылать keymap сеанса X11 сейчас и при каждой смене раскладок, пока жив
-/// X-сервер. В Wayland keymap присылает композитор (`xkb::spawn_watcher`).
-pub fn watch_keymap(on_change: &impl Fn(Keymap)) -> Result<()> {
-    let x = connect()?;
-    let conn = &x.conn;
-    let rules = conn.intern_atom(false, b"_XKB_RULES_NAMES")?.reply()?.atom;
-    conn.change_window_attributes(
-        x.root,
-        &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE),
-    )?;
-    conn.flush()?;
-    let send = || {
-        if let Some(keymap) = keymap(&x) {
-            let list: Vec<&str> = keymap.layouts.iter().map(|l| l.name.as_str()).collect();
-            info!("раскладки из X11: {}", list.join(", "));
-            on_change(keymap);
-        }
-    };
-    send();
-    loop {
-        if let Event::PropertyNotify(ev) = conn.wait_for_event()?
-            && ev.atom == rules
-        {
-            send();
-        }
-    }
-}
-
 // ─── Слежение за PRIMARY ────────────────────────────────────────────────────
 
 /// Следить за PRIMARY, пока жив X-сервер. `Ok(())` — служба завершается.
@@ -356,10 +310,10 @@ mod tests {
         assert!(xkb.set(4, &mut keys).is_err());
 
         // Keymap приходит и без слежения за выделением, и после смены раскладок.
-        if crate::xkb::keymap_from_names("us", "", "").is_some() {
+        if crate::keymap::from_names("us", "", "").is_some() {
             let (ktx, krx) = mpsc::channel();
             std::thread::spawn(move || {
-                watch_keymap(&|keymap| {
+                crate::keymap::x11::watch(&|keymap| {
                     let _ = ktx.send(keymap.layouts.len());
                 })
             });

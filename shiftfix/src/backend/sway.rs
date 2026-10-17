@@ -7,7 +7,7 @@ use log::warn;
 use serde_json::Value;
 
 use crate::engine::{Backend, Keys};
-use crate::keys::code_from_long_name;
+use crate::keymap::code_from_long_name;
 use crate::sys::proc::run_text;
 
 pub struct Sway {

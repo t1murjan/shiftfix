@@ -15,8 +15,8 @@ use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Config, SelectionMethod};
-use crate::keys::{self, Layout, is_char, is_ctrl, is_modifier, is_nav, is_neutral, is_shift};
-use crate::xkb::Keymap;
+use crate::keymap::{self, Keymap, Layout};
+use crate::keys::{is_char, is_ctrl, is_modifier, is_nav, is_neutral, is_shift};
 
 /// Сколько последних нажатий помнить.
 pub const BUF_MAX: usize = 256;
@@ -608,7 +608,7 @@ impl Engine {
         if !self.keymap.layouts.is_empty() && self.keymap.layouts.len() == codes.len() {
             self.keymap.layouts.iter().cloned().map(Some).collect()
         } else {
-            codes.iter().map(|c| keys::builtin(c)).collect()
+            codes.iter().map(|c| keymap::builtin(c)).collect()
         }
     }
 
@@ -631,8 +631,8 @@ impl Engine {
         self.codes = self.backend.layouts()?;
         let current = self.backend.current()?;
         let tables = self.tables(&self.codes);
-        let pair = keys::detect_source(&text, &tables, current)
-            .and_then(|src| keys::next_with_table(src, &tables).map(|tgt| (src, tgt)));
+        let pair = keymap::detect_source(&text, &tables, current)
+            .and_then(|src| keymap::next_with_table(src, &tables).map(|tgt| (src, tgt)));
         let Some((src, tgt)) = pair else {
             warn!(
                 "нет таблиц для раскладок {:?} — выделение не исправить",
@@ -646,7 +646,7 @@ impl Engine {
         };
         // CapsLock, переключающий раскладку, регистр не меняет.
         let caps = !self.keymap.caps_switches_group && (self.caps_on)();
-        let plan = keys::plan_strokes(&text, &src_layout, &tgt_layout, caps, tgt);
+        let plan = keymap::plan_strokes(&text, &src_layout, &tgt_layout, caps, tgt);
         // Наша вставка сама меняет PRIMARY и буфер обмена.
         self.sel_ignore_until = (self.clock)() + SELF_CHANGE_GRACE;
 
@@ -663,7 +663,7 @@ impl Engine {
                          раскладки) — вставляю через буфер обмена"
                     );
                 }
-                let converted = keys::convert_text(&text, &src_layout, &tgt_layout);
+                let converted = keymap::convert_text(&text, &src_layout, &tgt_layout);
                 if let Some(clip) = self.clip.as_mut() {
                     clip.paste(&converted, self.keys.as_mut())?;
                 }
@@ -784,7 +784,7 @@ mod tests {
                 return self.backspace();
             }
             let name = &self.layouts[self.cur];
-            let layout = keys::builtin(self.render.get(name).copied().unwrap_or(name)).unwrap();
+            let layout = keymap::builtin(self.render.get(name).copied().unwrap_or(name)).unwrap();
             let letter = layout.char_at(key, false).unwrap().is_alphabetic();
             let ch = layout.char_at(key, shift ^ (self.caps && letter)).unwrap();
             self.insert(&ch.to_string());
@@ -939,7 +939,7 @@ mod tests {
         /// Пальцы печатают `text` так, будто включена раскладка `layout`.
         fn type_as(&mut self, text: &str, layout: &str) {
             for ch in text.chars() {
-                let (key, shift) = keys::builtin(layout).unwrap().key_for(ch).unwrap();
+                let (key, shift) = keymap::builtin(layout).unwrap().key_for(ch).unwrap();
                 self.tap(key, shift);
             }
         }
@@ -1000,8 +1000,8 @@ mod tests {
 
     /// Встроенная таблица, но с мёртвыми клавишами (как us(intl) или de).
     fn with_dead(name: &str, dead: &[(KeyCode, bool)]) -> Arc<Layout> {
-        let base = keys::builtin(name).unwrap();
-        let pairs = keys::ROW_KEYS
+        let base = keymap::builtin(name).unwrap();
+        let pairs = keymap::ROW_KEYS
             .iter()
             .map(|&k| (k, [base.char_at(k, false), base.char_at(k, true)]));
         Arc::new(Layout::from_pairs(name, pairs).with_dead(dead.iter().copied()))
@@ -1055,7 +1055,7 @@ mod tests {
         r.eng.set_keymap(Keymap {
             layouts: vec![
                 with_dead("us", &[(KeyCode::KEY_APOSTROPHE, false)]),
-                keys::builtin("ru").unwrap(),
+                keymap::builtin("ru").unwrap(),
             ],
             caps_switches_group: false,
         });

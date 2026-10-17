@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
 use crate::engine::{Backend, Keys};
-use crate::keys::{code_from_long_name, norm_layout};
+use crate::keymap::{code_from_long_name, norm_layout};
 use crate::sys::proc::run_text;
 
 pub struct Hyprland {

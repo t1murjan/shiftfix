@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use evdev::KeyCode;
 
 use crate::engine::{Backend, Keys};
-use crate::keys::norm_layout;
+use crate::keymap::norm_layout;
 use crate::sys::proc::run_text;
 
 /// Строки в одинарных кавычках из вывода `gsettings get` (формат GVariant).

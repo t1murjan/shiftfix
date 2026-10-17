@@ -9,7 +9,7 @@
 - `engine.rs` — логика без ввода-вывода. Буфер хранит скан-коды. Исправить слово = переключить раскладку, нажать Backspace×N и повторить те же клавиши через uinput.
 - `devices.rs` — evdev и роли устройств: клавиатура, мышь, тачпад, экран, перо; роль можно задать вручную.
 - `backend/` — переключение раскладки (по файлу на окружение, выбор — `auto.rs`): KDE (DBus), GNOME (gsettings + Super+Space), Hyprland, Sway, X11 (XKB), хоткей.
-- `xkb.rs` — keymap от композитора через libxkbcommon, загружаемую dlopen.
+- `keymap/` — таблицы раскладок: keymap от композитора (`wayland.rs`) или X11 (`x11.rs`), разбор через libxkbcommon, загружаемую dlopen (`xkb.rs`), встроенные us/ru (`layout.rs`), перекодировка выделения (`convert.rs`); `keys.rs` — классы клавиш.
 - `selection.rs`, `clipboard.rs`, `x11.rs` — выделение. Wayland с data-control идёт через wl-clipboard, X11 и GNOME через XWayland — через xclip и XFixes.
 - `sys/env.rs` — поиск сеанса: своё окружение, окружение systemd, живые сокеты.
 - `sys/session.rs` — проверка logind `session/auto` Active, чтобы не печатать в чужой сеанс.

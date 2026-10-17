@@ -18,7 +18,8 @@ use evdev::KeyCode;
 use log::warn;
 use serde::{Deserialize, Serialize};
 
-use crate::keys::{norm_layout, parse_keys};
+use crate::keymap::norm_layout;
+use crate::keys::parse_keys;
 use file::{merge_table, write_atomic};
 pub use theme::{ThemeMode, ThemeSettings};
 

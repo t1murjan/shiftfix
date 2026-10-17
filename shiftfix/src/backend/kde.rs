@@ -3,7 +3,7 @@
 use anyhow::{Context, Result, bail};
 
 use crate::engine::{Backend, Keys};
-use crate::keys::norm_layout;
+use crate::keymap::norm_layout;
 use crate::sys::dbus::{Bus, Client};
 
 /// KWin (Plasma 6) и kded (Plasma 5): `org.kde.keyboard /Layouts`.

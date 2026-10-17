@@ -9,7 +9,7 @@ use shiftfix::devices::{self, Role};
 use shiftfix::selection::{self, Choice};
 use shiftfix::sys::session::Logind;
 use shiftfix::sys::{env, proc};
-use shiftfix::{backend, x11, xkb};
+use shiftfix::{backend, keymap, x11};
 
 /// Строки отчёта и счётчик проблем.
 #[derive(Default)]
@@ -130,7 +130,7 @@ fn layouts(report: &mut Report, cfg: &Config) {
         }
         Err(err) => report.bad(format!("{}: {err:#}", switcher.name())),
     }
-    match xkb::fetch() {
+    match keymap::wayland::fetch() {
         Some(keymap) => {
             let names: Vec<&str> = keymap.layouts.iter().map(|l| l.name.as_str()).collect();
             report.ok(format!("keymap композитора: {}", names.join(", ")));
@@ -147,7 +147,7 @@ fn x11_keymap() -> Option<String> {
     if env::wayland_display().is_some() {
         return None;
     }
-    let keymap = x11::keymap(&x11::connect().ok()?)?;
+    let keymap = keymap::x11::fetch(&x11::connect().ok()?)?;
     let list: Vec<&str> = keymap.layouts.iter().map(|l| l.name.as_str()).collect();
     Some(list.join(", "))
 }
