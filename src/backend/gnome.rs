@@ -204,9 +204,11 @@ impl Backend for Gnome {
 type Source = (String, String);
 
 fn source_pairs(gvariant: &str) -> Vec<Source> {
-    gvariant_strings(gvariant)
-        .chunks_exact(2)
-        .map(|pair| (pair[0].clone(), pair[1].clone()))
+    let strings = gvariant_strings(gvariant);
+    let (pairs, _) = strings.as_chunks::<2>();
+    pairs
+        .iter()
+        .map(|[kind, id]| (kind.clone(), id.clone()))
         .collect()
 }
 

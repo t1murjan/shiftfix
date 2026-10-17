@@ -72,9 +72,11 @@ pub fn rgba(size: u32, active: bool) -> Vec<u8> {
 
 /// ARGB32 в сетевом порядке байт — формат StatusNotifierItem.
 pub fn argb(size: u32, active: bool) -> Vec<u8> {
-    rgba(size, active)
-        .chunks_exact(4)
-        .flat_map(|p| [p[3], p[0], p[1], p[2]])
+    let pixels = rgba(size, active);
+    let (pixels, _) = pixels.as_chunks::<4>();
+    pixels
+        .iter()
+        .flat_map(|&[r, g, b, a]| [a, r, g, b])
         .collect()
 }
 
