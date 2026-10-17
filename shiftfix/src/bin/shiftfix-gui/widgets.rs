@@ -2,8 +2,8 @@
 
 use eframe::egui::text::{LayoutJob, TextFormat};
 use eframe::egui::{
-    self, Color32, CornerRadius, FontFamily, FontId, Frame, Margin, Mesh, Pos2, Rect, Response,
-    RichText, Sense, Shape, Stroke, StrokeKind, Ui, Vec2, vec2,
+    self, Align, Color32, CornerRadius, FontFamily, FontId, Frame, Layout, Margin, Mesh, Pos2,
+    Rect, Response, RichText, Sense, Shape, Stroke, StrokeKind, Ui, Vec2, vec2,
 };
 
 use crate::theme::{self, BOLD, Palette};
@@ -440,4 +440,27 @@ pub fn empty_state(ui: &mut Ui, p: &Palette, icon: &str, text: &str) {
         ui.label(RichText::new(text).color(p.weak));
         ui.add_space(8.0);
     });
+}
+
+/// Строка настройки: название и пояснение слева, элемент управления справа.
+pub fn setting_row(
+    ui: &mut Ui,
+    p: &Palette,
+    title: &str,
+    hint: &str,
+    right: f32,
+    add: impl FnOnce(&mut Ui),
+) {
+    ui.horizontal(|ui| {
+        let left = (ui.available_width() - right - 16.0).max(180.0);
+        ui.allocate_ui_with_layout(egui::vec2(left, 0.0), Layout::top_down(Align::Min), |ui| {
+            ui.set_width(left);
+            ui.label(RichText::new(title).color(p.text));
+            if !hint.is_empty() {
+                ui.add(egui::Label::new(RichText::new(hint).size(12.5).color(p.weak)).wrap());
+            }
+        });
+        ui.with_layout(Layout::right_to_left(Align::Center), add);
+    });
+    ui.add_space(4.0);
 }
