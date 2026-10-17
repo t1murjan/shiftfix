@@ -152,7 +152,7 @@ fn appearance(app: &mut App, ui: &mut Ui, p: &Palette) {
                 }
             },
         );
-        if app.theme_forced() {
+        if app.theme.forced() {
             note_line(
                 ui,
                 p,
@@ -161,25 +161,25 @@ fn appearance(app: &mut App, ui: &mut Ui, p: &Palette) {
                 "Сейчас тема задана параметром --theme — только до закрытия окна.",
             );
         } else if mode == ThemeMode::System {
-            let note = SystemNote::of(&app.portal);
+            let note = SystemNote::of(&app.theme.portal);
             let (glyph, color) = match note {
                 SystemNote::Waiting => (icons::HOURGLASS_MEDIUM, p.weak),
                 note if note.fallback() => (icons::WARNING, p.warning),
                 _ => (icons::INFO, p.weak),
             };
             let line = note_line(ui, p, glyph, color, note.text());
-            if let PortalState::Unavailable(why) = &app.portal {
+            if let PortalState::Unavailable(why) = &app.theme.portal {
                 line.on_hover_text(why);
             }
         }
         ui.add_space(10.0);
 
-        let variant = app.theme_tab.unwrap_or(Variant::of(p.dark));
+        let variant = app.theme.tab.unwrap_or(Variant::of(p.dark));
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             for (v, title) in VARIANTS {
                 if widgets::tab(ui, p, title, v == variant).clicked() {
-                    app.theme_tab = Some(v);
+                    app.theme.tab = Some(v);
                 }
             }
         });
@@ -199,9 +199,9 @@ fn appearance(app: &mut App, ui: &mut Ui, p: &Palette) {
         });
         ui.add_space(12.0);
 
-        let system_accent = theme::system_accent_active(&t, &app.system, mode);
+        let system_accent = theme::system_accent_active(&t, &app.theme.system, mode);
         if mode == ThemeMode::System {
-            let blocked = theme::system_accent_blocked(&app.portal);
+            let blocked = theme::system_accent_blocked(&app.theme.portal);
             let mut on = t.system_accent;
             let hint = blocked.unwrap_or("Акцент из настроек системы вместо своего.");
             let toggled = ui
@@ -233,7 +233,7 @@ fn appearance(app: &mut App, ui: &mut Ui, p: &Palette) {
             forget_hex_drafts(ui);
         }
 
-        let shown = theme::variant_palette(&t, &app.system, mode, variant);
+        let shown = theme::variant_palette(&t, &app.theme.system, mode, variant);
         let mut message = None;
         ui.horizontal(|ui| {
             ui.add_enabled_ui(own_on && !system_accent, |ui| {

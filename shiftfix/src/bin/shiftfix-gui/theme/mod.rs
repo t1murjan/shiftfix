@@ -6,6 +6,7 @@
 mod color;
 mod legacy;
 mod palettes;
+mod state;
 mod style;
 mod system;
 #[cfg(test)]
@@ -20,6 +21,7 @@ pub use color::{
 };
 pub use legacy::migrate_legacy;
 pub use palettes::{PALETTES, Palette, PaletteDef, find};
+pub use state::ThemeState;
 pub use style::{BOLD, apply_palette, apply_style, install_fonts};
 pub use system::{System, SystemNote, SystemWatch, system_accent_blocked};
 

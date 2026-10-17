@@ -5,7 +5,6 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::portal::PortalState;
 use eframe::egui::{
     self, Align, Align2, Color32, CornerRadius, Frame, Image, Layout, Margin, Order, RichText,
     ScrollArea, Sense, Stroke, TextureHandle, TextureOptions, Ui, load::SizedTexture, vec2,
@@ -69,9 +68,6 @@ impl Page {
         }
     }
 }
-
-/// Тема пишется в файл не сразу: пипетка меняет цвет каждый кадр.
-const THEME_SAVE_DELAY: Duration = Duration::from_millis(400);
 
 /// Версия окна; у службы своя — в `Status.version`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -148,24 +144,8 @@ pub struct App {
     pub checking: bool,
     local_devices: Option<(Instant, Vec<DeviceInfo>)>,
     logo: TextureHandle,
-    /// Конфиг, в котором хранится тема (тот же, откуда прочитаны настройки).
-    theme_path: PathBuf,
-    /// Режим из `--theme`: только на этот запуск.
-    forced_mode: Option<ThemeMode>,
-    /// Поток портала: тема и акцент системы.
-    watch: theme::SystemWatch,
-    /// Ответ портала: «ещё не ответил» и «недоступен» — для подсказок в окне.
-    pub portal: PortalState,
-    /// Что сообщила система о теме и акценте (из `portal`).
-    pub system: theme::System,
-    /// Палитра, уже применённая к egui.
-    applied: Option<Palette>,
-    /// Когда записать изменённую тему.
-    theme_save_at: Option<Instant>,
-    /// О неудачной записи темы уже сказали.
-    theme_save_failed: bool,
-    /// Вкладка варианта в карточке «Оформление»; `None` — вариант на экране.
-    pub theme_tab: Option<theme::Variant>,
+    /// Тема окна: портал, применённая палитра, отложенная запись.
+    pub theme: theme::ThemeState,
     /// Прокрутить «Инструкцию» к блоку «О программе» (клик по версии).
     pub about_focus: bool,
 }
@@ -197,7 +177,6 @@ impl App {
             }
         };
         theme::migrate_legacy(&theme_path, &mut settings.theme);
-        let portal = watch.state();
         App {
             page,
             link,
@@ -212,34 +191,20 @@ impl App {
             checking: false,
             local_devices: None,
             logo,
-            theme_path,
-            forced_mode,
-            watch,
-            system: theme::System::from(&portal),
-            portal,
-            applied: None,
-            theme_save_at: None,
-            theme_save_failed: false,
-            theme_tab: None,
+            theme: theme::ThemeState::new(theme_path, forced_mode, watch),
             about_focus: false,
         }
     }
 
     /// Режим, в котором окно сейчас: `--theme` или из настроек.
     pub fn theme_mode(&self) -> ThemeMode {
-        self.forced_mode.unwrap_or(self.settings.theme.mode)
-    }
-
-    /// Режим задан параметром `--theme` (до первого выбора в окне).
-    pub fn theme_forced(&self) -> bool {
-        self.forced_mode.is_some()
+        self.theme.mode(&self.settings.theme)
     }
 
     /// Выбор режима в окне (боковая панель и «Оформление»): отменяет `--theme`,
     /// вкладка «Оформления» снова показывает вариант на экране.
     pub fn set_mode(&mut self, mode: ThemeMode) {
-        self.forced_mode = None;
-        self.theme_tab = None;
+        self.theme.mode_chosen();
         self.set_theme(|t| t.mode = mode);
     }
 
@@ -253,54 +218,20 @@ impl App {
         }
         self.saved.theme = theme.clone();
         self.settings.theme = theme;
-        self.theme_save_at = Some(Instant::now() + THEME_SAVE_DELAY);
+        self.theme.changed();
     }
 
     fn save_theme(&mut self) {
-        self.theme_save_at = None;
-        match self.settings.theme.save(&self.theme_path) {
-            Ok(()) => self.theme_save_failed = false,
-            Err(err) => {
-                log::warn!("тема не сохранена: {err:#}");
-                if !self.theme_save_failed {
-                    self.theme_save_failed = true;
-                    self.toast(ToastKind::Error, format!("Тема не сохранилась: {err:#}"));
-                }
-            }
+        if let Some(err) = self.theme.save(&self.settings.theme) {
+            self.toast(ToastKind::Error, format!("Тема не сохранилась: {err}"));
         }
     }
 
     /// Цвета кадра: применить к egui, если тема изменилась, и вовремя записать её.
     fn palette(&mut self, ctx: &egui::Context) -> Palette {
-        // Система сменила тему — поток портала уже попросил перерисовку.
-        let portal = self.watch.state();
-        if portal != self.portal {
-            self.system = theme::System::from(&portal);
-            self.portal = portal;
-        }
-        let p = theme::resolve(&self.settings.theme, &self.system, self.forced_mode);
-        if self.applied != Some(p) {
-            theme::apply_palette(ctx, &p);
-            if self.applied.is_none_or(|old| old.dark != p.dark) {
-                // Рамка окна в GNOME (CSD) — в тон.
-                let theme = if p.dark {
-                    egui::SystemTheme::Dark
-                } else {
-                    egui::SystemTheme::Light
-                };
-                ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(theme));
-            }
-            self.applied = Some(p);
-        }
-        let now = Instant::now();
-        let pointer_down = ctx.input(|i| i.pointer.any_down());
-        if theme::save_due(self.theme_save_at, now, pointer_down) {
+        let p = self.theme.apply(ctx, &self.settings.theme);
+        if self.theme.time_to_save(ctx) {
             self.save_theme();
-        } else if let Some(at) = self.theme_save_at {
-            ctx.request_repaint_after(
-                at.saturating_duration_since(now)
-                    .max(Duration::from_millis(50)),
-            );
         }
         p
     }
@@ -636,7 +567,7 @@ impl eframe::App for App {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        if self.theme_save_at.is_some() {
+        if self.theme.unsaved() {
             self.save_theme();
         }
     }
