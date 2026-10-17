@@ -64,23 +64,23 @@ check_system() {
 
 running() { if have pgrep; then pgrep -x -u "$MY_UID" 'shiftfix(-gui)?' || true; fi; }
 
-# Добавить в files те пути, что существуют (и висячие ссылки).
+# Добавить в to_remove те пути, что существуют (и висячие ссылки).
 found() {
     local path
     for path; do
-        if [[ -e $path || -L $path ]]; then files+=("$path"); fi
+        if [[ -e $path || -L $path ]]; then to_remove+=("$path"); fi
     done
 }
 
 # Что нашлось: файлы, системные настройки, группа, процессы и копии,
 # поставленные не через install.sh.
 find_installed() {
-    local path name unit
-    files=()
+    local path name fragment
+    to_remove=()
     found "${FILES[@]}" "$AUTOSTART" "$UNIT" "$UNIT.d" "$UNITS"/*.wants/shiftfix.service "$INCOMPLETE"
-    settings=
-    if [[ -e $SETTINGS || -L $SETTINGS ]]; then settings=$SETTINGS; fi
-    if ((purge)) && [[ -n $settings ]]; then found "$settings"; fi
+    has_settings=0
+    if [[ -e $SETTINGS || -L $SETTINGS ]]; then has_settings=1; fi
+    if ((purge && has_settings)); then found "$SETTINGS"; fi
 
     # Сборку стираем только с --purge и только если скрипт лежит в папке проекта shiftfix.
     build=
@@ -109,25 +109,25 @@ find_installed() {
         done < <(type -ap "$name" || true)
     done
     if user_systemd; then
-        unit="$(systemctl --user show -p FragmentPath --value shiftfix.service 2>/dev/null || true)"
-        if [[ -n $unit && $unit != "$UNIT" ]]; then others+=("$unit"); fi
+        fragment="$(systemctl --user show -p FragmentPath --value shiftfix.service 2>/dev/null || true)"
+        if [[ -n $fragment && $fragment != "$UNIT" ]]; then others+=("$fragment"); fi
     fi
 }
 
 # Сказать, что будет удалено; если удалять нечего — выйти.
 show_plan() {
     local path size
-    if ((${#files[@]} == 0 && ${#system[@]} == 0 && !leave_group)) && [[ -z $build && -z $processes ]]; then
+    if ((${#to_remove[@]} == 0 && ${#system[@]} == 0 && !leave_group)) && [[ -z $build && -z $processes ]]; then
         echo "shiftfix не установлен — удалять нечего."
-        if [[ -n $settings ]] && ((!purge)); then
-            note "Настройки остались: $(pretty "$settings") (удалить: ./uninstall.sh --purge)"
+        if ((has_settings && !purge)); then
+            note "Настройки остались: $(pretty "$SETTINGS") (удалить: ./uninstall.sh --purge)"
         fi
         for path in "${others[@]}"; do note "Есть копия, поставленная не через install.sh: $path"; done
         exit 0
     fi
 
     echo "Будет удалено:"
-    for path in "${files[@]}"; do note "$(pretty "$path")"; done
+    for path in "${to_remove[@]}"; do note "$(pretty "$path")"; done
     if [[ -n $build ]]; then
         size="$(du -sh -- "$build" 2>/dev/null | cut -f1)" || size="?"
         note "$(pretty "$build") — сборка, $size"
@@ -137,8 +137,8 @@ show_plan() {
         note "вы ($ME) — из группы input (через sudo; она даёт любой программе читать клавиатуру)"
     fi
     if [[ -n $processes ]]; then note "будут остановлены: служба и окно shiftfix"; fi
-    if [[ -n $settings ]] && ((!purge)); then
-        note "настройки остаются: $(pretty "$settings") (удалить и их: --purge)"
+    if ((has_settings && !purge)); then
+        note "настройки остаются: $(pretty "$SETTINGS") (удалить и их: --purge)"
     fi
 }
 
@@ -181,7 +181,7 @@ stop_running() {
 # Файлы в домашнем каталоге, сокеты, сборка (с --purge), кеши меню.
 remove_files() {
     step "Файлы в домашнем каталоге"
-    if ((${#files[@]})); then rm -rf -- "${files[@]}"; fi
+    if ((${#to_remove[@]})); then rm -rf -- "${to_remove[@]}"; fi
     rm -f -- "$DAEMON_SOCK" "$DAEMON_LOCK" "$GUI_LOCK" "$GUI_SOCK"
     if [[ -n $build ]]; then rm -rf -- "$build"; fi
     if user_systemd; then
@@ -227,8 +227,8 @@ print_summary() {
     else
         echo "shiftfix удалён."
     fi
-    if [[ -n $settings ]] && ((!purge)); then
-        note "Настройки остались: $(pretty "$settings") — удалить и их: ./uninstall.sh --purge"
+    if ((has_settings && !purge)); then
+        note "Настройки остались: $(pretty "$SETTINGS") — удалить и их: ./uninstall.sh --purge"
     fi
     if [[ -f $HERE/install.sh && -f $HERE/Cargo.toml ]]; then
         note "Папка с исходниками осталась: $(pretty "$HERE") — удалите её сами, если не нужна."
@@ -242,7 +242,7 @@ print_summary() {
     done
 }
 
-# Что этапы нашли (files, system, leave_group…), они оставляют в глобальных
+# Что этапы нашли (to_remove, system, leave_group…), они оставляют в глобальных
 # переменных: их читают следующие этапы.
 main() {
     parse_args "$@"
