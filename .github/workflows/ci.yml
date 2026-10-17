@@ -34,4 +34,4 @@ jobs:
         run: cargo test --locked
 
       - name: Shellcheck
-        run: shellcheck install.sh uninstall.sh tests/install/run.sh tests/install/fakes/*
+        run: shellcheck -x install.sh uninstall.sh scripts/common.sh tests/install/run.sh tests/install/fakes/*

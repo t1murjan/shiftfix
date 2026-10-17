@@ -6,7 +6,10 @@
 # Пакеты ставятся сами в Arch/CachyOS/Manjaro, Debian/Ubuntu/Mint, Fedora и openSUSE.
 # Этапы по порядку — в main в конце файла.
 set -euo pipefail
-cd "$(dirname "$0")"
+HERE="$(dirname "$(readlink -f "$0")")"
+# shellcheck source=scripts/common.sh
+source "$HERE/scripts/common.sh"
+cd "$HERE"
 
 usage() {
     cat <<'EOF'
@@ -55,15 +58,8 @@ parse_args() {
 
 # Где и от кого запущен скрипт.
 check_system() {
-    if ((EUID == 0)); then
-        echo "Запускайте install.sh от своего пользователя, без sudo: служба, конфиг и" >&2
-        echo "бинарники ставятся в домашний каталог, а sudo скрипт попросит сам." >&2
-        exit 1
-    fi
-    if [[ -z ${HOME:-} || ! -d $HOME ]]; then
-        echo "install.sh: не задан домашний каталог (HOME)" >&2
-        exit 1
-    fi
+    check_user "Запускайте install.sh от своего пользователя, без sudo: служба, конфиг и" \
+        "бинарники ставятся в домашний каталог, а sudo скрипт попросит сам."
     if [[ -e /etc/NIXOS ]] || grep -qs '^ID=nixos' /etc/os-release; then
         cat >&2 <<'EOF'
 В NixOS этот скрипт не подходит: /etc и пакеты задаются конфигурацией системы.
@@ -82,39 +78,9 @@ EOF
     fi
 }
 
-# Куда что ставится.
-init_paths() {
-    ME="$(id -un)"
-    MY_UID="$(id -u)"
-    BIN="$HOME/.local/bin"
-    DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
-    CONF="${XDG_CONFIG_HOME:-$HOME/.config}"
-    ICONS="$DATA/icons/hicolor/scalable/apps"
-    APPS="$DATA/applications"
-    UNIT="$CONF/systemd/user/shiftfix.service"
-    AUTOSTART="$CONF/autostart/shiftfix.desktop"
-    CONFIG="$CONF/shiftfix/config.toml"
-    UDEV_RULE=/etc/udev/rules.d/80-shiftfix-uinput.rules
-    UDEV_TEXT='KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"'
-    MODULES=/etc/modules-load.d/shiftfix-uinput.conf
-    MODULES_TEXT=uinput
-    TARGET="${CARGO_TARGET_DIR:-target}/release"
-    # Как в службе (env.rs): из консоли или по ssh XDG_RUNTIME_DIR бывает не задан —
-    # тогда systemctl --user не видит службу, хотя она запущена.
-    if [[ -z ${XDG_RUNTIME_DIR:-} && -d /run/user/$MY_UID ]]; then
-        export XDG_RUNTIME_DIR="/run/user/$MY_UID"
-    fi
-    RUNTIME="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
-}
+# Помощники; общие с uninstall.sh — в scripts/common.sh.
 
-# Помощники.
-
-step() { printf '\n\033[1;36m==>\033[0m %s\n' "$*"; }
-note() { printf '    %s\n' "$*"; }
-have() { command -v "$1" >/dev/null 2>&1; }
-pretty() { printf '%s' "${1/#"$HOME"/\~}"; }
 in_group() { [[ " $1 " == *" input "* ]]; }
-user_systemd() { have systemctl && systemctl --user show-environment >/dev/null 2>&1; }
 not() { ! "$@"; }
 
 version_ok() { # $1 >= $2
@@ -130,38 +96,13 @@ package_field() {
         pkg && $1 ~ "^" key " *= *$" { print $2; exit }' Cargo.toml
 }
 
-# «Да»: y, yes, д, да. Через case, а не [YyДд]: без UTF-8 локали скобка сравнивает
-# байты, и «н» (тот же первый байт, что у «Д») сошло бы за «да».
-is_yes() {
-    case $1 in
-    [Yy]* | Д* | д*) return 0 ;;
-    *) return 1 ;;
-    esac
-}
-# Спросить да/нет; $2 — ответ по умолчанию (y|n). Без терминала нужен --yes.
-ask() {
-    local answer
-    if ((yes)); then return 0; fi
-    if [[ ! -t 0 ]]; then
-        echo "Нет терминала, чтобы спросить, — запустите с --yes." >&2
-        exit 1
-    fi
-    if [[ $2 == y ]]; then
-        read -r -p "    $1 [Y/n] " answer || answer=n
-        [[ -z $answer ]] || is_yes "$answer"
-    else
-        read -r -p "    $1 [y/N] " answer || answer=
-        is_yes "$answer"
-    fi
-}
-
 # Файл блокировки держит живой процесс (служба и окно держат свой flock).
 held() { [[ -e $1 ]] && have flock && ! flock -n "$1" true 2>/dev/null; }
 daemon_running() {
-    held "$RUNTIME/shiftfix.lock" || { have pgrep && pgrep -x -u "$MY_UID" shiftfix >/dev/null; }
+    held "$DAEMON_LOCK" || { have pgrep && pgrep -x -u "$MY_UID" shiftfix >/dev/null; }
 }
 gui_running() {
-    held "$RUNTIME/shiftfix-gui.lock" || { have pgrep && pgrep -x -u "$MY_UID" shiftfix-gui >/dev/null; }
+    held "$GUI_LOCK" || { have pgrep && pgrep -x -u "$MY_UID" shiftfix-gui >/dev/null; }
 }
 # Повторять команду до успеха: $1 попыток по 0.1 с.
 wait_for() {
@@ -253,27 +194,17 @@ cleanup() {
         if ((was_active)); then
             systemctl --user start shiftfix.service >/dev/null 2>&1
         else
-            wait_for 30 not held "$RUNTIME/shiftfix.lock"
+            wait_for 30 not held "$DAEMON_LOCK"
             launch "$BIN/shiftfix"
         fi
         { echo "install.sh: прервано — служба запущена снова"; } >&2 2>/dev/null
     fi
     if ((stopped && gui_was && !gui_back)) && [[ -n ${WAYLAND_DISPLAY:-}${DISPLAY:-} ]]; then
         gui_back=1
-        wait_for 30 not held "$RUNTIME/shiftfix-gui.lock"
+        wait_for 30 not held "$GUI_LOCK"
         launch "$BIN/shiftfix-gui"
     fi
     if ((${#temps[@]})); then rm -f -- "${temps[@]}"; fi
-}
-
-# Два install.sh одновременно поставили бы файлы наперегонки.
-take_lock() {
-    if have flock && { exec 9>"$RUNTIME/shiftfix-install.lock"; } 2>/dev/null; then
-        if ! flock -n 9; then
-            echo "install.sh уже запущен в другом терминале — дождитесь его." >&2
-            exit 1
-        fi
-    fi
 }
 
 # Версия в Cargo.toml и установленная: установка, обновление, та же или
@@ -390,6 +321,7 @@ install_dependencies() {
 build() {
     step "Сборка (первый раз — несколько минут)"
     local name got
+    TARGET="${CARGO_TARGET_DIR:-target}/release"
     # Без fd 9: сервер сборки (sccache) живёт дольше скрипта и держал бы блокировку install.sh.
     if ! cargo build --release --locked 9>&-; then
         echo >&2
@@ -596,7 +528,7 @@ setup_autostart() {
         enabled=0
         if systemctl --user is-enabled --quiet shiftfix.service 2>/dev/null; then enabled=1; fi
         if [[ $old_unit != "$new_unit" ]]; then
-            mkdir -p "$(dirname "$UNIT")"
+            mkdir -p "$UNITS"
             put_text "$UNIT" "$new_unit"
             systemctl --user daemon-reload
         fi
@@ -614,7 +546,7 @@ setup_autostart() {
             # Убираем только ссылки целей, которых больше нет, и добавляем новые.
             for target in $old_wanted; do
                 if [[ " $new_wanted " != *" $target "* ]]; then
-                    rm -f -- "$(dirname "$UNIT")/$target.wants/shiftfix.service"
+                    rm -f -- "$UNITS/$target.wants/shiftfix.service"
                 fi
             done
             systemctl --user enable shiftfix.service >/dev/null 2>&1 || true
@@ -663,7 +595,7 @@ start_again() {
         if [[ $start == systemd ]]; then
             systemctl --user start shiftfix.service || true
         else
-            wait_for 30 not held "$RUNTIME/shiftfix.lock" || true
+            wait_for 30 not held "$DAEMON_LOCK" || true
             launch "$BIN/shiftfix"
         fi
     fi
@@ -692,7 +624,7 @@ start_again() {
     gui_state=
     if ((gui_was)); then
         if [[ -n ${WAYLAND_DISPLAY:-}${DISPLAY:-} ]]; then
-            wait_for 30 not held "$RUNTIME/shiftfix-gui.lock" || true
+            wait_for 30 not held "$GUI_LOCK" || true
             launch "$BIN/shiftfix-gui"
             gui_state="открыто снова"
         else

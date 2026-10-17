@@ -11,7 +11,7 @@ cargo fmt
 cargo build --all-targets
 cargo clippy --all-targets        # без предупреждений
 cargo test
-shellcheck install.sh uninstall.sh tests/install/run.sh tests/install/fakes/*
+shellcheck -x install.sh uninstall.sh scripts/common.sh tests/install/run.sh tests/install/fakes/*
 ```
 
 То же самое запускает CI на GitHub при каждом push (`.github/workflows/ci.yml`).

@@ -3,6 +3,9 @@
 # Настройки и сборка остаются — их стирает --purge. Параметры — ./uninstall.sh --help.
 # Этапы по порядку — в main в конце файла.
 set -euo pipefail
+HERE="$(dirname "$(readlink -f "$0")")"
+# shellcheck source=scripts/common.sh
+source "$HERE/scripts/common.sh"
 
 usage() {
     cat <<'EOF'
@@ -53,44 +56,12 @@ parse_args() {
 
 # От кого запущен скрипт.
 check_system() {
-    if ((EUID == 0)); then
-        echo "Запускайте uninstall.sh от своего пользователя, без sudo: программа стоит в" >&2
-        echo "домашнем каталоге, а sudo скрипт попросит сам — для правила udev и группы input." >&2
-        exit 1
-    fi
-    if [[ -z ${HOME:-} || ! -d $HOME ]]; then
-        echo "uninstall.sh: не задан домашний каталог (HOME)" >&2
-        exit 1
-    fi
+    check_user "Запускайте uninstall.sh от своего пользователя, без sudo: программа стоит в" \
+        "домашнем каталоге, а sudo скрипт попросит сам — для правила udev и группы input."
 }
 
-# Где что лежит — те же пути, что в install.sh.
-init_paths() {
-    HERE="$(cd "$(dirname "$0")" && pwd)"
-    ME="$(id -un)"
-    MY_UID="$(id -u)"
-    # Те же пути, что в install.sh.
-    BIN="$HOME/.local/bin"
-    DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
-    CONF="${XDG_CONFIG_HOME:-$HOME/.config}"
-    UNITS="$CONF/systemd/user"
-    UDEV_RULE=/etc/udev/rules.d/80-shiftfix-uinput.rules
-    MODULES=/etc/modules-load.d/shiftfix-uinput.conf
-    # Как в службе (env.rs): из консоли или по ssh XDG_RUNTIME_DIR бывает не задан —
-    # тогда systemctl --user не видит службу, хотя она запущена.
-    if [[ -z ${XDG_RUNTIME_DIR:-} && -d /run/user/$MY_UID ]]; then
-        export XDG_RUNTIME_DIR="/run/user/$MY_UID"
-    fi
-    RUNTIME="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
-}
+# Помощники; общие с install.sh — в scripts/common.sh.
 
-# Помощники.
-
-step() { printf '\n\033[1;36m==>\033[0m %s\n' "$*"; }
-note() { printf '    %s\n' "$*"; }
-have() { command -v "$1" >/dev/null 2>&1; }
-user_systemd() { have systemctl && systemctl --user show-environment >/dev/null 2>&1; }
-pretty() { printf '%s' "${1/#"$HOME"/\~}"; }
 running() { if have pgrep; then pgrep -x -u "$MY_UID" 'shiftfix(-gui)?' || true; fi; }
 
 # Добавить в files те пути, что существуют (и висячие ссылки).
@@ -107,14 +78,14 @@ find_installed() {
     local path name unit
     files=()
     found "$BIN/shiftfix" "$BIN/shiftfix-gui" \
-        "$DATA/applications/shiftfix.desktop" \
-        "$DATA/icons/hicolor/scalable/apps/shiftfix.svg" \
-        "$DATA/icons/hicolor/scalable/apps/shiftfix-paused.svg" \
-        "$CONF/autostart/shiftfix.desktop" \
-        "$UNITS/shiftfix.service" "$UNITS/shiftfix.service.d" \
+        "$APPS/shiftfix.desktop" \
+        "$ICONS/shiftfix.svg" \
+        "$ICONS/shiftfix-paused.svg" \
+        "$AUTOSTART" \
+        "$UNIT" "$UNIT.d" \
         "$UNITS"/*.wants/shiftfix.service
     settings=
-    if [[ -e $CONF/shiftfix || -L $CONF/shiftfix ]]; then settings="$CONF/shiftfix"; fi
+    if [[ -e $SETTINGS || -L $SETTINGS ]]; then settings=$SETTINGS; fi
     if ((purge)) && [[ -n $settings ]]; then found "$settings"; fi
 
     # Сборку стираем только с --purge и только если скрипт лежит в папке проекта shiftfix.
@@ -145,7 +116,7 @@ find_installed() {
     done
     if user_systemd; then
         unit="$(systemctl --user show -p FragmentPath --value shiftfix.service 2>/dev/null || true)"
-        if [[ -n $unit && $unit != "$UNITS/shiftfix.service" ]]; then others+=("$unit"); fi
+        if [[ -n $unit && $unit != "$UNIT" ]]; then others+=("$unit"); fi
     fi
 }
 
@@ -229,15 +200,14 @@ remove_files() {
     local tool
     step "Файлы в домашнем каталоге"
     if ((${#files[@]})); then rm -rf -- "${files[@]}"; fi
-    rm -f -- "$RUNTIME/shiftfix.sock" "$RUNTIME/shiftfix.lock" "$RUNTIME/shiftfix-gui.lock" \
-        "$RUNTIME/shiftfix-gui.sock" "$RUNTIME/shiftfix-install.lock"
+    rm -f -- "$DAEMON_SOCK" "$DAEMON_LOCK" "$GUI_LOCK" "$GUI_SOCK" "$INSTALL_LOCK"
     if [[ -n $build ]]; then rm -rf -- "$build"; fi
     if user_systemd; then
         systemctl --user daemon-reload || true
         systemctl --user reset-failed shiftfix.service >/dev/null 2>&1 || true
     fi
     # Меню приложений и значки: иначе ярлык ещё повисит в кешах.
-    if have update-desktop-database; then update-desktop-database "$DATA/applications" 2>/dev/null || true; fi
+    if have update-desktop-database; then update-desktop-database "$APPS" 2>/dev/null || true; fi
     if have gtk-update-icon-cache && [[ -f $DATA/icons/hicolor/icon-theme.cache ]]; then
         gtk-update-icon-cache -q "$DATA/icons/hicolor" 2>/dev/null || true
     fi

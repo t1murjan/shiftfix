@@ -8,7 +8,7 @@
 #
 #   sudo tests/install/run.sh --container ПРОЕКТ БИНАРНИКИ ЖУРНАЛЫ
 #
-# ПРОЕКТ — папка с install.sh, uninstall.sh, Cargo.toml и assets/;
+# ПРОЕКТ — папка с install.sh, uninstall.sh, scripts/, Cargo.toml и assets/;
 # БИНАРНИКИ — папка с собранными shiftfix и shiftfix-gui (подойдёт target/debug);
 # ЖУРНАЛЫ — сюда на каждый сценарий файл: код выхода, вывод скрипта, вызовы
 # sudo, systemctl и cargo, файлы в домашнем каталоге. Чтобы проверить правку
@@ -80,7 +80,8 @@ chmod 755 "$WORK/build/shiftfix"
 
 SRC=$H/src/shiftfix
 mkdir -p "$SRC"
-cp -r "$PROJECT/install.sh" "$PROJECT/uninstall.sh" "$PROJECT/Cargo.toml" "$PROJECT/assets" "$SRC/"
+cp -r "$PROJECT/install.sh" "$PROJECT/uninstall.sh" "$PROJECT/scripts" "$PROJECT/Cargo.toml" \
+    "$PROJECT/assets" "$SRC/"
 chown -R "$U:$U" "$H/src"
 mkdir -p "$OUT"
 
