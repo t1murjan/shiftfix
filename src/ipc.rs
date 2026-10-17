@@ -1,19 +1,15 @@
 //! Связь GUI (и команд `shiftfix --toggle` и т.п.) со службой: Unix-сокет в
-//! XDG_RUNTIME_DIR, один JSON-запрос и один JSON-ответ на соединение.
+//! XDG_RUNTIME_DIR, один JSON-запрос и один JSON-ответ на соединение. Здесь —
+//! запросы, ответы и клиент; сервер — в `daemon/socket.rs`.
 
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Sender};
-use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 
-use crate::daemon::Msg;
 use crate::devices::DeviceInfo;
 use crate::engine::{Action, LayoutInfo};
 use crate::logbuf::LogLine;
@@ -113,66 +109,9 @@ pub(crate) fn request_at(path: &Path, req: &Request, timeout: Duration) -> Resul
     Ok(response)
 }
 
-/// Слушать сокет; каждый запрос уходит в главный цикл как `Msg::Ipc`.
-pub fn serve(tx: Sender<Msg>) -> Result<()> {
-    serve_at(&socket_path(), tx)
-}
-
-fn serve_at(path: &Path, tx: Sender<Msg>) -> Result<()> {
-    let _ = std::fs::remove_file(path); // второй экземпляр уже исключён блокировкой
-    let listener = UnixListener::bind(path)
-        .with_context(|| format!("не создаётся сокет {}", path.display()))?;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-    thread::Builder::new().name("ipc".into()).spawn(move || {
-        for stream in listener.incoming() {
-            match stream {
-                Ok(stream) => {
-                    let tx = tx.clone();
-                    let _ = thread::Builder::new()
-                        .name("ipc client".into())
-                        .spawn(move || handle(stream, &tx));
-                }
-                Err(err) => warn!("IPC: {err}"),
-            }
-        }
-    })?;
-    Ok(())
-}
-
-fn handle(stream: UnixStream, tx: &Sender<Msg>) {
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
-    let mut line = String::new();
-    let Ok(mut writer) = stream.try_clone() else {
-        return;
-    };
-    if BufReader::new(stream).read_line(&mut line).is_err() {
-        return;
-    }
-    let response = match serde_json::from_str::<Request>(&line) {
-        Ok(req) => {
-            debug!("IPC: {req:?}");
-            let (reply, answer) = mpsc::channel();
-            if tx.send(Msg::Ipc(req, reply)).is_err() {
-                return;
-            }
-            // Пока служба печатает исправление, ответ подождёт.
-            answer
-                .recv_timeout(Duration::from_secs(5))
-                .unwrap_or_else(|_| Response::error("служба занята"))
-        }
-        Err(err) => Response::error(format!("непонятный запрос: {err}")),
-    };
-    if let Ok(mut text) = serde_json::to_string(&response) {
-        text.push('\n');
-        let _ = writer.write_all(text.as_bytes());
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutil::TempDir;
 
     #[test]
     fn requests_are_tagged_json() {
@@ -185,59 +124,5 @@ mod tests {
         assert_eq!(req, Request::SetEnabled { enabled: false });
         let resp: Response = serde_json::from_str(r#"{"ok":true}"#).unwrap();
         assert!(resp.ok && resp.status.is_none());
-    }
-
-    /// Сервер на сокете во временном каталоге и главный цикл, который
-    /// отвечает на status версией «тест», на остальное — ok.
-    fn server(dir: &TempDir) -> PathBuf {
-        let path = dir.join("shiftfix.sock");
-        let (tx, rx) = mpsc::channel();
-        serve_at(&path, tx).unwrap();
-        thread::spawn(move || {
-            for msg in rx {
-                if let Msg::Ipc(req, reply) = msg {
-                    let status = (req == Request::Status).then(|| {
-                        Box::new(Status {
-                            version: "тест".into(),
-                            ..Status::default()
-                        })
-                    });
-                    let _ = reply.send(Response {
-                        status,
-                        ..Response::ok()
-                    });
-                }
-            }
-        });
-        path
-    }
-
-    /// Послать строку как есть и прочитать ответ.
-    fn raw(path: &Path, line: &str) -> Response {
-        let mut stream = UnixStream::connect(path).unwrap();
-        stream.write_all(line.as_bytes()).unwrap();
-        let mut answer = String::new();
-        BufReader::new(stream).read_line(&mut answer).unwrap();
-        serde_json::from_str(&answer).unwrap()
-    }
-
-    #[test]
-    fn socket_answers_requests() {
-        let dir = TempDir::new("ipc");
-        let path = server(&dir);
-        let timeout = Duration::from_secs(3);
-
-        let resp = request_at(&path, &Request::Status, timeout).unwrap();
-        assert_eq!(resp.status.unwrap().version, "тест");
-        assert!(request_at(&path, &Request::Toggle, timeout).unwrap().ok);
-
-        for line in ["{\"cmd\":\"fly\"}\n", "не json\n", "\n"] {
-            let resp = raw(&path, line);
-            assert!(!resp.ok, "{line}");
-            assert!(
-                resp.error.unwrap().starts_with("непонятный запрос"),
-                "{line}"
-            );
-        }
     }
 }

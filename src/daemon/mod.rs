@@ -4,10 +4,11 @@
 //! в один канал; движок обрабатывает их по очереди в главном потоке.
 
 mod signals;
+mod socket;
 mod tray;
 mod uinput;
 
-use std::fs::{self, File};
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, LazyLock};
@@ -125,7 +126,7 @@ pub fn run(path: PathBuf, cfg: Config) -> Result<()> {
             }
         })?;
     signals::spawn(tx.clone())?;
-    ipc::serve(tx.clone())?;
+    let _socket = socket::serve(ipc::socket_path(), tx.clone())?;
     let keymap_tx = tx.clone();
     keymap::spawn_watcher(move |keymap| {
         let _ = keymap_tx.send(Msg::Keymap(keymap));
@@ -175,7 +176,6 @@ pub fn run(path: PathBuf, cfg: Config) -> Result<()> {
         }
     }
     info!("выход");
-    let _ = fs::remove_file(ipc::socket_path());
     Ok(())
 }
 
@@ -334,6 +334,8 @@ impl Daemon {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use crate::engine::{Backend, Keys};
     use crate::testutil::{NoKeys, TempDir};
