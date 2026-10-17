@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::keymap::norm_layout;
 use crate::keys::parse_keys;
+use crate::sys::env;
 use file::{merge_table, write_atomic};
 pub use theme::{ThemeMode, ThemeSettings};
 
@@ -211,13 +212,9 @@ impl Default for Config {
 }
 
 impl Config {
+    /// `~/.config/shiftfix/config.toml`.
     pub fn default_path() -> PathBuf {
-        let base = std::env::var_os("XDG_CONFIG_HOME")
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-            .unwrap_or_else(|| PathBuf::from("."));
-        base.join("shiftfix").join("config.toml")
+        env::config_home().join("shiftfix").join("config.toml")
     }
 
     pub fn load(path: &Path) -> Result<Config> {

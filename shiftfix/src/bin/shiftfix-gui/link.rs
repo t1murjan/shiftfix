@@ -187,17 +187,10 @@ fn journal() -> Vec<String> {
     out.text().lines().map(str::to_owned).collect()
 }
 
-fn config_home() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
-        })
-}
-
 fn autostart_file() -> PathBuf {
-    config_home().join("autostart").join("shiftfix.desktop")
+    env::config_home()
+        .join("autostart")
+        .join("shiftfix.desktop")
 }
 
 fn daemon_binary() -> PathBuf {
@@ -242,7 +235,7 @@ fn run_service_action(action: ServiceAction) -> Result<String> {
         ServiceAction::Autostart(false) => checked(systemctl(&["disable", UNIT])?, "автозапуск")
             .map(|()| "Автозапуск выключен".into()),
         ServiceAction::Install => {
-            let path = config_home().join("systemd/user").join(UNIT);
+            let path = env::config_home().join("systemd/user").join(UNIT);
             fs::create_dir_all(path.parent().expect("parent")).context("каталог юнитов systemd")?;
             fs::write(&path, unit_text())
                 .with_context(|| format!("не записывается {}", path.display()))?;
