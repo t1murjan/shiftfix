@@ -39,7 +39,6 @@ parse_args() {
             exec ./uninstall.sh "${rest[@]}"
         fi
     done
-    yes=0
     for arg in "$@"; do
         case $arg in
         -y | --yes) yes=1 ;;
@@ -114,18 +113,43 @@ wait_for() {
     done
     return 1
 }
+# Команда, но не дольше $1 секунд (если есть timeout).
+bounded() {
+    local secs=$1
+    shift
+    if have timeout; then timeout "$secs" "$@"; else "$@"; fi
+}
+# Остановить процессы $1: TERM, ждать $3 попыток по 0.1 с, пока $2 не скажет, что их
+# нет, потом KILL.
+terminate() { # $1 — имя процесса, $2 — проверка «ещё работает», $3 — попыток
+    pkill -TERM -x -u "$MY_UID" "$1" 2>/dev/null || true
+    if ! wait_for "$3" not "$2"; then
+        pkill -KILL -x -u "$MY_UID" "$1" 2>/dev/null || true
+        wait_for 10 not "$2" || true
+    fi
+}
 # Запустить отдельно от скрипта и терминала; блокировку install.sh (fd 9) не передаём.
 launch() {
     (cd "$HOME" && exec setsid -f "$@" >/dev/null 2>&1 </dev/null 9>&-)
 }
+# Запустить службу: через systemd или процессом — когда прежний отпустит блокировку.
+start_daemon() { # $1 — systemd или process
+    if [[ $1 == systemd ]]; then
+        systemctl --user start shiftfix.service
+    else
+        wait_for 30 not held "$DAEMON_LOCK"
+        launch "$BIN/shiftfix"
+    fi
+}
+# Открыть окно — когда прежнее отпустит блокировку.
+open_gui() {
+    wait_for 30 not held "$GUI_LOCK"
+    launch "$BIN/shiftfix-gui"
+}
 installed_version() {
     local out=
     if [[ -e $BIN/shiftfix || -L $BIN/shiftfix ]]; then
-        if have timeout; then
-            out="$(timeout 5 "$BIN/shiftfix" --version 2>/dev/null)" || out=
-        else
-            out="$("$BIN/shiftfix" --version 2>/dev/null)" || out=
-        fi
+        out="$(bounded 5 "$BIN/shiftfix" --version 2>/dev/null)" || out=
         out="${out#shiftfix }"
         [[ $out =~ ^[0-9]+(\.[0-9A-Za-z+~-]+)*$ ]] || out="?"
     fi
@@ -205,25 +229,21 @@ package_of() { # $1 — менеджер пакетов, $2 — недостаю
 # Сначала запуск, потом сообщение: терминал может быть уже закрыт, а tee — убит тем же
 # Ctrl+C. Повторный Ctrl+C и ошибки записи здесь уже ничего не прерывают.
 cleanup() {
+    local how=process
     trap '' INT TERM HUP PIPE
     set +e
-    if ((stopped && !restarted && (was_active || was_proc))); then
-        restarted=1
-        if ((was_active)); then
-            systemctl --user start shiftfix.service >/dev/null 2>&1
-        else
-            wait_for 30 not held "$DAEMON_LOCK"
-            launch "$BIN/shiftfix"
-        fi
+    if ((stopped && !daemon_restarted && (was_active || was_proc))); then
+        daemon_restarted=1
+        if ((was_active)); then how=systemd; fi
+        start_daemon "$how" >/dev/null 2>&1
         { echo "install.sh: прервано — служба запущена снова"; } >&2 2>/dev/null
     fi
     if [[ -e $INCOMPLETE ]]; then
         { echo "install.sh: установка не закончена — запустите install.sh снова, он доделает"; } >&2 2>/dev/null
     fi
-    if ((stopped && gui_was && !gui_back)) && [[ -n ${WAYLAND_DISPLAY:-}${DISPLAY:-} ]]; then
-        gui_back=1
-        wait_for 30 not held "$GUI_LOCK"
-        launch "$BIN/shiftfix-gui"
+    if ((stopped && gui_closed && !gui_reopened)) && [[ -n ${WAYLAND_DISPLAY:-}${DISPLAY:-} ]]; then
+        gui_reopened=1
+        open_gui
     fi
     if ((${#temps[@]})); then rm -f -- "${temps[@]}"; fi
 }
@@ -231,6 +251,7 @@ cleanup() {
 # Версия в Cargo.toml и установленная: установка, обновление, та же или
 # более старая (тогда — вопрос).
 check_versions() {
+    local headline
     NEW="$(package_field version)"
     MIN_RUST="$(package_field rust-version)"
     if [[ -z $NEW || -z $MIN_RUST ]]; then
@@ -240,7 +261,6 @@ check_versions() {
 
     OLD="$(installed_version)"
     OLD_TEXT="${OLD/#\?/(неизвестная)}"
-    resume=0
     if [[ -z $OLD ]]; then
         mode=install
         headline="установка $NEW"
@@ -274,23 +294,39 @@ check_versions() {
 # Недостающие команды и Rust; sudo — только если чего-то нет.
 install_dependencies() {
     step "Зависимости"
-    local pm='' candidate tool pkg missing=() pkgs=() cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+    local cargo_home="${CARGO_HOME:-$HOME/.cargo}"
     if ! rust_ok && [[ -f $cargo_home/env ]]; then
         # shellcheck source=/dev/null
         source "$cargo_home/env"
     fi
+    install_packages "$(detect_package_manager)"
+    if ! have cc; then
+        note "Нет компилятора C (cc): он нужен Rust для сборки. Поставьте gcc или clang и запустите снова."
+        exit 1
+    fi
+    ensure_rust "$cargo_home"
+}
+
+# Пакетный менеджер: pacman, apt-get, dnf, zypper, ostree или пусто — неизвестный.
+detect_package_manager() {
+    local candidate
     if have pacman; then
-        pm=pacman
+        echo pacman
     elif [[ -e /run/ostree-booted ]]; then
-        pm=ostree # Silverblue, Kinoite, Bazzite…: пакеты слоями rpm-ostree требуют перезагрузки
+        echo ostree # Silverblue, Kinoite, Bazzite…: пакеты слоями rpm-ostree требуют перезагрузки
     else
         for candidate in apt-get dnf zypper; do
             if have "$candidate"; then
-                pm=$candidate
+                echo "$candidate"
                 break
             fi
         done
     fi
+}
+
+# Пакеты с недостающими командами (и Rust в Arch); $1 — пакетный менеджер.
+install_packages() {
+    local pm=$1 tool pkg missing=() pkgs=()
     for tool in wl-paste wl-copy xclip notify-send cc; do
         if ! have "$tool"; then
             missing+=("$tool")
@@ -319,10 +355,12 @@ install_dependencies() {
         *) note "Неизвестный пакетный менеджер: поставьте сами ${pkgs[*]} (не хватает: ${missing[*]})." ;;
         esac
     fi
-    if ! have cc; then
-        note "Нет компилятора C (cc): он нужен Rust для сборки. Поставьте gcc или clang и запустите снова."
-        exit 1
-    fi
+}
+
+# Rust MIN_RUST или новее: через rustup, если он есть, иначе — с вопросом поставить
+# rustup; $1 — его каталог (CARGO_HOME).
+ensure_rust() {
+    local cargo_home=$1
     if ! rust_ok && have rustup; then
         if ! version_ok "$(rustup run stable rustc --version 2>/dev/null | awk '{print $2}')" "$MIN_RUST"; then
             note "Ставлю свежий Rust через rustup — только для сборки shiftfix"
@@ -387,7 +425,6 @@ build() {
 setup_uinput() {
     step "Доступ к /dev/uinput"
     local uinput
-    need_udev=0 need_modules=0 need_group=0 relogin=0
     if [[ "$(cat -- "$UDEV_RULE" 2>/dev/null)" != "$UDEV_TEXT" ]]; then need_udev=1; fi
     if [[ "$(cat -- "$MODULES" 2>/dev/null)" != "$MODULES_TEXT" ]]; then need_modules=1; fi
     if ! in_group "$(id -nG "$ME" 2>/dev/null)"; then need_group=1; fi
@@ -402,45 +439,50 @@ setup_uinput() {
         if ((need_udev)); then note "  правило udev $UDEV_RULE — /dev/uinput для группы input"; fi
         if ((need_modules)); then note "  $MODULES — загружать модуль uinput при старте"; fi
         if ((need_group)); then note "  добавить вас ($ME) в группу input — чтение клавиатуры"; fi
-        if ! have sudo || ! sudo -v; then
-            echo "Без sudo не обойтись. Выполните от root и запустите install.sh снова:" >&2
-            if ((need_udev)); then echo "  echo '$UDEV_TEXT' > $UDEV_RULE" >&2; fi
-            if ((need_modules)); then echo "  echo $MODULES_TEXT > $MODULES" >&2; fi
-            if ((need_group)); then echo "  usermod -aG input $ME" >&2; fi
-            exit 1
-        fi
-        if ((need_udev)); then
-            sudo mkdir -p "$(dirname "$UDEV_RULE")"
-            printf '%s\n' "$UDEV_TEXT" | sudo tee "$UDEV_RULE" >/dev/null
-        fi
-        if ((need_modules)); then
-            sudo mkdir -p "$(dirname "$MODULES")"
-            printf '%s\n' "$MODULES_TEXT" | sudo tee "$MODULES" >/dev/null
-        fi
-        if [[ ! -e /dev/uinput ]] && ((need_modules || need_udev)); then
-            sudo modprobe uinput 2>/dev/null || true
-        fi
-        if ((need_udev)); then
-            sudo udevadm control --reload-rules 2>/dev/null || true
-            sudo udevadm trigger --sysname-match=uinput 2>/dev/null || true
-        fi
-        if ((need_group)); then
-            # В неизменяемых системах (ostree) системные группы лежат в /usr/lib/group,
-            # и usermod их не видит, пока строка не перенесена в /etc/group.
-            if ! grep -qs '^input:' /etc/group && grep -qs '^input:' /usr/lib/group; then
-                grep '^input:' /usr/lib/group | sudo tee -a /etc/group >/dev/null
-            elif ! getent group input >/dev/null; then
-                sudo groupadd --system input
-            fi
-            sudo usermod -aG input "$ME"
-            relogin=1
-        fi
+        fix_uinput
     fi
     uinput="$(stat -c '%G %a' /dev/uinput 2>/dev/null)" || uinput=
     if [[ -z $uinput ]]; then
         note "Устройства /dev/uinput пока нет — появится после перезагрузки."
     elif [[ $uinput != "input 660" ]]; then
         note "/dev/uinput сейчас: группа и права «$uinput» — правило udev подействует после перезагрузки."
+    fi
+}
+
+# Через sudo — то, чего не хватает (need_udev, need_modules, need_group).
+fix_uinput() {
+    if ! have sudo || ! sudo -v; then
+        echo "Без sudo не обойтись. Выполните от root и запустите install.sh снова:" >&2
+        if ((need_udev)); then echo "  echo '$UDEV_TEXT' > $UDEV_RULE" >&2; fi
+        if ((need_modules)); then echo "  echo $MODULES_TEXT > $MODULES" >&2; fi
+        if ((need_group)); then echo "  usermod -aG input $ME" >&2; fi
+        exit 1
+    fi
+    if ((need_udev)); then
+        sudo mkdir -p "$(dirname "$UDEV_RULE")"
+        printf '%s\n' "$UDEV_TEXT" | sudo tee "$UDEV_RULE" >/dev/null
+    fi
+    if ((need_modules)); then
+        sudo mkdir -p "$(dirname "$MODULES")"
+        printf '%s\n' "$MODULES_TEXT" | sudo tee "$MODULES" >/dev/null
+    fi
+    if [[ ! -e /dev/uinput ]] && ((need_modules || need_udev)); then
+        sudo modprobe uinput 2>/dev/null || true
+    fi
+    if ((need_udev)); then
+        sudo udevadm control --reload-rules 2>/dev/null || true
+        sudo udevadm trigger --sysname-match=uinput 2>/dev/null || true
+    fi
+    if ((need_group)); then
+        # В неизменяемых системах (ostree) системные группы лежат в /usr/lib/group,
+        # и usermod их не видит, пока строка не перенесена в /etc/group.
+        if ! grep -qs '^input:' /etc/group && grep -qs '^input:' /usr/lib/group; then
+            grep '^input:' /usr/lib/group | sudo tee -a /etc/group >/dev/null
+        elif ! getent group input >/dev/null; then
+            sudo groupadd --system input
+        fi
+        sudo usermod -aG input "$ME"
+        relogin=1
     fi
 }
 
@@ -454,8 +496,6 @@ plan_files() {
     text="$(<assets/shiftfix.desktop)"
     gui="$(desktop_exec "$BIN/shiftfix-gui")"
     printf '%s\n' "${text//'@BINDIR@/shiftfix-gui'/"$gui"}" >"$desktop"
-    srcs=() perms=() changed=()
-    daemon_changed=0 gui_changed=0 menu_changed=0
     for i in "${!FILES[@]}"; do
         case ${ROLES[i]} in
         daemon | gui) srcs[i]="$TARGET/${FILES[i]##*/}" perms[i]=755 ;;
@@ -487,35 +527,19 @@ stop_running() {
             was_proc=1
         fi
     fi
-    if ((gui_changed)) && gui_running; then gui_was=1; fi
-    if ((was_active || was_proc || gui_was)); then
+    if ((gui_changed)) && gui_running; then gui_closed=1; fi
+    if ((was_active || was_proc || gui_closed)); then
         step "Остановка"
         stopped=1
         if ((was_active || was_proc)); then
             if ((was_active)); then systemctl --user stop shiftfix.service 2>/dev/null || true; fi
-            if daemon_running; then
-                if have timeout; then
-                    timeout 5 "$BIN/shiftfix" --quit >/dev/null 2>&1 || true
-                else
-                    "$BIN/shiftfix" --quit >/dev/null 2>&1 || true
-                fi
-            fi
-            if ! wait_for 30 not daemon_running; then
-                pkill -TERM -x -u "$MY_UID" shiftfix 2>/dev/null || true
-                if ! wait_for 20 not daemon_running; then
-                    pkill -KILL -x -u "$MY_UID" shiftfix 2>/dev/null || true
-                    wait_for 10 not daemon_running || true
-                fi
-            fi
+            if daemon_running; then bounded 5 "$BIN/shiftfix" --quit >/dev/null 2>&1 || true; fi
+            if ! wait_for 30 not daemon_running; then terminate shiftfix daemon_running 20; fi
             note "служба остановлена"
         fi
-        if ((gui_was)); then
+        if ((gui_closed)); then
             note "окно shiftfix закрывается и откроется снова — несохранённые правки настроек пропадут"
-            pkill -TERM -x -u "$MY_UID" shiftfix-gui 2>/dev/null || true
-            if ! wait_for 30 not gui_running; then
-                pkill -KILL -x -u "$MY_UID" shiftfix-gui 2>/dev/null || true
-                wait_for 10 not gui_running || true
-            fi
+            terminate shiftfix-gui gui_running 30
         fi
     fi
 }
@@ -549,68 +573,84 @@ install_files() {
 
 # Юнит systemd или автозапуск сеанса; выбор пользователя не трогаем.
 setup_autostart() {
-    local new_unit old_unit old_wanted new_wanted unit_existed target text
-    enabled=0
     if user_systemd; then
-        new_unit="$("$BIN/shiftfix" --print-unit)"
-        old_unit='' old_wanted='' new_wanted=''
-        unit_existed=0
-        if [[ -e $UNIT ]]; then
-            unit_existed=1
-            old_unit="$(cat -- "$UNIT")"
-            old_wanted="$(sed -n 's/^WantedBy=//p' <<<"$old_unit")"
-            new_wanted="$(sed -n 's/^WantedBy=//p' <<<"$new_unit")"
-            # Вне графического сеанса (ssh, консоль) graphical-session.target не видна —
-            # тогда прежний WantedBy вернее нового.
-            if [[ -n $old_wanted && $old_wanted != "$new_wanted" ]] &&
-                ! systemctl --user is-active --quiet graphical-session.target; then
-                new_unit="${new_unit/$'\n'"WantedBy=$new_wanted"/$'\n'"WantedBy=$old_wanted"}"
-                new_wanted=$old_wanted
-            fi
-        fi
-        enabled=0
-        if systemctl --user is-enabled --quiet shiftfix.service 2>/dev/null; then enabled=1; fi
-        if [[ $old_unit != "$new_unit" ]]; then
-            mkdir -p "$UNITS"
-            put_text "$UNIT" "$new_unit"
-            systemctl --user daemon-reload
-        fi
-        if ((unit_existed && enabled)) && [[ $old_wanted != "$new_wanted" ]]; then
-            # Цели включённого юнита сменились (проверяем и при доделке установки). Не
-            # reenable: он снял бы и ссылки, добавленные вручную (add-wants). Убираем только
-            # ссылки целей, которых больше нет, и добавляем новые.
-            for target in $old_wanted; do
-                if [[ " $new_wanted " != *" $target "* ]]; then
-                    rm -f -- "$UNITS/$target.wants/shiftfix.service"
-                fi
-            done
-            systemctl --user enable shiftfix.service >/dev/null 2>&1 || true
-            systemctl --user daemon-reload
-        elif ((!unit_existed || resume)); then
-            # Юнита не было: первая установка или переход с автозапуска сеанса.
-            # Или первая установка оборвалась, когда юнит уже был записан.
-            if [[ $mode == install ]] || autostart_on; then
-                if systemctl --user enable shiftfix.service >/dev/null 2>&1; then
-                    enabled=1
-                else
-                    note "Автозапуск не включился: systemctl --user enable shiftfix"
-                fi
-            fi
-        fi
-        # Службу запускает включённый юнит — второй запуск из автозапуска сеанса не нужен.
-        # Юнит выключен (или не включился) — файл автозапуска сеанса не трогаем: его мог
-        # записать сеанс без systemd, и иначе не осталось бы никакого автозапуска.
-        if ((enabled)); then
-            rm -f -- "$AUTOSTART"
-            autostart_state="юнит systemd $(pretty "$UNIT") — включён"
-        elif autostart_on; then
-            autostart_state="автозапуск сеанса $(pretty "$AUTOSTART") — включён (юнит systemd выключен)"
-        else
-            autostart_state="юнит systemd $(pretty "$UNIT") — выключен (как было)"
-        fi
+        setup_unit
     elif [[ -e $UNIT ]]; then
         autostart_state="юнит systemd есть, но systemd --user сейчас недоступен — не трогаю"
-    elif [[ -e $AUTOSTART ]] && ! autostart_on; then
+    else
+        setup_session_autostart
+    fi
+}
+
+# Юнит: записать, если текст изменился; включить при первой установке и при переходе
+# с автозапуска сеанса.
+setup_unit() {
+    local new_unit old_unit='' old_wanted='' new_wanted='' unit_existed=0
+    new_unit="$("$BIN/shiftfix" --print-unit)"
+    if [[ -e $UNIT ]]; then
+        unit_existed=1
+        old_unit="$(cat -- "$UNIT")"
+        old_wanted="$(sed -n 's/^WantedBy=//p' <<<"$old_unit")"
+        new_wanted="$(sed -n 's/^WantedBy=//p' <<<"$new_unit")"
+        # Вне графического сеанса (ssh, консоль) graphical-session.target не видна —
+        # тогда прежний WantedBy вернее нового.
+        if [[ -n $old_wanted && $old_wanted != "$new_wanted" ]] &&
+            ! systemctl --user is-active --quiet graphical-session.target; then
+            new_unit="${new_unit/$'\n'"WantedBy=$new_wanted"/$'\n'"WantedBy=$old_wanted"}"
+            new_wanted=$old_wanted
+        fi
+    fi
+    if systemctl --user is-enabled --quiet shiftfix.service 2>/dev/null; then enabled=1; fi
+    if [[ $old_unit != "$new_unit" ]]; then
+        mkdir -p "$UNITS"
+        put_text "$UNIT" "$new_unit"
+        systemctl --user daemon-reload
+    fi
+    if ((unit_existed && enabled)) && [[ $old_wanted != "$new_wanted" ]]; then
+        # Цели включённого юнита сменились (проверяем и при доделке установки).
+        move_wants "$old_wanted" "$new_wanted"
+    elif ((!unit_existed || resume)); then
+        # Юнита не было: первая установка или переход с автозапуска сеанса.
+        # Или первая установка оборвалась, когда юнит уже был записан.
+        if [[ $mode == install ]] || autostart_on; then
+            if systemctl --user enable shiftfix.service >/dev/null 2>&1; then
+                enabled=1
+            else
+                note "Автозапуск не включился: systemctl --user enable shiftfix"
+            fi
+        fi
+    fi
+    # Службу запускает включённый юнит — второй запуск из автозапуска сеанса не нужен.
+    # Юнит выключен (или не включился) — файл автозапуска сеанса не трогаем: его мог
+    # записать сеанс без systemd, и иначе не осталось бы никакого автозапуска.
+    if ((enabled)); then
+        rm -f -- "$AUTOSTART"
+        autostart_state="юнит systemd $(pretty "$UNIT") — включён"
+    elif autostart_on; then
+        autostart_state="автозапуск сеанса $(pretty "$AUTOSTART") — включён (юнит systemd выключен)"
+    else
+        autostart_state="юнит systemd $(pretty "$UNIT") — выключен (как было)"
+    fi
+}
+
+# Цели включённого юнита (WantedBy) сменились. Не reenable: он снял бы и ссылки,
+# добавленные вручную (add-wants). Убираем только ссылки целей, которых больше нет,
+# и добавляем новые.
+move_wants() { # $1 — прежние цели, $2 — новые
+    local target
+    for target in $1; do
+        if [[ " $2 " != *" $target "* ]]; then
+            rm -f -- "$UNITS/$target.wants/shiftfix.service"
+        fi
+    done
+    systemctl --user enable shiftfix.service >/dev/null 2>&1 || true
+    systemctl --user daemon-reload
+}
+
+# Без systemd: файл автозапуска сеанса — при первой установке или если он уже есть.
+setup_session_autostart() {
+    local text
+    if [[ -e $AUTOSTART ]] && ! autostart_on; then
         autostart_state="$(pretty "$AUTOSTART") — выключен (как было)"
     elif [[ -e $AUTOSTART || $mode == install ]]; then
         text="$("$BIN/shiftfix" --print-autostart)"
@@ -625,9 +665,8 @@ setup_autostart() {
     fi
 }
 
-# Запустить службу, если она работала (или это первая установка), и окно,
-# если оно было открыто.
-start_again() {
+# Запустить службу, если она работала (или это первая установка).
+start_service() {
     local start='' line
     if ((was_active)); then
         start=systemd
@@ -640,15 +679,8 @@ start_again() {
     fi
     if [[ -n $start ]]; then
         step "Запуск"
-        if [[ $start == systemd ]]; then
-            systemctl --user start shiftfix.service || true
-        else
-            wait_for 30 not held "$DAEMON_LOCK" || true
-            launch "$BIN/shiftfix"
-        fi
-    fi
-    restarted=1
-    if [[ -n $start ]]; then
+        start_daemon "$start" || true
+        daemon_restarted=1
         if wait_for 50 status_ok; then
             if ((stopped)); then service_state="перезапущена"; else service_state="запущена"; fi
             line="$("$BIN/shiftfix" --status 2>/dev/null)" || line=
@@ -669,17 +701,19 @@ start_again() {
             service_state="остановилась с ошибкой — что не так, покажет: shiftfix --check"
         fi
     fi
-    gui_state=
-    if ((gui_was)); then
+}
+
+# Открыть окно снова, если его закрывали ради замены.
+reopen_gui() {
+    if ((gui_closed)); then
         if [[ -n ${WAYLAND_DISPLAY:-}${DISPLAY:-} ]]; then
-            wait_for 30 not held "$GUI_LOCK" || true
-            launch "$BIN/shiftfix-gui"
+            open_gui || true
+            gui_reopened=1
             gui_state="открыто снова"
         else
             gui_state="было открыто — откройте снова из меню приложений"
         fi
     fi
-    gui_back=1
 }
 
 # Итог: что сделано и что осталось как было.
@@ -726,14 +760,27 @@ print_summary() {
     [[ ":$PATH:" == *":$BIN:"* ]] || note "Совет: добавьте $BIN в PATH, чтобы команды shiftfix --toggle и --status работали в терминале."
 }
 
-# Что этапы узнали и сделали (mode, changed, was_active…), они оставляют в
-# глобальных переменных: их читают следующие этапы, итог и cleanup.
 main() {
+    # Что этапы узнали и сделали, они оставляют в глобальных переменных (пути — в
+    # init_paths). Кто пишет → кто читает:
+    yes=0                                         # parse_args → ask
+    NEW='' OLD='' OLD_TEXT='' MIN_RUST='' mode='' # check_versions → все этапы
+    resume=0                                      # check_versions → setup_unit: доделка установки
+    TARGET=''                                     # build → plan_files
+    need_udev=0 need_modules=0 need_group=0       # setup_uinput → итог
+    relogin=0 system_state=''                     # setup_uinput → start_service, итог
+    srcs=() perms=() changed=()                   # plan_files → install_files, итог
+    daemon_changed=0 gui_changed=0 menu_changed=0 # plan_files → stop_running, install_files, итог
+    was_active=0 was_proc=0 gui_closed=0          # stop_running → start_service, reopen_gui, cleanup
+    stopped=0                                     # stop_running → start_service, cleanup
+    config_state=''                               # install_files → итог
+    enabled=0 autostart_state=''                  # setup_autostart → start_service, итог
+    service_state='' gui_state=''                 # start_service, reopen_gui → итог
+    daemon_restarted=0 gui_reopened=0             # start_service, reopen_gui → cleanup: уже сделано
+    temps=()                                      # put, put_text, plan_files → cleanup
     parse_args "$@"
     check_system
     init_paths
-    temps=()
-    was_active=0 was_proc=0 gui_was=0 stopped=0 restarted=0 gui_back=0
     take_lock
     # Ловушки — после блокировки: до неё убирать нечего, а метку незаконченной
     # установки мог положить тот install.sh, что держит блокировку сейчас.
@@ -748,7 +795,8 @@ main() {
     stop_running
     install_files
     setup_autostart
-    start_again
+    start_service
+    reopen_gui
     rm -f -- "$INCOMPLETE" # установка закончена
     print_summary
 }
