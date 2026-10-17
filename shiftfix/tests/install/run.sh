@@ -202,7 +202,8 @@ scenario 13-no-systemd-unit-kept './install.sh'
 as_user "./uninstall.sh --yes --keep-group >/dev/null 2>&1; rm -f ~/.config/systemd/user/shiftfix.service"
 scenario 14-no-systemd-install './install.sh'
 as_user 'rm ~/.fakesd/off'
-scenario 15-uninstall './uninstall.sh --yes'
-scenario 16-uninstall-again './uninstall.sh --yes'
-scenario 17-install-again './install.sh --yes'
-scenario 18-uninstall-purge './uninstall.sh --yes --purge'
+scenario 15-uninstall-answer-no "printf 'n\n' | script -qec ./uninstall.sh /dev/null"
+scenario 16-uninstall './uninstall.sh --yes'
+scenario 17-uninstall-again './uninstall.sh --yes'
+scenario 18-install-again './install.sh --yes'
+scenario 19-uninstall-purge './uninstall.sh --yes --purge'
