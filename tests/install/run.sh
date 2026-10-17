@@ -208,3 +208,5 @@ scenario 16-uninstall './uninstall.sh --yes'
 scenario 17-uninstall-again './uninstall.sh --yes'
 scenario 18-install-again './install.sh --yes'
 scenario 19-uninstall-purge './uninstall.sh --yes --purge'
+# Пока install.sh держит блокировку (идёт в другом терминале), uninstall.sh ничего не трогает.
+scenario 20-uninstall-while-locked "flock $RUN/shiftfix-install.lock ./uninstall.sh --yes"
