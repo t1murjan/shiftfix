@@ -210,3 +210,12 @@ scenario 18-install-again './install.sh --yes'
 scenario 19-uninstall-purge './uninstall.sh --yes --purge'
 # Пока install.sh держит блокировку (идёт в другом терминале), uninstall.sh ничего не трогает.
 scenario 20-uninstall-while-locked "flock $RUN/shiftfix-install.lock ./uninstall.sh --yes"
+
+# Первая установка обрывается после замены файлов (daemon-reload падает): повторный
+# запуск доделывает её — включает автозапуск и запускает службу, а uninstall.sh
+# убирает и метку незаконченной установки.
+as_user 'touch ~/.fakesd/reload-fail'
+scenario 21-first-install-interrupted './install.sh'
+scenario 22-uninstall-interrupted './uninstall.sh --yes --keep-group'
+as_user './install.sh >/dev/null 2>&1; rm ~/.fakesd/reload-fail ~/log/*.log' # снова обрыв, без журнала
+scenario 23-first-install-resumed './install.sh'

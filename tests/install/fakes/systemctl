@@ -1,7 +1,8 @@
 #!/bin/bash
 # Поддельный `systemctl --user`: состояние — файлы в ~/.fakesd, вызовы — в ~/log/systemctl.log.
 # ~/.fakesd/off — systemd недоступен; ~/.fakesd/no-graphical — graphical-session.target
-# не активна; ~/.fakesd/slow-stop — stop идёт 3 секунды.
+# не активна; ~/.fakesd/slow-stop — stop идёт 3 секунды; ~/.fakesd/reload-fail —
+# daemon-reload падает.
 SD="$HOME/.fakesd"
 UNITS="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 mkdir -p "$SD" "$HOME/log"
@@ -58,7 +59,8 @@ stop() {
 
 case $cmd in
 show-environment) echo "HOME=$HOME" ;;
-daemon-reload | reset-failed) ;;
+daemon-reload) [[ -e $SD/reload-fail ]] && exit 1 ;;
+reset-failed) ;;
 is-active)
     if [[ $unit == graphical-session.target* ]]; then
         [[ -e $SD/no-graphical ]] && exit 3
