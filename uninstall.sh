@@ -22,8 +22,8 @@ usage() {
   --keep-build     с --purge: оставить сборку
   -h, --help       эта справка
 
-Пакеты (wl-clipboard, xclip, libnotify, компилятор C) и Rust не удаляются:
-ими пользуются и другие программы.
+Пакеты (wl-clipboard, xclip, libnotify, компилятор C), Rust и сама группа input
+(даже если её создал install.sh) не удаляются: ими пользуются и другие программы.
 EOF
 }
 
@@ -142,31 +142,20 @@ show_plan() {
     fi
 }
 
-# Спросить (без --yes) и сразу — пароль sudo, до того как что-то удалять.
+# Спросить (без --yes).
 confirm() {
-    local answer
-    if ((!yes)); then
-        if [[ ! -t 0 ]]; then
-            echo "Нет терминала, чтобы спросить, — запустите с --yes." >&2
-            exit 1
-        fi
-        echo
-        read -r -p "Удалить? [y/N] " answer || answer=
-        # Через case, а не [YyДд]: без UTF-8 локали скобка сравнивает байты, и «н»
-        # (тот же первый байт, что у «Д») сошло бы за «да».
-        case $answer in
-        [Yy]* | Д* | д*) ;;
-        *) answer= ;;
-        esac
-        if [[ -z $answer ]]; then
-            echo "Ничего не удалено."
-            exit 0
-        fi
+    if ((yes)); then return 0; fi
+    echo
+    if ! ask "Удалить?" n; then
+        echo "Ничего не удалено."
+        exit 0
     fi
+}
 
-        need_root=0
+# Пароль sudo — сразу, до того как что-то удалять.
+ask_sudo() {
+    need_root=0 root_ok=0
     if ((${#system[@]} || leave_group)); then need_root=1; fi
-    root_ok=0
     if ((need_root)) && have sudo && sudo -v; then root_ok=1; fi
 }
 
@@ -263,6 +252,7 @@ main() {
     find_installed
     show_plan
     confirm
+    ask_sudo
     stop_running
     remove_files
     remove_system
