@@ -4,7 +4,7 @@
 
 ## Устройство
 
-- `src/main.rs` — служба `shiftfix` и её CLI: `--status`, `--toggle`, `--check`, `--print-config`, `--print-unit`, `--print-autostart`.
+- `src/bin/shiftfix/` — служба `shiftfix` и её CLI: `--status`, `--toggle`, `--print-config`, `--print-unit`, `--print-autostart`; `--check` — в `check.rs`.
 - `src/bin/shiftfix-gui/` — окно на eframe/egui 0.36 с вкладками «Главная», «Устройства», «Настройки», «Инструкция», «Журнал».
 - `engine.rs` — логика без ввода-вывода. Буфер хранит скан-коды. Исправить слово = переключить раскладку, нажать Backspace×N и повторить те же клавиши через uinput.
 - `devices.rs` — evdev и роли устройств: клавиатура, мышь, тачпад, экран, перо; роль можно задать вручную.
