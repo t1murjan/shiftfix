@@ -230,6 +230,13 @@ impl Rig {
         self.ev(key, 0, 0.04);
     }
 
+    /// Сочетание: зажать `hold`, нажать `key`, отпустить в обратном порядке.
+    fn press_with(&mut self, hold: &[KeyCode], key: KeyCode) {
+        hold.iter().for_each(|&k| self.ev(k, 1, 0.04));
+        self.press(key);
+        hold.iter().rev().for_each(|&k| self.ev(k, 0, 0.04));
+    }
+
     /// Пальцы печатают `text` так, будто включена раскладка `layout`.
     fn type_as(&mut self, text: &str, layout: &str) {
         for ch in text.chars() {
@@ -646,6 +653,57 @@ fn selection_by_typing_handles_capslock() {
     r.shift2();
     assert_eq!(r.text(), "Привет");
     assert!(!r.w.borrow().log.contains(&"combo".to_string()));
+}
+
+#[test]
+fn copying_and_extending_keep_selection() {
+    const CTRL: KeyCode = KeyCode::KEY_LEFTCTRL;
+    let keep: [(&[KeyCode], KeyCode); 4] = [
+        (&[CTRL], KeyCode::KEY_C),
+        (&[CTRL], KeyCode::KEY_INSERT),
+        (&[LS], KeyCode::KEY_LEFT),
+        (&[CTRL, LS], KeyCode::KEY_RIGHT),
+    ];
+    for (hold, key) in keep {
+        let mut r = Rig::new();
+        r.select_text("ghbdtn");
+        r.press_with(hold, key);
+        r.shift2();
+        assert_eq!(r.text(), "привет", "{hold:?}+{key:?}");
+    }
+    // Вставка, стрелка без Shift, Shift+Enter — выделения больше нет.
+    let drop: [(&[KeyCode], KeyCode); 3] = [
+        (&[CTRL], KeyCode::KEY_V),
+        (&[], KeyCode::KEY_LEFT),
+        (&[LS], KeyCode::KEY_ENTER),
+    ];
+    for (hold, key) in drop {
+        let mut r = Rig::new();
+        r.select_text("ghbdtn");
+        r.press_with(hold, key);
+        r.shift2();
+        assert_eq!(r.emitted(), 0, "{hold:?}+{key:?}");
+    }
+}
+
+#[test]
+fn selection_length_limits() {
+    // Длиннее max_selection — не трогается.
+    let mut r = Rig::new();
+    let long = "g".repeat(r.eng.cfg.max_selection + 1);
+    r.select_text(&long);
+    r.shift2();
+    assert_eq!((r.text(), r.emitted()), (long, 0));
+
+    // Замену длиннее SEGMENT_MAX повторный ⇧⇧ уже не возвращает.
+    for (len, back) in [(SEGMENT_MAX, "g"), (SEGMENT_MAX + 1, "п")] {
+        let mut r = Rig::new();
+        r.select_text(&"g".repeat(len));
+        r.shift2();
+        assert_eq!(r.text(), "п".repeat(len));
+        r.shift2();
+        assert_eq!(r.text(), back.repeat(len), "{len} символов");
+    }
 }
 
 #[test]
