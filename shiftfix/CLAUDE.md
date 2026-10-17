@@ -7,7 +7,7 @@
 - `src/bin/shiftfix/` — служба `shiftfix` и её CLI: `--status`, `--toggle`, `--print-config`, `--print-unit`, `--print-autostart`; `--check` — в `check.rs`.
 - `src/bin/shiftfix-gui/` — окно на eframe/egui 0.36 с вкладками «Главная», «Устройства», «Настройки», «Инструкция», «Журнал».
 - `engine/` — логика без ввода-вывода (тесты — `engine/tests.rs`). Буфер хранит скан-коды. Исправить слово = переключить раскладку, нажать Backspace×N и повторить те же клавиши через uinput.
-- `devices.rs` — evdev и роли устройств: клавиатура, мышь, тачпад, экран, перо; роль можно задать вручную.
+- `devices/` — устройства ввода: роли (клавиатура, мышь, тачпад, экран, перо; можно задать вручную) — `mod.rs`, обход /dev/input и чтение событий — `registry.rs`.
 - `backend/` — переключение раскладки (по файлу на окружение, выбор — `auto.rs`): KDE (DBus), GNOME (gsettings + Super+Space), Hyprland, Sway, X11 (XKB), хоткей.
 - `keymap/` — таблицы раскладок: keymap от композитора (`wayland.rs`) или X11 (`x11.rs`), разбор через libxkbcommon, загружаемую dlopen (`xkb.rs`), встроенные us/ru (`layout.rs`), перекодировка выделения (`convert.rs`); `keys.rs` — классы клавиш.
 - `selection/` — выделение: выбор источника (`mod.rs`), Wayland с data-control — wl-clipboard (`wayland.rs`), X11 и GNOME через XWayland — xclip и XFixes (`x11.rs`), возврат буфера обмена (`clipboard.rs`).
