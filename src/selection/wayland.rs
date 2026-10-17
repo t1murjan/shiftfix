@@ -175,36 +175,30 @@ pub fn watch(tx: &Sender<Msg>) -> Option<String> {
 mod tests {
     use std::cell::RefCell;
     use std::fs;
-    use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::rc::Rc;
 
     use super::*;
     use crate::engine::Stroke;
-    use crate::testutil::TempDir;
+    use crate::testutil::{TempDir, write_script};
 
     /// Фальшивые wl-paste/wl-copy: буферы — файлы `clip`/`primary` и их типы.
     fn fake_tools(dir: &Path) -> (String, String) {
-        let paste = r#"#!/bin/sh
-d="$(dirname "$0")"; sel=clip
+        let paste = r#"d="$(dirname "$0")"; sel=clip
 [ "$1" = "--primary" ] && { sel=primary; shift; }
 [ -f "$d/$sel" ] || { echo "Nothing is copied" >&2; exit 1; }
 if [ "$1" = "--list-types" ]; then cat "$d/$sel.types"; exit 0; fi
 [ "$1" = "--no-newline" ] && [ "$2" = "--type" ] || exit 2
 grep -qx "$3" "$d/$sel.types" || { echo "no type $3" >&2; exit 1; }
 cat "$d/$sel""#;
-        let copy = r#"#!/bin/sh
-d="$(dirname "$0")"
+        let copy = r#"d="$(dirname "$0")"
 if [ "$1" = "--clear" ]; then rm -f "$d/clip" "$d/clip.types"; exit 0; fi
 [ "$1" = "--type" ] || exit 2
 cat > "$d/clip"; printf '%s\n' "$2" > "$d/clip.types""#;
-        for (name, body) in [("wl-paste", paste), ("wl-copy", copy)] {
-            let path = dir.join(name);
-            fs::write(&path, body).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        let tool = |n: &str| dir.join(n).to_string_lossy().into_owned();
-        (tool("wl-paste"), tool("wl-copy"))
+        (
+            write_script(dir, "wl-paste", paste),
+            write_script(dir, "wl-copy", copy),
+        )
     }
 
     /// «Приложение»: на Ctrl+V читает текущий буфер обмена.

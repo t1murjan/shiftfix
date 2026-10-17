@@ -57,12 +57,18 @@ impl Drop for TempDir {
     }
 }
 
+/// Исполняемый скрипт `dir/name`: `#!/bin/sh` и `body`. Возвращает путь к нему.
+pub fn write_script(dir: &Path, name: &str, body: &str) -> String {
+    let path = dir.join(name);
+    fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    path.to_string_lossy().into_owned()
+}
+
 /// Временный исполняемый скрипт вместо внешней команды (hyprctl, swaymsg,
 /// gsettings…): каталог со скриптом и путь к нему.
 pub fn fake_command(name: &str, body: &str) -> (TempDir, String) {
     let dir = TempDir::new(name);
-    let path = dir.join(name);
-    fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-    (dir, path.to_string_lossy().into_owned())
+    let path = write_script(&dir, name, body);
+    (dir, path)
 }
