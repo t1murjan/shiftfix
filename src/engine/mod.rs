@@ -95,7 +95,6 @@ pub struct Action {
 pub struct LayoutInfo {
     pub backend: String,
     pub codes: Vec<String>,
-    pub names: Vec<String>,
     pub current: Option<usize>,
     /// Таблицы взяты из настоящей keymap, а не встроенные.
     pub from_keymap: bool,
@@ -233,27 +232,18 @@ impl Engine {
             return info.clone();
         }
         let (codes, current, error) = match self.backend.layouts() {
-            Ok(codes) => {
-                let current = self.backend.current().ok().flatten();
-                (codes, current, None)
-            }
+            Ok(codes) => (codes, self.current_layout(), None),
             Err(err) => (Vec::new(), None, Some(format!("{err:#}"))),
         };
         // Имя — после layouts(): Auto выбирает переключатель при первом обращении.
         let backend = self.backend.name().to_owned();
         let from_keymap = self.keymap_layouts(&codes).is_some();
-        let names = if from_keymap {
-            self.keymap.layouts.iter().map(|l| l.name.clone()).collect()
-        } else {
-            codes.clone()
-        };
         if !codes.is_empty() {
             self.codes.clone_from(&codes);
         }
         let info = LayoutInfo {
             backend,
             codes,
-            names,
             current,
             from_keymap,
             error,
