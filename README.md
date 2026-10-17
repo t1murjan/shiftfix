@@ -24,17 +24,19 @@ Shift Shift → «привет», и раскладка уже русская.
 | KDE Plasma (Wayland) | DBus KWin | wl-clipboard |
 | Hyprland (в том числе Omarchy) | `hyprctl switchxkblayout` | wl-clipboard |
 | Sway | `swaymsg` | wl-clipboard |
-| GNOME (Wayland) | источники ввода GNOME | XWayland + xclip |
+| GNOME (Wayland) | источники ввода GNOME (gsettings, Super+Space) | XWayland + xclip |
 | X11 (любой оконный менеджер) | группа XKB | xclip |
 | Остальное | ваше сочетание клавиш | — |
 
 Проверялось в CachyOS (KDE Plasma, Wayland) и Omarchy (Hyprland).
 
+В Sway задавайте раскладки для всех клавиатур: `input type:keyboard { xkb_layout us,ru }`. Слово перенабирается через виртуальную клавиатуру shiftfix, и без этих раскладок она напечатает его в своей.
+
 ## Установка
 
 ```sh
 git clone https://github.com/t1murjan/shiftfix.git
-cd shiftfix/shiftfix
+cd shiftfix
 ./install.sh
 ```
 
@@ -54,10 +56,10 @@ cd shiftfix/shiftfix
 ```sh
 cd shiftfix
 git pull
-cd shiftfix && ./install.sh
+./install.sh
 ```
 
-Тот же `install.sh` и ставит, и обновляет. Он пишет, что делает: «установка 0.4.0», «обновление 0.3.0 → 0.4.0» или «уже установлена 0.4.0», а перед установкой более старой версии спрашивает.
+Тот же `install.sh` и ставит, и обновляет. Он пишет, что делает: «установка 0.4.0», «обновление 0.3.0 → 0.4.0» или «уже установлена 0.4.0», а перед установкой более старой версии спрашивает (без терминала нужен `--yes`).
 
 - Сначала сборка: если она не удалась, установленная версия остаётся как была.
 - Служба и окно останавливаются, программы заменяются, и служба запускается снова — если работала.
@@ -65,17 +67,19 @@ cd shiftfix && ./install.sh
 - При повторном запуске sudo обычно не нужен совсем.
 - В конце — короткий итог: что обновлено, что осталось как было.
 
+Раньше проект лежал в подпапке `shiftfix/` репозитория. Если вы ставили его оттуда, после `git pull` в этой подпапке останется старая сборка — её можно удалить: `rm -rf shiftfix/target`.
+
 Версию показывают `shiftfix --version`, `shiftfix-gui --version` и блок «О программе» во вкладке «Инструкция».
 
 ## Удаление
 
 ```sh
-cd shiftfix/shiftfix
+cd shiftfix
 ./uninstall.sh            # программы, служба, ярлык, правило udev, группа input
 ./uninstall.sh --purge    # и ещё настройки и сборка
 ```
 
-Скрипт сначала покажет, что нашёл, и спросит. Без `--purge` настройки остаются — поставите снова, и всё будет как было. Пакеты (wl-clipboard, xclip и т. п.) и Rust не удаляются: ими пользуются и другие программы.
+Скрипт сначала покажет, что нашёл, и спросит. Без `--purge` настройки остаются — поставите снова, и всё будет как было. Ещё параметры: `--yes` (не спрашивать), `--keep-group` (остаться в группе `input`), `--keep-build` (с `--purge` — оставить сборку). Пакеты (wl-clipboard, xclip и т. п.) и Rust не удаляются: ими пользуются и другие программы.
 
 ## Окно shiftfix-gui
 
@@ -85,6 +89,8 @@ cd shiftfix/shiftfix
 - **Инструкция** — как пользоваться, что делать, если не работает, и «О программе».
 - **Журнал** — сообщения службы и кнопка «Проверить систему».
 
+«Системная» тема берётся из XDG Desktop Portal и меняется вместе с системой; без портала тема тёмная. `shiftfix-gui --theme light|dark|system` меняет тему только на один запуск.
+
 ## Команды
 
 | Что | Команда |
@@ -93,6 +99,7 @@ cd shiftfix/shiftfix
 | Состояние | `shiftfix --status` |
 | Проверить систему | `shiftfix --check` |
 | Перечитать конфиг | `shiftfix --reload` |
+| Юнит systemd / файл автозапуска для этого бинарника | `shiftfix --print-unit`, `shiftfix --print-autostart` |
 | Журнал службы | `journalctl --user -u shiftfix -f` |
 
 Если команды не находятся, добавьте `~/.local/bin` в `PATH`.
@@ -108,14 +115,17 @@ cd shiftfix/shiftfix
 - Группа `input` даёт **любой** программе пользователя читать клавиатуру. shiftfix набранное не сохраняет: в памяти — только последние нажатия, в журнале — только длины слов.
 - Выделенный текст исправляется в приложениях с PRIMARY-выделением (Qt/KDE, GTK, Firefox, Chromium); в терминале — нет.
 - В IDE от JetBrains двойной Shift открывает Search Everywhere.
+- Klipper запоминает вставленный текст в истории.
+- keyd виртуальную клавиатуру shiftfix не перехватывает. Для kanata добавьте в `defcfg`: `linux-dev-names-exclude ("shiftfix virtual keyboard")`.
 - fcitx5 и IBus как переключатели раскладки не поддерживаются.
 
 ## Подробнее
 
-- [shiftfix/README.md](shiftfix/README.md) — полное описание: как устроено, все параметры, разработка.
-- [shiftfix/BUGS.md](shiftfix/BUGS.md) — найденные при ревью ошибки и как они исправлены.
+- [docs/architecture.md](docs/architecture.md) — как устроена программа.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — сборка, проверки и правила для правок.
+- [CHANGELOG.md](CHANGELOG.md) — что менялось от версии к версии.
 
-Первая версия программы была скриптом на Python (`wayswitcher-g5.py`, «Wayland Switcher»). Она больше не развивается и оставлена в репозитории для истории.
+Первая версия программы была скриптом на Python («Wayland Switcher»). Он больше не развивается и из репозитория удалён; посмотреть его можно в истории git: `git show 00cdc1d:wayswitcher-g5.py`.
 
 ## Лицензия
 
