@@ -662,7 +662,8 @@ impl Engine {
         // CapsLock, переключающий раскладку, регистр не меняет.
         let caps = !self.keymap.caps_switches_group && (self.caps_on)();
         let plan = keymap::plan_strokes(&text, &src_layout, &tgt_layout, caps, tgt);
-        // Наша вставка сама меняет PRIMARY и буфер обмена.
+        // Наша вставка сама меняет PRIMARY и буфер обмена. Отсчёт — и до неё:
+        // если она оборвётся ошибкой, второй установки ниже не будет.
         self.sel_ignore_until = (self.clock)() + SELF_CHANGE_GRACE;
 
         let how = match &plan {
@@ -686,6 +687,9 @@ impl Engine {
                 "вставка"
             }
         };
+        // Вставка и набор бывают долгими (до нескольких секунд), а события
+        // PRIMARY за это время движок разберёт только теперь: отсчёт заново.
+        self.sel_ignore_until = (self.clock)() + SELF_CHANGE_GRACE;
         match plan {
             Some(strokes) if strokes.len() <= SEGMENT_MAX => {
                 self.buf = strokes; // повторный ⇧⇧ вернёт как было

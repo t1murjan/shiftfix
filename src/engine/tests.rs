@@ -21,6 +21,8 @@ struct World {
     backend_down: bool,
     /// Сеанс неактивен: вошёл другой пользователь, открыта консоль.
     inactive: bool,
+    /// Сколько секунд идёт вставка через буфер обмена.
+    paste_secs: f64,
     paste_keys: Vec<KeyCode>,
     log: Vec<String>,
 }
@@ -133,7 +135,7 @@ impl Backend for FakeBackend {
     }
 }
 
-struct FakeClip(Rc<RefCell<World>>);
+struct FakeClip(Rc<RefCell<World>>, Rc<Cell<f64>>);
 
 impl Selection for FakeClip {
     fn read_primary(&mut self) -> Option<String> {
@@ -148,7 +150,9 @@ impl Selection for FakeClip {
             )
         };
         keys.combo(&paste_keys)?;
-        self.0.borrow_mut().clipboard = old;
+        let mut w = self.0.borrow_mut();
+        w.clipboard = old;
+        self.1.set(self.1.get() + w.paste_secs);
         Ok(())
     }
 }
@@ -184,6 +188,7 @@ impl Rig {
             known_layout,
             backend_down: false,
             inactive: false,
+            paste_secs: 0.0,
             paste_keys: cfg.paste_keys.clone(),
             log: Vec::new(),
         }));
@@ -193,7 +198,7 @@ impl Rig {
             cfg,
             Box::new(FakeBackend(w.clone())),
             Box::new(FakeKeys(w.clone())),
-            Some(Box::new(FakeClip(w.clone()))),
+            Some(Box::new(FakeClip(w.clone(), clock.clone()))),
             Box::new(move || cw.borrow().caps),
             Box::new(move || ck.get()),
             Box::new(move || gw.borrow().inactive.then(|| "сеанс неактивен".into())),
@@ -798,6 +803,19 @@ fn own_paste_does_not_revalidate_selection() {
     r.shift2();
     r.eng.primary_changed(6); // эхо нашей же вставки
     r.shift2(); // значит, это повтор по буферу, а не новое выделение
+    assert_eq!(r.text(), "ghbdtn");
+}
+
+#[test]
+fn echo_of_slow_paste_is_ignored() {
+    let mut r = Rig::new();
+    // Буфер обмена отвечает не сразу: вставка дольше SELF_CHANGE_GRACE.
+    r.w.borrow_mut().paste_secs = SELF_CHANGE_GRACE + 1.0;
+    r.select_text("ghbdtn");
+    r.shift2();
+    assert_eq!(r.text(), "привет");
+    r.eng.primary_changed(6); // эхо вставки, пришедшее сразу после неё
+    r.shift2(); // повтор по буферу, а не новое выделение
     assert_eq!(r.text(), "ghbdtn");
 }
 
