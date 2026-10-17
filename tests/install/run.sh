@@ -236,3 +236,22 @@ scenario 26-home-with-space-uninstall "HOME='$SPACE_HOME' ./uninstall.sh --yes -
 
 # Та же версия, но правила udev нет (его убрало удаление выше): ставится только оно.
 scenario 27-same-system-repaired './install.sh'
+
+# Метка незаконченной установки лежит, а блокировку держит install.sh в другом
+# терминале (метку положил он): второй только просит подождать, не «запустите снова».
+as_user 'mkdir -p ~/.local/state && touch ~/.local/state/shiftfix-install-incomplete'
+scenario 28-install-while-locked "flock $RUN/shiftfix-install.lock ./install.sh"
+as_user 'rm ~/.local/state/shiftfix-install-incomplete'
+
+# Первая установка (программ в ~/.local/bin нет), а юнит уже есть и выключен — его
+# записало окно, потом автозапуск выключили: install.sh выбор не трогает.
+as_user 'rm ~/.local/bin/shiftfix ~/.local/bin/shiftfix-gui ~/.config/autostart/shiftfix.desktop'
+scenario 29-first-install-unit-off './install.sh'
+
+# Доделка оборванной установки, а цели включённого юнита сменились: обрыв был вне
+# графического сеанса (WantedBy с default.target). Ссылка из default.target.wants
+# убирается, как при обновлении.
+as_user 'touch ~/.fakesd/no-graphical && ~/.local/bin/shiftfix --print-unit >~/.config/systemd/user/shiftfix.service &&
+    rm ~/.fakesd/no-graphical && systemctl --user enable shiftfix.service &&
+    touch ~/.local/state/shiftfix-install-incomplete && rm ~/log/*.log'
+scenario 30-resumed-wanted-changed './install.sh'
