@@ -11,6 +11,11 @@ use crate::sys::proc;
 
 pub const UNIT: &str = "shiftfix.service";
 
+/// Код выхода службы «ошибка настройки»: нет доступа к устройствам, неверный
+/// конфиг или параметры. Перезапуск тут не поможет, и юнит запрещает его
+/// (`RestartPreventExitStatus`).
+pub const EXIT_SETUP: u8 = 2;
+
 /// Сеанс поднимает `graphical-session.target`.
 pub fn graphical_target_active() -> bool {
     proc::run(
@@ -101,8 +106,8 @@ After=graphical-session.target
 ExecStart={exec}
 Restart=on-failure
 RestartSec=3
-# Код 2 — ошибка настройки (нет доступа к устройствам и т.п.), перезапуск не поможет.
-RestartPreventExitStatus=2
+# Код {EXIT_SETUP} — ошибка настройки (нет доступа к устройствам и т.п.), перезапуск не поможет.
+RestartPreventExitStatus={EXIT_SETUP}
 
 [Install]
 WantedBy={wanted_by}

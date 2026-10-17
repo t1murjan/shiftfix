@@ -87,5 +87,5 @@ fn closed_stderr_is_not_fatal() {
         .status()
         .unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
-    assert_eq!(status.code(), Some(2), "код ошибки конфига");
+    assert_eq!(status.code(), Some(shiftfix::service::EXIT_SETUP.into()));
 }

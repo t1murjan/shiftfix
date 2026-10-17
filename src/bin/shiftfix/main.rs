@@ -103,7 +103,7 @@ fn main() -> ExitCode {
         Ok(args) => args,
         Err(err) => {
             eprintln!("shiftfix: {err}\n\n{USAGE}");
-            return ExitCode::from(2);
+            return ExitCode::from(service::EXIT_SETUP);
         }
     };
     match &args.command {
@@ -135,7 +135,7 @@ fn main() -> ExitCode {
         Ok(cfg) => cfg,
         Err(err) => {
             error!("config: {err:#}");
-            return ExitCode::from(2);
+            return ExitCode::from(service::EXIT_SETUP);
         }
     };
     if args.command == Command::Check {
@@ -145,7 +145,7 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             error!("{err:#}");
-            ExitCode::from(2) // systemd не перезапускает (RestartPreventExitStatus=2)
+            ExitCode::from(service::EXIT_SETUP) // systemd не перезапускает
         }
     }
 }
