@@ -225,3 +225,11 @@ scenario 23-first-install-resumed './install.sh'
 as_user 'systemctl --user disable shiftfix.service && mkdir -p ~/.config/autostart &&
     ~/.local/bin/shiftfix --print-autostart >~/.config/autostart/shiftfix.desktop'
 scenario 24-unit-off-session-autostart './install.sh'
+
+# Домашний каталог с пробелом: путь в Exec= ярлыка — в кавычках, установка и
+# удаление не спотыкаются. Журналы и состояние systemctl — общие с основным.
+SPACE_HOME="$H/my home"
+as_user "systemctl --user stop shiftfix.service && mkdir '$SPACE_HOME' && ln -s ~/log ~/.fakesd '$SPACE_HOME/'"
+scenario 25-home-with-space "HOME='$SPACE_HOME' ./install.sh &&
+    grep '^Exec=' '$SPACE_HOME/.local/share/applications/shiftfix.desktop'"
+scenario 26-home-with-space-uninstall "HOME='$SPACE_HOME' ./uninstall.sh --yes --keep-group"

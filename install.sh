@@ -140,6 +140,24 @@ same_file() {
         [[ -f $2 && "$(sha256sum <"$1")" == "$(sha256sum <"$2")" ]]
     fi
 }
+# Путь для Exec= по спецификации Desktop Entry — как desktop_exec в src/service.rs:
+# % удваивается; со служебными символами путь берётся в кавычки, " ` $ \ в них
+# экранируются, и обратная косая черта удваивается ещё раз (так значение читается из файла).
+desktop_exec() {
+    local path=${1//'%'/'%%'} reserved=$' \t\n\r"\'\\><~|&;$*?#()`'
+    if [[ $path != *["$reserved"]* ]]; then
+        printf '%s' "$path"
+        return
+    fi
+    path=${path//"\\"/"\\\\\\\\"}
+    path=${path//'"'/'\\"'}
+    path=${path//'`'/'\\`'}
+    path=${path//'$'/'\\$'}
+    path=${path//$'\n'/'\n'}
+    path=${path//$'\t'/'\t'}
+    path=${path//$'\r'/'\r'}
+    printf '"%s"' "$path"
+}
 # Автозапуск сеанса есть и не выключен (KDE и GNOME выключают его строкой в файле).
 autostart_on() {
     [[ -e $AUTOSTART ]] && ! grep -Eqs '^(Hidden=true|X-GNOME-Autostart-enabled=false)' "$AUTOSTART"
@@ -429,10 +447,13 @@ setup_uinput() {
 # Какие файлы из FILES отличаются от собранных. Откуда файл и что менять после
 # замены — по его роли.
 plan_files() {
-    local desktop i
+    local desktop i text gui
     desktop="$(mktemp)"
     temps+=("$desktop")
-    sed "s|@BINDIR@|$BIN|g" assets/shiftfix.desktop >"$desktop"
+    # Ярлык — из шаблона с путём к окну. Не через sed: & | \ в пути сломали бы замену.
+    text="$(<assets/shiftfix.desktop)"
+    gui="$(desktop_exec "$BIN/shiftfix-gui")"
+    printf '%s\n' "${text//'@BINDIR@/shiftfix-gui'/"$gui"}" >"$desktop"
     srcs=() perms=() changed=()
     daemon_changed=0 gui_changed=0 menu_changed=0
     for i in "${!FILES[@]}"; do
