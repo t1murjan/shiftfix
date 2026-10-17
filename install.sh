@@ -404,30 +404,31 @@ setup_uinput() {
     fi
 }
 
-# Какие файлы отличаются от собранных.
+# Какие файлы из FILES отличаются от собранных. Откуда файл и что менять после
+# замены — по его роли.
 plan_files() {
     local desktop i
     desktop="$(mktemp)"
     temps+=("$desktop")
     sed "s|@BINDIR@|$BIN|g" assets/shiftfix.desktop >"$desktop"
-    srcs=("$TARGET/shiftfix" "$TARGET/shiftfix-gui" assets/shiftfix.svg assets/shiftfix-paused.svg "$desktop")
-    dsts=("$BIN/shiftfix" "$BIN/shiftfix-gui" "$ICONS/shiftfix.svg" "$ICONS/shiftfix-paused.svg" "$APPS/shiftfix.desktop")
-    perms=(755 755 644 644 644)
-    changed=()
-    for i in "${!srcs[@]}"; do
-        # Ссылка (например, на target/release) — тоже замена: иначе сравнили бы сборку саму с собой.
-        if [[ -L ${dsts[i]} ]] || ! same_file "${srcs[i]}" "${dsts[i]}" ||
-            { ((perms[i] == 755)) && [[ ! -x ${dsts[i]} ]]; }; then
-            changed+=("$i")
-        fi
-    done
+    srcs=() perms=() changed=()
     daemon_changed=0 gui_changed=0 menu_changed=0
-    for i in "${changed[@]}"; do
-        case $i in
-        0) daemon_changed=1 ;;
-        1) gui_changed=1 ;;
-        *) menu_changed=1 ;;
+    for i in "${!FILES[@]}"; do
+        case ${ROLES[i]} in
+        daemon | gui) srcs[i]="$TARGET/${FILES[i]##*/}" perms[i]=755 ;;
+        icon) srcs[i]="assets/${FILES[i]##*/}" perms[i]=644 ;;
+        menu) srcs[i]=$desktop perms[i]=644 ;;
         esac
+        # Ссылка (например, на target/release) — тоже замена: иначе сравнили бы сборку саму с собой.
+        if [[ -L ${FILES[i]} ]] || ! same_file "${srcs[i]}" "${FILES[i]}" ||
+            { ((perms[i] == 755)) && [[ ! -x ${FILES[i]} ]]; }; then
+            changed+=("$i")
+            case ${ROLES[i]} in
+            daemon) daemon_changed=1 ;;
+            gui) gui_changed=1 ;;
+            *) menu_changed=1 ;;
+            esac
+        fi
     done
     if [[ $mode == same ]] && ((daemon_changed || gui_changed)); then
         note "Файлы $NEW отличаются от собранных — переустановка."
@@ -482,8 +483,8 @@ install_files() {
     local i text
     mkdir -p "$BIN" "$ICONS" "$APPS"
     for i in "${changed[@]}"; do
-        put "${srcs[i]}" "${dsts[i]}" "${perms[i]}"
-        note "$(pretty "${dsts[i]}")"
+        put "${srcs[i]}" "${FILES[i]}" "${perms[i]}"
+        note "$(pretty "${FILES[i]}")"
     done
     if ((${#changed[@]} == 0)); then note "всё как в сборке — ничего не заменялось"; fi
     if ((menu_changed)); then
