@@ -1,5 +1,10 @@
 //! Раскладка XKB, keymap и выделение на настоящем X-сервере (Xvfb).
 
+use std::io::{BufRead, BufReader};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
+use std::time::Duration;
+
 use anyhow::Result;
 use evdev::KeyCode;
 use shiftfix::backend::XkbLayout;
@@ -34,62 +39,61 @@ impl Keys for NoKeys {
     }
 }
 
-/// Раскладки XKB и PRIMARY на настоящем X-сервере (Xvfb). Пропускается, если
-/// Xvfb, setxkbmap или xclip нет, а также при живом X-сеансе: тест не должен
-/// переключать раскладку на машине разработчика.
-#[test]
-fn xkb_and_primary_on_xvfb() {
-    use std::process::{Command, Stdio};
-    use std::sync::mpsc;
-    use std::time::{Duration, Instant};
+/// Xvfb на время теста; при выходе, в том числе при панике, — SIGTERM и wait.
+struct Xvfb {
+    child: Child,
+    display: String,
+}
 
-    const DISPLAY: &str = ":97";
-    if !["Xvfb", "setxkbmap", "xclip"]
-        .iter()
-        .all(|t| env::in_path(t))
-    {
-        return skip("нет Xvfb, setxkbmap или xclip");
+impl Drop for Xvfb {
+    fn drop(&mut self) {
+        // SIGTERM, а не kill(): по нему Xvfb убирает свой сокет в /tmp/.X11-unix,
+        // иначе поиск X-сервера потом принимает оставшийся сокет за живой.
+        // SAFETY: pid нашего дочернего процесса, wait ещё не вызывался.
+        unsafe { libc::kill(self.child.id() as libc::pid_t, libc::SIGTERM) };
+        let _ = self.child.wait();
     }
-    if env::x11_display().is_some() {
-        // Не нехватка программ, а защита живого сеанса: пропуск и в строгом режиме.
-        eprintln!("— пропуск: есть живой X-сервер");
-        return;
-    }
-    let Ok(mut server) = Command::new("Xvfb")
-        .args([DISPLAY, "-nolisten", "tcp", "-noreset"])
-        .stdout(Stdio::null())
+}
+
+/// Xvfb на свободном дисплее. Номер он пишет в `-displayfd`, когда уже слушает
+/// сокет: по нему X-сервер находит библиотека. `None` — не запустился.
+fn start_xvfb() -> Option<Xvfb> {
+    let child = Command::new("Xvfb")
+        .args(["-displayfd", "1", "-nolisten", "tcp", "-noreset"])
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-    else {
-        return skip("Xvfb не запустился");
+        .ok()?;
+    let mut server = Xvfb {
+        child,
+        display: String::new(),
     };
-    struct Kill(std::process::Child);
-    impl Drop for Kill {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-    let started = Instant::now();
-    while env::x11_display().as_deref() != Some(DISPLAY) {
-        if started.elapsed() > Duration::from_secs(5) {
-            let _ = server.kill();
-            return skip("Xvfb не поднялся");
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    let _server = Kill(server);
-    let x = |program: &str, args: &[&str]| {
-        Command::new(program)
-            .args(args)
-            .env("DISPLAY", DISPLAY)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .status()
-            .unwrap()
-    };
-    assert!(x("setxkbmap", &["-layout", "us,ru"]).success());
+    let stdout = server.child.stdout.take().unwrap();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        let _ = BufReader::new(stdout).read_line(&mut line);
+        let _ = tx.send(line);
+    });
+    let line = rx.recv_timeout(Duration::from_secs(10)).ok()?;
+    let number: u32 = line.trim().parse().ok()?;
+    server.display = format!(":{number}");
+    Some(server)
+}
 
+fn setxkbmap(display: &str, layouts: &str) {
+    let status = Command::new("setxkbmap")
+        .args(["-layout", layouts])
+        .env("DISPLAY", display)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success(), "setxkbmap -layout {layouts}: {status}");
+}
+
+/// XkbLayout: список раскладок, текущая, set и toggle.
+fn switches_layouts() {
     let mut xkb = XkbLayout::default();
     let mut keys = NoKeys;
     assert_eq!(xkb.layouts().unwrap(), ["us", "ru"]);
@@ -99,26 +103,30 @@ fn xkb_and_primary_on_xvfb() {
     xkb.toggle(&mut keys).unwrap();
     assert_eq!(xkb.current().unwrap(), Some(0));
     assert!(xkb.set(4, &mut keys).is_err());
+}
 
-    // Keymap приходит и без слежения за выделением, и после смены раскладок.
-    if keymap::from_names("us", "", "").is_some() {
-        let (ktx, krx) = mpsc::channel();
-        std::thread::spawn(move || {
-            keymap::x11::watch(&|keymap| {
-                let _ = ktx.send(keymap.layouts.len());
-            })
-        });
-        let layouts = || {
-            krx.recv_timeout(Duration::from_secs(5))
-                .expect("keymap от X11")
-        };
-        assert_eq!(layouts(), 2);
-        assert!(x("setxkbmap", &["-layout", "us,ru,de"]).success());
-        assert_eq!(layouts(), 3);
-    } else {
-        skip("нет libxkbcommon — keymap X11 не проверяется");
+/// Keymap приходит и без слежения за выделением, и после смены раскладок.
+fn keymap_follows_layouts(display: &str) {
+    if keymap::from_names("us", "", "").is_none() {
+        return skip("нет libxkbcommon — keymap X11 не проверяется");
     }
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        keymap::x11::watch(&|keymap| {
+            let _ = tx.send(keymap.layouts.len());
+        })
+    });
+    let layouts = || {
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("keymap от X11")
+    };
+    assert_eq!(layouts(), 2);
+    setxkbmap(display, "us,ru,de");
+    assert_eq!(layouts(), 3);
+}
 
+/// Слежение за PRIMARY: сначала «работаю через X11», на новое выделение — Primary.
+fn reports_primary(display: &str) {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || selection::x11::watch(&tx));
     let next = || {
@@ -129,10 +137,9 @@ fn xkb_and_primary_on_xvfb() {
         matches!(next(), Msg::Selection(Ok("X11"))),
         "ждали Selection(Ok(\"X11\")), keymap выделение больше не присылает"
     );
-    // Новое выделение — событие Primary.
     let mut xclip = Command::new("xclip")
         .args(["-selection", "primary", "-i"])
-        .env("DISPLAY", DISPLAY)
+        .env("DISPLAY", display)
         .stdin(Stdio::piped())
         .spawn()
         .unwrap();
@@ -144,4 +151,35 @@ fn xkb_and_primary_on_xvfb() {
     assert_eq!(primary, 1);
     let _ = xclip.kill();
     let _ = xclip.wait();
+}
+
+/// Раскладки XKB и PRIMARY на своём Xvfb. Пропускается, если Xvfb, setxkbmap
+/// или xclip нет, а также при живом X-сеансе: тест не должен переключать
+/// раскладку на машине разработчика.
+#[test]
+fn xkb_and_primary_on_xvfb() {
+    if !["Xvfb", "setxkbmap", "xclip"]
+        .iter()
+        .all(|t| env::in_path(t))
+    {
+        return skip("нет Xvfb, setxkbmap или xclip");
+    }
+    let Some(xvfb) = start_xvfb() else {
+        return skip("Xvfb не запустился");
+    };
+    // Библиотека выбирает X-сервер сама (env::x11_display). Выбрала другой —
+    // значит, есть живой сеанс: это не нехватка программ, пропуск и в строгом
+    // режиме. Не видит никакого — сломан сам поиск.
+    match env::x11_display() {
+        Some(display) if display == xvfb.display => {}
+        Some(other) => {
+            eprintln!("— пропуск: есть живой X-сервер {other}");
+            return;
+        }
+        None => panic!("env::x11_display() не видит Xvfb {}", xvfb.display),
+    }
+    setxkbmap(&xvfb.display, "us,ru");
+    switches_layouts();
+    keymap_follows_layouts(&xvfb.display);
+    reports_primary(&xvfb.display);
 }

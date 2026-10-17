@@ -18,7 +18,7 @@ shellcheck install.sh uninstall.sh tests/install/run.sh tests/install/fakes/*
 
 Для части тестов нужны внешние программы; без них такие тесты пропускаются и пишут «— пропуск: …» (видно с `cargo test -- --nocapture`):
 
-- `tests/x11.rs` — Xvfb, setxkbmap и xclip: сам поднимает Xvfb на `:97`;
+- `tests/x11.rs` — Xvfb, setxkbmap и xclip: сам поднимает Xvfb на свободном дисплее;
 - тесты KDE, logind и портала — `dbus-daemon`: каждый поднимает свою шину с поддельным сервисом;
 - тесты таблиц раскладок — libxkbcommon.
 
