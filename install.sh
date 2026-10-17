@@ -199,6 +199,9 @@ cleanup() {
         fi
         { echo "install.sh: прервано — служба запущена снова"; } >&2 2>/dev/null
     fi
+    if [[ -e $INCOMPLETE ]]; then
+        { echo "install.sh: установка не закончена — запустите install.sh снова, он доделает"; } >&2 2>/dev/null
+    fi
     if ((stopped && gui_was && !gui_back)) && [[ -n ${WAYLAND_DISPLAY:-}${DISPLAY:-} ]]; then
         gui_back=1
         wait_for 30 not held "$GUI_LOCK"
@@ -219,9 +222,15 @@ check_versions() {
 
     OLD="$(installed_version)"
     OLD_TEXT="${OLD/#\?/(неизвестная)}"
+    resume=0
     if [[ -z $OLD ]]; then
         mode=install
         headline="установка $NEW"
+    elif [[ -e $INCOMPLETE ]]; then
+        # Первая установка оборвалась: программы уже стоят, но автозапуск мог не
+        # включиться, а служба — не запуститься. Доделываем как первую.
+        mode=install resume=1
+        headline="установка $NEW — прошлая не закончилась, доделываю"
     elif [[ $OLD == "?" ]]; then
         mode=update
         headline="обновление: установленная версия неизвестна → $NEW"
@@ -325,7 +334,7 @@ build() {
     # Без fd 9: сервер сборки (sccache) живёт дольше скрипта и держал бы блокировку install.sh.
     if ! cargo build --release --locked 9>&-; then
         echo >&2
-        if [[ $mode == install ]]; then
+        if [[ -z $OLD ]]; then
             echo "Сборка не удалась — ничего не установлено." >&2
         else
             echo "Сборка не удалась — установленная версия $OLD_TEXT не тронута." >&2
@@ -481,6 +490,10 @@ stop_running() {
 install_files() {
     step "Файлы"
     local i text
+    if [[ $mode == install ]]; then
+        mkdir -p "$(dirname "$INCOMPLETE")"
+        : >"$INCOMPLETE"
+    fi
     mkdir -p "$BIN" "$ICONS" "$APPS"
     for i in "${changed[@]}"; do
         put "${srcs[i]}" "${FILES[i]}" "${perms[i]}"
@@ -528,18 +541,10 @@ setup_autostart() {
             put_text "$UNIT" "$new_unit"
             systemctl --user daemon-reload
         fi
-        if ((!unit_existed)); then
-            # Юнита не было: первая установка или переход с автозапуска сеанса.
-            if [[ $mode == install ]] || autostart_on; then
-                if systemctl --user enable shiftfix.service >/dev/null 2>&1; then
-                    enabled=1
-                else
-                    note "Автозапуск не включился: systemctl --user enable shiftfix"
-                fi
-            fi
-        elif ((enabled)) && [[ $old_wanted != "$new_wanted" ]]; then
-            # Не reenable: он снял бы и ссылки, добавленные вручную (add-wants).
-            # Убираем только ссылки целей, которых больше нет, и добавляем новые.
+        if ((unit_existed && enabled)) && [[ $old_wanted != "$new_wanted" ]]; then
+            # Цели включённого юнита сменились (проверяем и при доделке установки). Не
+            # reenable: он снял бы и ссылки, добавленные вручную (add-wants). Убираем только
+            # ссылки целей, которых больше нет, и добавляем новые.
             for target in $old_wanted; do
                 if [[ " $new_wanted " != *" $target "* ]]; then
                     rm -f -- "$UNITS/$target.wants/shiftfix.service"
@@ -547,6 +552,16 @@ setup_autostart() {
             done
             systemctl --user enable shiftfix.service >/dev/null 2>&1 || true
             systemctl --user daemon-reload
+        elif ((!unit_existed || resume)); then
+            # Юнита не было: первая установка или переход с автозапуска сеанса.
+            # Или первая установка оборвалась, когда юнит уже был записан.
+            if [[ $mode == install ]] || autostart_on; then
+                if systemctl --user enable shiftfix.service >/dev/null 2>&1; then
+                    enabled=1
+                else
+                    note "Автозапуск не включился: systemctl --user enable shiftfix"
+                fi
+            fi
         fi
         # Службу запускает юнит — второй запуск из автозапуска сеанса не нужен.
         # Если юнит не включился, автозапуск сеанса оставляем: иначе не останется никакого.
@@ -682,10 +697,12 @@ main() {
     init_paths
     temps=()
     was_active=0 was_proc=0 gui_was=0 stopped=0 restarted=0 gui_back=0
+    take_lock
+    # Ловушки — после блокировки: до неё убирать нечего, а метку незаконченной
+    # установки мог положить тот install.sh, что держит блокировку сейчас.
     trap cleanup EXIT
     trap 'exit 130' INT TERM HUP
     trap 'exit 141' PIPE # вывод шёл в tee или head, и тот закрылся
-    take_lock
     check_versions
     install_dependencies
     build
@@ -695,6 +712,7 @@ main() {
     install_files
     setup_autostart
     start_again
+    rm -f -- "$INCOMPLETE" # установка закончена
     print_summary
 }
 

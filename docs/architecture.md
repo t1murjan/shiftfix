@@ -130,6 +130,8 @@ Unix-сокет `$XDG_RUNTIME_DIR/shiftfix.sock`, на каждое соедин
 - юнит `~/.config/systemd/user/shiftfix.service` (текст — `shiftfix --print-unit`), без systemd — `~/.config/autostart/shiftfix.desktop`;
 - через sudo и только недостающее: `/etc/udev/rules.d/80-shiftfix-uinput.rules`, `/etc/modules-load.d/shiftfix-uinput.conf`, группу `input`.
 
+Пока первая установка не закончена, лежит метка `~/.local/state/shiftfix-install-incomplete`: оборвись установка после замены файлов, повторный запуск увидел бы ту же версию и не включил бы автозапуск. С меткой он доделывает первую установку.
+
 `uninstall.sh` откатывает всё это; настройки и `target/` — только с `--purge`. Общее у обоих скриптов — пути, имена файлов, помощники, вопрос да/нет, блокировка и один список программ, значков и ярлыка, которые ставит `install.sh` и удаляет `uninstall.sh` (`FILES` с ролями), — в `scripts/common.sh`; поэтому скрипты запускаются из клона репозитория, а `shellcheck` — с `-x`. Оба скрипта проверяются стендом `tests/install/` (см. [CONTRIBUTING.md](../CONTRIBUTING.md)).
 
 ## Решения, которые не меняются без обсуждения

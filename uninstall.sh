@@ -77,7 +77,7 @@ found() {
 find_installed() {
     local path name unit
     files=()
-    found "${FILES[@]}" "$AUTOSTART" "$UNIT" "$UNIT.d" "$UNITS"/*.wants/shiftfix.service
+    found "${FILES[@]}" "$AUTOSTART" "$UNIT" "$UNIT.d" "$UNITS"/*.wants/shiftfix.service "$INCOMPLETE"
     settings=
     if [[ -e $SETTINGS || -L $SETTINGS ]]; then settings=$SETTINGS; fi
     if ((purge)) && [[ -n $settings ]]; then found "$settings"; fi
