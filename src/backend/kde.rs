@@ -87,7 +87,7 @@ impl Backend for Kde {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutil::NoKeys;
+    use crate::testutil::{NoKeys, TestBus};
 
     /// Поддельный KWin на отдельной шине DBus: имена методов и типы как в Plasma.
     struct FakeKwin {
@@ -120,22 +120,11 @@ mod tests {
 
     #[test]
     fn kde_over_dbus() {
-        use std::io::{BufRead, BufReader};
-        use std::process::{Command, Stdio};
-        let Ok(mut bus) = Command::new("dbus-daemon")
-            .args(["--session", "--nofork", "--print-address"])
-            .stdout(Stdio::piped())
-            .spawn()
-        else {
+        let Some(bus) = TestBus::start() else {
             eprintln!("нет dbus-daemon — пропуск");
             return;
         };
-        let mut address = String::new();
-        BufReader::new(bus.stdout.take().unwrap())
-            .read_line(&mut address)
-            .unwrap();
-        let address = address.trim().to_owned();
-        let _server = zbus::blocking::connection::Builder::address(address.as_str())
+        let _server = zbus::blocking::connection::Builder::address(bus.address.as_str())
             .unwrap()
             .name("org.kde.keyboard")
             .unwrap()
@@ -145,7 +134,7 @@ mod tests {
             .unwrap();
 
         let mut kde = Kde {
-            client: Client::with_address(&address),
+            client: Client::with_address(&bus.address),
         };
         assert_eq!(kde.layouts().unwrap(), ["us", "ru"]);
         assert_eq!(kde.current().unwrap(), Some(0));
@@ -154,6 +143,5 @@ mod tests {
         kde.toggle(&mut NoKeys).unwrap(); // void-ответ
         assert_eq!(kde.current().unwrap(), Some(0));
         assert!(kde.set(5, &mut NoKeys).is_err()); // KWin ответил false
-        let _ = bus.kill();
     }
 }

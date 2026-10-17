@@ -53,10 +53,8 @@ pub fn blocked(logind: &mut Logind) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufRead, BufReader};
-    use std::process::{Command, Stdio};
-
     use super::*;
+    use crate::testutil::TestBus;
 
     struct FakeSession {
         active: bool,
@@ -72,25 +70,16 @@ mod tests {
 
     #[test]
     fn reads_active_flag_from_logind() {
-        let Ok(mut bus) = Command::new("dbus-daemon")
-            .args(["--session", "--nofork", "--print-address"])
-            .stdout(Stdio::piped())
-            .spawn()
-        else {
+        let Some(bus) = TestBus::start() else {
             eprintln!("нет dbus-daemon — пропуск");
             return;
         };
-        let mut address = String::new();
-        BufReader::new(bus.stdout.take().unwrap())
-            .read_line(&mut address)
-            .unwrap();
-        let address = address.trim().to_owned();
 
         // logind ещё нет — значит, не мешаем.
-        let mut logind = Logind::with_address(&address);
+        let mut logind = Logind::with_address(&bus.address);
         assert_eq!(logind.active(), None);
 
-        let server = zbus::blocking::connection::Builder::address(address.as_str())
+        let server = zbus::blocking::connection::Builder::address(bus.address.as_str())
             .unwrap()
             .name("org.freedesktop.login1")
             .unwrap()
@@ -108,6 +97,5 @@ mod tests {
             .unwrap();
         iface.get_mut().active = true;
         assert_eq!(logind.active(), Some(true));
-        let _ = bus.kill();
     }
 }

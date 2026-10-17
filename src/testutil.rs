@@ -1,9 +1,11 @@
 //! Общее для модульных тестов.
 
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::ops::Deref;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Result;
@@ -71,4 +73,38 @@ pub fn fake_command(name: &str, body: &str) -> (TempDir, String) {
     let dir = TempDir::new(name);
     let path = write_script(&dir, name, body);
     (dir, path)
+}
+
+/// Отдельная шина DBus на время теста; при выходе, в том числе при панике, —
+/// kill и wait.
+pub struct TestBus {
+    child: Child,
+    pub address: String,
+}
+
+impl TestBus {
+    /// `None` — dbus-daemon не запускается.
+    pub fn start() -> Option<TestBus> {
+        let child = Command::new("dbus-daemon")
+            .args(["--session", "--nofork", "--print-address"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .ok()?;
+        let mut bus = TestBus {
+            child,
+            address: String::new(),
+        };
+        let stdout = bus.child.stdout.take().unwrap();
+        BufReader::new(stdout).read_line(&mut bus.address).unwrap();
+        bus.address = bus.address.trim().to_owned();
+        assert!(!bus.address.is_empty(), "dbus-daemon не сообщил адрес");
+        Some(bus)
+    }
+}
+
+impl Drop for TestBus {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
