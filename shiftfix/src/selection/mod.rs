@@ -3,12 +3,16 @@
 //! - Wayland с протоколом data-control (KDE, Hyprland, Sway…) — wl-clipboard;
 //! - X11 и Wayland без data-control (GNOME) — через X-сервер или XWayland, xclip.
 //!
+//! Здесь — выбор источника и поток слежения; чтение и вставка — в `wayland.rs`
+//! и `x11.rs`, общее для вставки через буфер обмена — в `clipboard.rs`.
+//!
 //! Выбор делается на ходу и пересматривается, если сеанс сменился: служба
 //! может стартовать раньше сеанса или пережить его перезапуск.
 
-use std::io::{BufRead, BufReader, Read};
-use std::os::unix::process::CommandExt;
-use std::process::Stdio;
+mod clipboard;
+pub mod wayland;
+pub mod x11;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::Sender;
@@ -17,13 +21,13 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 
-use crate::clipboard::{WlClipboard, XClipboard};
 use crate::config::Config;
 use crate::daemon::Msg;
 use crate::engine::{Keys, Selection};
 use crate::sys::env;
-use crate::sys::wayland;
-use crate::x11;
+use crate::sys::wayland as compositor;
+use wayland::WlClipboard;
+use x11::XClipboard;
 
 const NONE: u8 = 0;
 const WAYLAND: u8 = 1;
@@ -93,7 +97,7 @@ pub fn decide() -> Choice {
     let xclip = env::in_path("xclip");
     if env::wayland_display().is_some() {
         let wl_clipboard = env::in_path("wl-paste") && env::in_path("wl-copy");
-        match wayland::data_control() {
+        match compositor::data_control() {
             Some(true) if wl_clipboard => return Choice::Wayland,
             Some(true) if x11 && xclip => return Choice::X11,
             Some(true) => return Choice::Wait("не установлен wl-clipboard".into(), 30),
@@ -140,7 +144,7 @@ fn run(tx: &Sender<Msg>, active: &Active) {
             Choice::Wait(reason, secs) => (reason, Some(secs)),
             Choice::Wayland => {
                 active.set(WAYLAND);
-                let result = watch_wayland(tx);
+                let result = wayland::watch(tx);
                 active.set(NONE);
                 match result {
                     Some(reason) => (reason, None),
@@ -171,59 +175,4 @@ fn run(tx: &Sender<Msg>, active: &Active) {
         });
         thread::sleep(Duration::from_secs(secs));
     }
-}
-
-/// `wl-paste --primary --watch` печатает размер каждого нового выделения.
-/// Возвращает причину остановки; `None` — служба завершается.
-fn watch_wayland(tx: &Sender<Msg>) -> Option<String> {
-    let started = Instant::now();
-    let mut cmd = env::session_command("wl-paste");
-    cmd.args(["--primary", "--watch", "sh", "-c", "wc -c"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    // SAFETY: в pre_exec только async-signal-safe prctl: wl-paste завершится вместе со службой.
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM as libc::c_ulong);
-            Ok(())
-        });
-    }
-    let mut child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(err) => return Some(format!("wl-paste: {err}")),
-    };
-    let mut stderr = child.stderr.take().expect("stderr");
-    let errors = thread::spawn(move || {
-        let mut text = String::new();
-        let _ = stderr.read_to_string(&mut text);
-        text
-    });
-    let mut announced = false;
-    for line in BufReader::new(child.stdout.take().expect("stdout")).lines() {
-        let Ok(line) = line else { break };
-        if !announced {
-            announced = true;
-            if tx.send(Msg::Selection(Ok("wl-clipboard"))).is_err() {
-                let _ = child.kill();
-                return None;
-            }
-        }
-        if started.elapsed() < Duration::from_millis(700) {
-            continue; // первое событие — уже существующее выделение
-        }
-        if let Ok(size) = line.trim().parse()
-            && tx.send(Msg::Primary(size)).is_err()
-        {
-            let _ = child.kill();
-            return None;
-        }
-    }
-    let _ = child.wait();
-    let err = errors.join().unwrap_or_default();
-    Some(if err.trim().is_empty() {
-        "wl-paste завершился".to_owned()
-    } else {
-        format!("wl-paste: {}", err.trim())
-    })
 }

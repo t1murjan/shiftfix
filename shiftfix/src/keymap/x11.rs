@@ -8,7 +8,7 @@ use x11rb::protocol::Event;
 use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _, EventMask};
 
 use super::{Keymap, xkb};
-use crate::x11::{XConn, connect, rules_names};
+use crate::sys::x11::{XConn, connect, rules_names};
 
 /// Раскладки сеанса X11 из `_XKB_RULES_NAMES` (`None` — нет libxkbcommon).
 pub fn fetch(x: &XConn) -> Option<Keymap> {

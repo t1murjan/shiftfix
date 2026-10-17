@@ -8,8 +8,9 @@ use shiftfix::config::Config;
 use shiftfix::devices::{self, Role};
 use shiftfix::selection::{self, Choice};
 use shiftfix::sys::session::Logind;
+use shiftfix::sys::x11;
 use shiftfix::sys::{env, proc};
-use shiftfix::{backend, keymap, x11};
+use shiftfix::{backend, keymap};
 
 /// Строки отчёта и счётчик проблем.
 #[derive(Default)]

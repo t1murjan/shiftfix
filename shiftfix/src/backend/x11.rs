@@ -5,7 +5,7 @@ use x11rb::protocol::xkb::{self, ConnectionExt as _};
 
 use crate::engine::{Backend, Keys};
 use crate::keymap::norm_layout;
-use crate::x11::{XConn, connect, rules_names};
+use crate::sys::x11::{XConn, connect, rules_names};
 
 /// Группа XKB текущего X-сервера; подключение — при первом обращении.
 #[derive(Default)]

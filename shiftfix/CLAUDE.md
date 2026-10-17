@@ -10,7 +10,8 @@
 - `devices.rs` — evdev и роли устройств: клавиатура, мышь, тачпад, экран, перо; роль можно задать вручную.
 - `backend/` — переключение раскладки (по файлу на окружение, выбор — `auto.rs`): KDE (DBus), GNOME (gsettings + Super+Space), Hyprland, Sway, X11 (XKB), хоткей.
 - `keymap/` — таблицы раскладок: keymap от композитора (`wayland.rs`) или X11 (`x11.rs`), разбор через libxkbcommon, загружаемую dlopen (`xkb.rs`), встроенные us/ru (`layout.rs`), перекодировка выделения (`convert.rs`); `keys.rs` — классы клавиш.
-- `selection.rs`, `clipboard.rs`, `x11.rs` — выделение. Wayland с data-control идёт через wl-clipboard, X11 и GNOME через XWayland — через xclip и XFixes.
+- `selection/` — выделение: выбор источника (`mod.rs`), Wayland с data-control — wl-clipboard (`wayland.rs`), X11 и GNOME через XWayland — xclip и XFixes (`x11.rs`), возврат буфера обмена (`clipboard.rs`).
+- `sys/` — связь с системой: окружение сеанса, logind, DBus, подключение к Wayland и X11, запуск команд.
 - `sys/env.rs` — поиск сеанса: своё окружение, окружение systemd, живые сокеты.
 - `sys/session.rs` — проверка logind `session/auto` Active, чтобы не печатать в чужой сеанс.
 - `service.rs` — тексты юнита systemd и файла автозапуска (`.desktop`): их печатают `--print-unit` и `--print-autostart` и пишет окно.

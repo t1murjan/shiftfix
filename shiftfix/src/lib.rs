@@ -3,7 +3,6 @@
 //! Общая часть службы (`shiftfix`) и графической оболочки (`shiftfix-gui`).
 
 pub mod backend;
-pub mod clipboard;
 pub mod config;
 pub mod daemon;
 pub mod devices;
@@ -21,4 +20,3 @@ pub mod sys;
 #[cfg(test)]
 mod testutil;
 pub mod tray;
-pub mod x11;
