@@ -12,7 +12,6 @@ pub mod ipc;
 pub mod keymap;
 pub mod keys;
 pub mod logbuf;
-pub mod portal;
 pub mod selection;
 pub mod service;
 pub mod sys;

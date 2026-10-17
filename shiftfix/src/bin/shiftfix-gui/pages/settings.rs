@@ -1,5 +1,6 @@
 //! Настройки: правка config.toml с сохранением комментариев.
 
+use crate::portal::PortalState;
 use eframe::egui::color_picker::{self, Alpha};
 use eframe::egui::{
     self, Align, CornerRadius, Frame, Id, Layout, Margin, RichText, Slider, Stroke, StrokeKind,
@@ -7,7 +8,6 @@ use eframe::egui::{
 };
 use egui_phosphor::regular as icons;
 use shiftfix::config::{Config, Settings, ThemeMode};
-use shiftfix::portal::PortalState;
 
 use crate::app::{App, ToastKind, shown_path};
 use crate::link::ServiceAction;

@@ -10,12 +10,12 @@ use std::process::Command;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
+use crate::portal::{self, PortalState, Scheme};
 use eframe::egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Shadow, Stroke,
     TextStyle, Theme, ThemePreference, Visuals, ecolor, vec2,
 };
 use shiftfix::config::{ThemeMode, ThemeSettings};
-use shiftfix::portal::{self, PortalState, Scheme};
 
 /// Цвета окна для одного варианта палитры (светлого или тёмного).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1290,7 +1290,7 @@ mod tests {
 
     #[test]
     fn system_notes() {
-        use shiftfix::portal::Appearance;
+        use crate::portal::Appearance;
         let ready = |scheme, accent| PortalState::Ready(Appearance { scheme, accent });
         let cases = [
             (PortalState::Pending, SystemNote::Waiting, None),
@@ -1501,7 +1501,7 @@ mod tests {
 
     #[test]
     fn system_from_portal() {
-        use shiftfix::portal::Appearance;
+        use crate::portal::Appearance;
         let t = ThemeSettings {
             system_accent: true,
             ..ThemeSettings::default()

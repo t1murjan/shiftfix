@@ -1,6 +1,5 @@
 //! Тема системы из XDG Desktop Portal: color-scheme и accent-color из
-//! `org.freedesktop.portal.Settings`. Нужна окну для режима «как в системе»;
-//! служба этот модуль не вызывает.
+//! `org.freedesktop.portal.Settings` — для режима темы «как в системе».
 //!
 //! Портал читается в своём потоке: холодный старт xdg-desktop-portal (а без
 //! бэкенда — зависание) длится секунды, и окно не должно его ждать.

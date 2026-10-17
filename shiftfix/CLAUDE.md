@@ -6,7 +6,7 @@
 
 - `src/bin/shiftfix/` — служба `shiftfix` и её CLI: `--status`, `--toggle`, `--print-config`, `--print-unit`, `--print-autostart`; `--check` — в `check.rs`.
 - `src/bin/shiftfix-gui/` — окно на eframe/egui 0.36 с вкладками «Главная», «Устройства», «Настройки», «Инструкция», «Журнал».
-- `engine.rs` — логика без ввода-вывода. Буфер хранит скан-коды. Исправить слово = переключить раскладку, нажать Backspace×N и повторить те же клавиши через uinput.
+- `engine/` — логика без ввода-вывода (тесты — `engine/tests.rs`). Буфер хранит скан-коды. Исправить слово = переключить раскладку, нажать Backspace×N и повторить те же клавиши через uinput.
 - `devices.rs` — evdev и роли устройств: клавиатура, мышь, тачпад, экран, перо; роль можно задать вручную.
 - `backend/` — переключение раскладки (по файлу на окружение, выбор — `auto.rs`): KDE (DBus), GNOME (gsettings + Super+Space), Hyprland, Sway, X11 (XKB), хоткей.
 - `keymap/` — таблицы раскладок: keymap от композитора (`wayland.rs`) или X11 (`x11.rs`), разбор через libxkbcommon, загружаемую dlopen (`xkb.rs`), встроенные us/ru (`layout.rs`), перекодировка выделения (`convert.rs`); `keys.rs` — классы клавиш.
@@ -15,8 +15,9 @@
 - `sys/env.rs` — поиск сеанса: своё окружение, окружение systemd, живые сокеты.
 - `sys/session.rs` — проверка logind `session/auto` Active, чтобы не печатать в чужой сеанс.
 - `service.rs` — тексты юнита systemd и файла автозапуска (`.desktop`): их печатают `--print-unit` и `--print-autostart` и пишет окно.
+- `daemon/` — служба: главный цикл (`mod.rs`), виртуальная клавиатура (`uinput.rs`), сигналы, трей.
 - `ipc.rs` — сокет `$XDG_RUNTIME_DIR/shiftfix.sock` (JSON-строки).
-- `portal.rs` — XDG Desktop Portal (`org.freedesktop.appearance`: `color-scheme`, `accent-color`) на zbus blocking, со сменой на лету; служба его не вызывает, только окно.
+- `src/bin/shiftfix-gui/portal.rs` — XDG Desktop Portal (`org.freedesktop.appearance`: `color-scheme`, `accent-color`) на zbus blocking, со сменой на лету; нужен только окну.
 - `src/bin/shiftfix-gui/theme.rs` — палитры (данными в `PALETTES`), режим, акцент и контраст текста на нём (WCAG) → `egui::Visuals`; тема хранится в `[theme]` конфига (`config::ThemeSettings`).
 - `install.sh` — установка и обновление одним идемпотентным скриптом: версии (установка / обновление / уже установлена / более старая — с вопросом), сборка до остановки, атомарная замена, sudo только для недостающего, служба запускается снова, только если работала; конфиг и выбор автозапуска не трогает.
 - `uninstall.sh` — удаление: откатывает то, что ставят install.sh и GUI, в том числе правило udev и группу input; настройки и `target/` — только с `--purge` (ещё `--yes`, `--keep-group`, `--keep-build`).

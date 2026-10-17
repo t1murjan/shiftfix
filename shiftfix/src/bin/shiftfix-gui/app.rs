@@ -5,6 +5,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::portal::PortalState;
 use eframe::egui::{
     self, Align, Align2, Color32, CornerRadius, Frame, Image, Layout, Margin, Order, RichText,
     ScrollArea, Sense, Stroke, TextureHandle, TextureOptions, Ui, load::SizedTexture, vec2,
@@ -13,7 +14,6 @@ use egui_phosphor::regular as icons;
 use shiftfix::config::{Config, Settings, ThemeMode, ThemeSettings};
 use shiftfix::devices::{self, DeviceInfo, Role};
 use shiftfix::ipc::{Request, Status};
-use shiftfix::portal::PortalState;
 
 use crate::link::{Link, ServiceAction, Snapshot};
 use crate::pages;

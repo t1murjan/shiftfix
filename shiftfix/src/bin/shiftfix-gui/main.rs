@@ -4,6 +4,7 @@
 mod app;
 mod link;
 mod pages;
+mod portal;
 mod theme;
 mod widgets;
 
