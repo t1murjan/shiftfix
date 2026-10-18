@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use super::Layout;
-use crate::engine::Stroke;
+use crate::keys::Stroke;
 
 /// Таблицы, выстроенные по индексам раскладок; `None` — для раскладки таблицы нет.
 pub type Tables = [Option<Arc<Layout>>];
@@ -77,7 +77,8 @@ mod tests {
     use evdev::KeyCode;
 
     use super::*;
-    use crate::keymap::{ROW_KEYS, builtin};
+    use crate::keymap::builtin;
+    use crate::keys::ROW_KEYS;
 
     fn tables(list: &[&str]) -> Vec<Option<Arc<Layout>>> {
         list.iter().map(|s| builtin(s)).collect()

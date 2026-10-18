@@ -2,6 +2,7 @@ use std::cell::{Cell, RefCell, RefMut};
 use std::rc::Rc;
 
 use super::*;
+use crate::keys::ROW_KEYS;
 
 const LS: KeyCode = KeyCode::KEY_LEFTSHIFT;
 
@@ -322,7 +323,7 @@ impl Rig {
 /// Встроенная таблица, но с мёртвыми клавишами (как us(intl) или de).
 fn with_dead(name: &str, dead: &[(KeyCode, bool)]) -> Arc<Layout> {
     let base = keymap::builtin(name).unwrap();
-    let pairs = keymap::ROW_KEYS
+    let pairs = ROW_KEYS
         .iter()
         .map(|&k| (k, [base.char_at(k, false), base.char_at(k, true)]));
     Arc::new(Layout::from_pairs(name, pairs).with_dead(dead.iter().copied()))
