@@ -14,7 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use evdev::raw_stream::RawDevice;
-use evdev::{KeyCode, PropType, RelativeAxisCode};
+use evdev::{BusType, KeyCode, PropType, RelativeAxisCode};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
@@ -87,10 +87,9 @@ impl Role {
     }
 
     fn from_u8(v: u8) -> Role {
-        // CHOICES идут в порядке объявления, Other — последней.
         Role::CHOICES
-            .get(usize::from(v))
-            .copied()
+            .into_iter()
+            .find(|r| r.to_u8() == v)
             .unwrap_or(Role::Other)
     }
 }
@@ -208,26 +207,51 @@ impl Rules {
     }
 }
 
+/// Что за устройство — то, что не меняется, пока оно подключено.
+struct Identity {
+    name: String,
+    /// `device_key`: по нему роль хранится в конфиге.
+    key: String,
+    detected: Role,
+    virtual_device: bool,
+}
+
+impl Identity {
+    fn of(path: &Path, dev: &RawDevice) -> Identity {
+        let name = dev.name().unwrap_or_default().to_owned();
+        let id = dev.input_id();
+        let detected = if name == OWN_KEYBOARD {
+            Role::Other
+        } else {
+            classify(&caps_of(dev))
+        };
+        Identity {
+            key: device_key(id.vendor(), id.product(), &name),
+            name,
+            detected,
+            virtual_device: id.bus_type() == BusType::BUS_VIRTUAL || is_virtual(path),
+        }
+    }
+
+    /// (роль, задана ли вручную)
+    fn role(&self, rules: &Rules) -> (Role, bool) {
+        rules.role(&self.key, &self.name, self.detected)
+    }
+}
+
 /// Описать устройство, не подписываясь на его события (для `shiftfix --check`).
 pub fn describe(path: &Path, cfg: &Config) -> Option<DeviceInfo> {
     let dev = RawDevice::open(path).ok()?;
-    let name = dev.name().unwrap_or_default().to_owned();
-    let id = dev.input_id();
-    let key = device_key(id.vendor(), id.product(), &name);
-    let detected = if name == OWN_KEYBOARD {
-        Role::Other
-    } else {
-        classify(&caps_of(&dev))
-    };
-    let (role, overridden) = Rules::from_config(cfg).role(&key, &name, detected);
+    let id = Identity::of(path, &dev);
+    let (role, overridden) = id.role(&Rules::from_config(cfg));
     Some(DeviceInfo {
         path: path.display().to_string(),
-        name,
-        key,
-        detected,
+        name: id.name,
+        key: id.key,
+        detected: id.detected,
         role,
         overridden,
-        virtual_device: id.bus_type().0 == 0x06 || is_virtual(path),
+        virtual_device: id.virtual_device,
         idle_ms: None,
     })
 }

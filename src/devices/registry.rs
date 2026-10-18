@@ -7,7 +7,7 @@ use std::io::ErrorKind;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Instant, UNIX_EPOCH};
 
@@ -15,10 +15,7 @@ use evdev::raw_stream::RawDevice;
 use evdev::{EventType, InputEvent, KeyCode, LedCode, SynchronizationCode};
 use log::{info, warn};
 
-use super::{
-    DeviceInfo, OWN_KEYBOARD, Role, Rules, caps_of, classify, device_key, event_nodes, is_virtual,
-    node_number,
-};
+use super::{DeviceInfo, Identity, Role, Rules, event_nodes, node_number};
 use crate::config::Config;
 use crate::keys::{is_button, is_click};
 
@@ -30,11 +27,8 @@ struct Shared {
 }
 
 struct Entry {
-    name: String,
-    key: String,
-    detected: Role,
+    id: Identity,
     overridden: bool,
-    virtual_device: bool,
     stamp: (i64, i64),
     reading: bool,
     shared: Arc<Shared>,
@@ -112,6 +106,14 @@ impl Registry {
         })
     }
 
+    fn entries(&self) -> MutexGuard<'_, HashMap<PathBuf, Entry>> {
+        self.entries.lock().expect("devices")
+    }
+
+    fn rules(&self) -> MutexGuard<'_, Rules> {
+        self.rules.lock().expect("rules")
+    }
+
     fn now_ms(&self) -> u64 {
         u64::try_from(self.start.elapsed().as_millis())
             .unwrap_or(u64::MAX)
@@ -127,13 +129,10 @@ impl Registry {
     /// Проход по /dev/input; `scanning` уже взят.
     fn scan_locked(self: &Arc<Self>) -> ScanStats {
         let nodes = event_nodes();
-        self.entries
-            .lock()
-            .expect("devices")
-            .retain(|path, e| e.still_valid(path));
+        self.entries().retain(|path, e| e.still_valid(path));
         let mut stats = ScanStats::default();
         for path in nodes {
-            if self.entries.lock().expect("devices").contains_key(&path) {
+            if self.entries().contains_key(&path) {
                 stats.opened += 1;
                 continue;
             }
@@ -154,20 +153,8 @@ impl Registry {
     }
 
     fn add(self: &Arc<Self>, path: PathBuf, stamp: (i64, i64), dev: RawDevice) {
-        let name = dev.name().unwrap_or_default().to_owned();
-        let id = dev.input_id();
-        let key = device_key(id.vendor(), id.product(), &name);
-        let detected = if name == OWN_KEYBOARD {
-            Role::Other
-        } else {
-            classify(&caps_of(&dev))
-        };
-        let (role, overridden) = self
-            .rules
-            .lock()
-            .expect("rules")
-            .role(&key, &name, detected);
-        let virtual_device = id.bus_type().0 == 0x06 || is_virtual(&path);
+        let id = Identity::of(&path, &dev);
+        let (role, overridden) = id.role(&self.rules());
         let shared = Arc::new(Shared {
             role: AtomicU8::new(role.to_u8()),
             last_event: AtomicU64::new(0),
@@ -177,21 +164,18 @@ impl Registry {
         let reading = role != Role::Other;
         if reading {
             if role.listens() {
-                info!("слушаю ({}): {name}", role.title().to_lowercase());
+                info!("слушаю ({}): {}", role.title().to_lowercase(), id.name);
             }
-            self.spawn_reader(path.clone(), name.clone(), dev, shared.clone());
+            self.spawn_reader(path.clone(), id.name.clone(), dev, shared.clone());
         }
         let entry = Entry {
-            name,
-            key,
-            detected,
+            id,
             overridden,
-            virtual_device,
             stamp,
             reading,
             shared,
         };
-        self.entries.lock().expect("devices").insert(path, entry);
+        self.entries().insert(path, entry);
     }
 
     fn spawn_reader(
@@ -235,44 +219,41 @@ impl Registry {
     /// Новые правила из конфига: роли меняются на лету, «Другое» → роль открывается заново.
     pub fn apply(self: &Arc<Self>, cfg: &Config) {
         let _scanning = self.scanning.lock().expect("scan");
-        *self.rules.lock().expect("rules") = Rules::from_config(cfg);
+        let rules = Rules::from_config(cfg);
         let mut reopen = Vec::new();
         {
-            let rules = self.rules.lock().expect("rules");
-            let mut entries = self.entries.lock().expect("devices");
+            let mut entries = self.entries();
             for (path, e) in entries.iter_mut() {
-                let (role, overridden) = rules.role(&e.key, &e.name, e.detected);
+                let (role, overridden) = e.id.role(&rules);
                 e.overridden = overridden;
                 e.shared.role.store(role.to_u8(), Ordering::Relaxed);
                 if role != Role::Other && !e.reading {
                     reopen.push(path.clone());
                 }
             }
+            entries.retain(|p, _| !reopen.contains(p));
         }
+        *self.rules() = rules;
         if !reopen.is_empty() {
-            self.entries
-                .lock()
-                .expect("devices")
-                .retain(|p, _| !reopen.contains(p));
             self.scan_locked();
         }
     }
 
     pub fn snapshot(&self) -> Vec<DeviceInfo> {
         let now = self.now_ms();
-        let entries = self.entries.lock().expect("devices");
+        let entries = self.entries();
         let mut list: Vec<DeviceInfo> = entries
             .iter()
             .map(|(path, e)| {
                 let last = e.shared.last_event.load(Ordering::Relaxed);
                 DeviceInfo {
                     path: path.display().to_string(),
-                    name: e.name.clone(),
-                    key: e.key.clone(),
-                    detected: e.detected,
+                    name: e.id.name.clone(),
+                    key: e.id.key.clone(),
+                    detected: e.id.detected,
                     role: Role::from_u8(e.shared.role.load(Ordering::Relaxed)),
                     overridden: e.overridden,
-                    virtual_device: e.virtual_device,
+                    virtual_device: e.id.virtual_device,
                     idle_ms: (last > 0).then(|| now.saturating_sub(last)),
                 }
             })
@@ -282,8 +263,7 @@ impl Registry {
     }
 
     fn with_role(&self, role: Role) -> Vec<PathBuf> {
-        let entries = self.entries.lock().expect("devices");
-        entries
+        self.entries()
             .iter()
             .filter(|(_, e)| {
                 e.reading && Role::from_u8(e.shared.role.load(Ordering::Relaxed)) == role
@@ -358,11 +338,13 @@ mod tests {
 
     fn entry(stamp: (i64, i64), reading: bool, alive: bool) -> Entry {
         Entry {
-            name: "test".into(),
-            key: "0000:0000 test".into(),
-            detected: Role::Keyboard,
+            id: Identity {
+                name: "test".into(),
+                key: "0000:0000 test".into(),
+                detected: Role::Keyboard,
+                virtual_device: false,
+            },
             overridden: false,
-            virtual_device: false,
             stamp,
             reading,
             shared: Arc::new(Shared {
