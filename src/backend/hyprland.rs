@@ -83,9 +83,12 @@ impl Backend for Hyprland {
     }
 
     fn layouts(&mut self) -> Result<Vec<String>> {
-        Ok(split_layouts(
-            self.main_keyboard()?["layout"].as_str().unwrap_or_default(),
-        ))
+        let kb = self.main_keyboard()?;
+        let list = kb["layout"].as_str().unwrap_or_default();
+        if list.is_empty() {
+            bail!("hyprctl: раскладки клавиатуры неизвестны");
+        }
+        Ok(split_layouts(list))
     }
 
     fn current(&mut self) -> Result<Option<usize>> {
@@ -155,6 +158,17 @@ fi"#,
         );
         let mut hypr = Hyprland { hyprctl };
         assert!(hypr.set(1, &mut NoKeys).is_err());
+    }
+
+    #[test]
+    fn hyprland_without_layouts_is_error() {
+        // Иначе «авто» выбрал бы Hyprland со списком из одной пустой раскладки.
+        let (_dir, hyprctl) = fake_command(
+            "hyprctl",
+            r#"echo '{"keyboards":[{"name":"kb","layout":"","main":true}]}'"#,
+        );
+        let mut hypr = Hyprland { hyprctl };
+        assert!(hypr.layouts().is_err());
     }
 
     #[test]
