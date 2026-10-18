@@ -36,7 +36,16 @@ getent group input >/dev/null && had_group=1
 
 cleanup() {
     pkill -KILL -u "$U" 2>/dev/null || true
-    sleep 0.3
+    # Убитый процесс, пока его не подобрал родитель (в контейнере init подбирает не
+    # сразу), остаётся зомби с UID пользователя. Удалим пользователя раньше — следующий
+    # прогон получит тот же UID, и pgrep в install.sh и в журнале найдёт старую службу.
+    for _ in {1..100}; do
+        pgrep -u "$U" >/dev/null 2>&1 || break
+        sleep 0.1
+    done
+    if pgrep -u "$U" >/dev/null 2>&1; then
+        echo "run.sh: у $U остались процессы: $(pgrep -u "$U" -d ' ')" >&2
+    fi
     userdel -r "$U" 2>/dev/null || true
     rm -rf "/run/user/${UID_:-none}" "$WORK" /etc/sudoers.d/sftest
     rm -f /etc/udev/rules.d/80-shiftfix-uinput.rules /etc/modules-load.d/shiftfix-uinput.conf
@@ -101,6 +110,9 @@ normalize() {
     sed -E "s#/run/user/$UID_#/run/user/UID#g; s/pid [0-9]+/pid N/g; s/\.new\.[0-9]+/.new.N/g"
 }
 
+# Работает ли у пользователя процесс $1. Зомби (см. cleanup) — уже не работает.
+alive() { pgrep -x -u "$U" -r R,S,D,T "$1" >/dev/null; }
+
 # Что лежит в домашнем каталоге и в /etc после сценария.
 snapshot() {
     (
@@ -118,7 +130,7 @@ snapshot() {
         if [[ -e $f ]]; then echo "$f: $(cat "$f")"; else echo "$f: нет"; fi
     done
     echo "группы: $(id -nG "$U")"
-    echo "служба: $(pgrep -x -u "$U" shiftfix >/dev/null && echo работает || echo нет)"
+    echo "служба: $(alive shiftfix && echo работает || echo нет)"
 }
 
 # Записать журнал сценария $1: ожидаемый код выхода $2, настоящий $3, вывод из файла $4.
