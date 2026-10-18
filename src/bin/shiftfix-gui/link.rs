@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -51,28 +51,37 @@ pub enum ServiceAction {
 pub struct Link {
     shared: Arc<Mutex<Snapshot>>,
     toasts: Sender<Toast>,
-    ctx: egui::Context,
+    /// Разбудить поток опроса раньше срока; `true` — заодно спросить systemd.
+    wake: Sender<bool>,
 }
 
 impl Link {
     pub fn start(ctx: &egui::Context, toasts: Sender<Toast>) -> Link {
         let shared = Arc::new(Mutex::new(Snapshot::default()));
+        let (wake, woken) = mpsc::channel();
         let link = Link {
             shared: shared.clone(),
             toasts,
-            ctx: ctx.clone(),
+            wake,
         };
         let ctx = ctx.clone();
+        // Снимок пишет только этот поток: иначе ответ, полученный до команды,
+        // мог лечь поверх полученного после, и переключатель откатывался.
         thread::Builder::new()
             .name("link".into())
             .spawn(move || {
                 let mut round = 0u32;
+                let mut with_service = true;
                 loop {
-                    let service_due = round.is_multiple_of(5);
-                    refresh(&shared, service_due);
+                    refresh(&shared, with_service);
                     ctx.request_repaint();
                     round = round.wrapping_add(1);
-                    thread::sleep(Duration::from_millis(400));
+                    // Раз в 400 мс, systemd — каждый пятый раз; команда будит раньше.
+                    with_service = match woken.recv_timeout(Duration::from_millis(400)) {
+                        Ok(service) => woken.try_iter().fold(service, |a, s| a || s),
+                        Err(RecvTimeoutError::Timeout) => round.is_multiple_of(5),
+                        Err(RecvTimeoutError::Disconnected) => return,
+                    };
                 }
             })
             .expect("поток связи со службой");
@@ -85,7 +94,7 @@ impl Link {
 
     /// Команда службе в фоне; по ошибке — всплывающее сообщение.
     pub fn send(&self, req: Request, success: Option<&'static str>) {
-        let (shared, toasts, ctx) = (self.shared.clone(), self.toasts.clone(), self.ctx.clone());
+        let (toasts, wake) = (self.toasts.clone(), self.wake.clone());
         thread::spawn(move || {
             let toast = match ipc::request(&req) {
                 Ok(_) => success.map(|text| Toast::new(ToastKind::Success, text)),
@@ -94,13 +103,12 @@ impl Link {
             if let Some(toast) = toast {
                 let _ = toasts.send(toast);
             }
-            refresh(&shared, false);
-            ctx.request_repaint();
+            let _ = wake.send(false);
         });
     }
 
     pub fn service(&self, action: ServiceAction) {
-        let (shared, toasts, ctx) = (self.shared.clone(), self.toasts.clone(), self.ctx.clone());
+        let (toasts, wake) = (self.toasts.clone(), self.wake.clone());
         thread::spawn(move || {
             let toast = match run_service_action(action) {
                 Ok(text) => Toast::new(ToastKind::Success, text),
@@ -108,8 +116,7 @@ impl Link {
             };
             let _ = toasts.send(toast);
             thread::sleep(Duration::from_millis(600)); // дать службе подняться
-            refresh(&shared, true);
-            ctx.request_repaint();
+            let _ = wake.send(true);
         });
     }
 }
