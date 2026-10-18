@@ -131,7 +131,7 @@ fn main() -> ExitCode {
         Command::Run | Command::Check => {}
     }
     logbuf::init(args.debug);
-    let path = args.config.unwrap_or_else(Config::default_path);
+    let path = args.config.unwrap_or_else(config::default_path);
     let cfg = match Config::load(&path) {
         Ok(cfg) => cfg,
         Err(err) => {

@@ -275,7 +275,7 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
 
     let dirty = app.settings != app.saved;
     ui.horizontal(|ui| {
-        let valid = Config::from_settings(app.settings.clone());
+        let valid = Config::from_settings(&app.settings);
         if let Err(err) = &valid {
             ui.label(widgets::icon(icons::WARNING, 16.0).color(p.negative));
             ui.label(RichText::new(format!("{err:#}")).color(p.negative));

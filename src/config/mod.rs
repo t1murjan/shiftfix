@@ -27,6 +27,12 @@ pub use theme::{ThemeMode, ThemeSettings};
 /// Конфиг по умолчанию с комментариями: его печатает `shiftfix --print-config`.
 pub const DEFAULT_CONFIG: &str = include_str!("default.toml");
 
+/// `~/.config/shiftfix/config.toml`: его читает служба без `--config` и
+/// правит окно.
+pub fn default_path() -> PathBuf {
+    env::config_home().join("shiftfix").join("config.toml")
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -256,22 +262,17 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Config::from_settings(Settings::default()).expect("встроенный конфиг корректен")
+        Config::from_settings(&Settings::default()).expect("встроенный конфиг корректен")
     }
 }
 
 impl Config {
-    /// `~/.config/shiftfix/config.toml`.
-    pub fn default_path() -> PathBuf {
-        env::config_home().join("shiftfix").join("config.toml")
-    }
-
     pub fn load(path: &Path) -> Result<Config> {
         let settings = Settings::load(path)?;
-        Config::from_settings(settings).with_context(|| path.display().to_string())
+        Config::from_settings(&settings).with_context(|| path.display().to_string())
     }
 
-    pub fn from_settings(raw: Settings) -> Result<Config> {
+    pub fn from_settings(raw: &Settings) -> Result<Config> {
         let Some(selection_method) = SelectionMethod::parse(&raw.selection_method) else {
             bail!(
                 "selection_method = {:?}: допустимо {}",
@@ -314,7 +315,7 @@ impl Config {
             hotkey_layouts: raw.hotkey_layouts.iter().map(|l| norm_layout(l)).collect(),
             tray: raw.tray,
             notify: raw.notify,
-            ignore_devices: raw.ignore_devices,
+            ignore_devices: raw.ignore_devices.clone(),
             devices,
         })
     }

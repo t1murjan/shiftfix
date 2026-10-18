@@ -62,17 +62,17 @@ fn default_text_matches_defaults() {
 #[test]
 fn partial_config_and_errors() {
     let raw: Settings = toml::from_str("double_tap_ms = 250\nbackend = \"kde\"").unwrap();
-    let cfg = Config::from_settings(raw).unwrap();
+    let cfg = Config::from_settings(&raw).unwrap();
     assert_eq!(cfg.double_tap, 0.25);
     assert_eq!(cfg.backend, BackendKind::Kde);
     assert_eq!(cfg.max_word_len, 50);
     let raw: Settings = toml::from_str("[devices]\n\"1:2 x\" = \"touchscreen\"").unwrap();
-    let cfg = Config::from_settings(raw).unwrap();
+    let cfg = Config::from_settings(&raw).unwrap();
     assert_eq!(cfg.devices["1:2 x"], Role::Touchscreen);
 
     let err = |text: &str| {
         let bad: Settings = toml::from_str(text).unwrap();
-        format!("{:#}", Config::from_settings(bad).unwrap_err())
+        format!("{:#}", Config::from_settings(&bad).unwrap_err())
     };
     assert_eq!(
         err("selection_method = \"clipboard\""),
@@ -102,7 +102,7 @@ fn hotkey_layouts_are_normalized() {
     let raw: Settings =
         toml::from_str("hotkey_layouts = [\"US\", \" ru(phonetic) \", \"eng\", \"rus\", \"de\"]")
             .unwrap();
-    let cfg = Config::from_settings(raw).unwrap();
+    let cfg = Config::from_settings(&raw).unwrap();
     assert_eq!(cfg.hotkey_layouts, ["us", "ru", "us", "ru", "de"]);
 }
 
@@ -217,7 +217,7 @@ fn old_config_without_theme() {
             ThemeSettings::default()
         );
         assert!(!ThemeSettings::has_mode(&path).unwrap());
-        Config::from_settings(settings).unwrap();
+        Config::from_settings(&settings).unwrap();
         Config::load(&path).unwrap();
     }
     assert_eq!(
@@ -263,7 +263,7 @@ fn bad_theme_values_fall_back() {
         }
     );
     assert_eq!(ThemeSettings::load(&path).unwrap(), settings.theme);
-    Config::from_settings(settings).unwrap();
+    Config::from_settings(&settings).unwrap();
     Config::load(&path).unwrap();
 
     for text in [

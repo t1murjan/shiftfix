@@ -9,7 +9,7 @@ use eframe::egui::{
     Sense, Stroke, TextureHandle, TextureOptions, Ui, load::SizedTexture, vec2,
 };
 use egui_phosphor::regular as icons;
-use shiftfix::config::{Config, Settings, ThemeMode, ThemeSettings};
+use shiftfix::config::{self, Config, Settings, ThemeMode, ThemeSettings};
 use shiftfix::devices::{self, DeviceInfo, Role};
 use shiftfix::ipc::{Request, Status};
 
@@ -114,7 +114,7 @@ impl App {
         let logo_image =
             egui::ColorImage::from_rgba_unmultiplied([96, 96], &shiftfix::icon::rgba(96, true));
         let logo = ctx.load_texture("logo", logo_image, TextureOptions::LINEAR);
-        let theme_path = Config::default_path();
+        let theme_path = config::default_path();
         let (mut settings, settings_error) = match Settings::load(&theme_path) {
             Ok(s) => (s, None),
             Err(err) => {
@@ -192,7 +192,7 @@ impl App {
             .as_ref()
             .map(|s| PathBuf::from(&s.config_path))
             .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or_else(Config::default_path)
+            .unwrap_or_else(config::default_path)
     }
 
     pub fn status(&self) -> Option<&Status> {
@@ -222,7 +222,7 @@ impl App {
             .as_ref()
             .is_none_or(|(at, _)| at.elapsed() > Duration::from_secs(3));
         if stale {
-            let cfg = Config::from_settings(self.saved.clone()).unwrap_or_default();
+            let cfg = Config::from_settings(&self.saved).unwrap_or_default();
             let list = devices::event_nodes()
                 .iter()
                 .filter_map(|p| devices::describe(p, &cfg))
