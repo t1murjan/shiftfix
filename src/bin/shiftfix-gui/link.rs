@@ -24,15 +24,13 @@ pub struct Service {
     pub systemd: bool,
     /// Юнит установлен (или файл автозапуска без systemd).
     pub installed: bool,
-    /// active, inactive, failed, activating…
-    pub state: String,
     pub autostart: bool,
 }
 
 #[derive(Clone, Default)]
 pub struct Snapshot {
-    pub status: Option<Box<Status>>,
-    pub error: Option<String>,
+    /// Ответ службы; окно берёт снимок каждый кадр, поэтому без копии.
+    pub status: Option<Arc<Status>>,
     pub service: Service,
     /// Последние строки журнала службы, когда она не отвечает.
     pub journal: Vec<String>,
@@ -129,13 +127,11 @@ fn refresh(shared: &Arc<Mutex<Snapshot>>, with_service: bool) {
     let Ok(mut snap) = shared.lock() else { return };
     match result {
         Ok(response) => {
-            snap.status = response.status;
-            snap.error = None;
+            snap.status = response.status.map(Arc::from);
             snap.journal.clear();
         }
-        Err(err) => {
+        Err(_) => {
             snap.status = None;
-            snap.error = Some(format!("{err:#}"));
             if let Some(journal) = journal {
                 snap.journal = journal;
             }
@@ -155,11 +151,7 @@ fn systemctl(args: &[&str]) -> Result<proc::Output> {
 
 fn query_service() -> Service {
     if env::in_path("systemctl")
-        && let Ok(out) = systemctl(&[
-            "show",
-            UNIT,
-            "--property=LoadState,ActiveState,UnitFileState",
-        ])
+        && let Ok(out) = systemctl(&["show", UNIT, "--property=LoadState,UnitFileState"])
         && out.ok
     {
         let text = out.text();
@@ -172,7 +164,6 @@ fn query_service() -> Service {
         return Service {
             systemd: true,
             installed: value("LoadState") == "loaded",
-            state: value("ActiveState"),
             autostart: value("UnitFileState") == "enabled",
         };
     }
@@ -180,7 +171,6 @@ fn query_service() -> Service {
     Service {
         systemd: false,
         installed: autostart,
-        state: String::new(),
         autostart,
     }
 }
