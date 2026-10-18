@@ -67,8 +67,9 @@ pub struct ScanStats {
 /// Все устройства ввода и потоки их чтения.
 pub struct Registry {
     entries: Mutex<HashMap<PathBuf, Entry>>,
-    /// Проходы из потока hotplug и из apply() не пересекаются: иначе оба увидят,
-    /// что записи нет, и оба откроют устройство.
+    /// Проход из потока hotplug и apply() не пересекаются: иначе оба увидят,
+    /// что записи нет, и оба откроют устройство, или новое устройство получит
+    /// роль по прежним правилам уже после того, как apply() их сменил.
     scanning: Mutex<()>,
     rules: Mutex<Rules>,
     start: Instant,
@@ -95,6 +96,11 @@ impl Registry {
     /// Найти новые устройства, забыть отключённые.
     pub fn scan(self: &Arc<Self>) -> ScanStats {
         let _scanning = self.scanning.lock().expect("scan");
+        self.scan_locked()
+    }
+
+    /// Проход по /dev/input; `scanning` уже взят.
+    fn scan_locked(self: &Arc<Self>) -> ScanStats {
         let nodes = event_nodes();
         self.entries
             .lock()
@@ -203,6 +209,7 @@ impl Registry {
 
     /// Новые правила из конфига: роли меняются на лету, «Другое» → роль открывается заново.
     pub fn apply(self: &Arc<Self>, cfg: &Config) {
+        let _scanning = self.scanning.lock().expect("scan");
         *self.rules.lock().expect("rules") = Rules::from_config(cfg);
         let mut reopen = Vec::new();
         {
@@ -222,7 +229,7 @@ impl Registry {
                 .lock()
                 .expect("devices")
                 .retain(|p, _| !reopen.contains(p));
-            self.scan();
+            self.scan_locked();
         }
     }
 
@@ -381,6 +388,32 @@ mod tests {
             !entry(before, false, true).still_valid(&path),
             "узла больше нет"
         );
+    }
+
+    #[test]
+    fn new_rules_wait_for_scan_in_progress() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let registry = Registry::new(&Config::default(), tx);
+        let mut cfg = Config::default();
+        cfg.devices.insert("1:1 Pad".into(), Role::Ignore);
+        let has_new_rules =
+            |r: &Registry| r.rules.lock().unwrap().overrides.contains_key("1:1 Pad");
+
+        // Пока идёт обход, новое устройство получает роль по текущим правилам —
+        // apply() должен дождаться его конца и пройти и по нему.
+        let scanning = registry.scanning.lock().unwrap();
+        let applying = thread::spawn({
+            let registry = Arc::clone(&registry);
+            move || registry.apply(&cfg)
+        });
+        thread::sleep(std::time::Duration::from_millis(100));
+        assert!(
+            !has_new_rules(&registry),
+            "правила сменились посреди обхода"
+        );
+        drop(scanning);
+        applying.join().unwrap();
+        assert!(has_new_rules(&registry));
     }
 
     #[test]
