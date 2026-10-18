@@ -2,6 +2,7 @@
 //! остановить обработку клавиатуры. Переменные сессии подставляются всегда.
 
 use std::io::{Read, Write};
+use std::os::unix::process::CommandExt;
 use std::process::{Child, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -24,6 +25,14 @@ impl Output {
     }
 }
 
+/// Команда запускается своей группой процессов: по таймауту убивается вся
+/// группа, вместе с тем, что команда успела запустить.
+fn kill_group(child: &mut Child) {
+    // SAFETY: kill без побочных эффектов в нашем процессе; группа — потомка.
+    unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
+    let _ = child.wait();
+}
+
 fn wait(child: &mut Child, cmd: &str, timeout: Duration) -> Result<ExitStatus> {
     let deadline = Instant::now() + timeout;
     loop {
@@ -34,8 +43,7 @@ fn wait(child: &mut Child, cmd: &str, timeout: Duration) -> Result<ExitStatus> {
             return Ok(status);
         }
         if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
+            kill_group(child);
             bail!("{cmd}: нет ответа за {} мс", timeout.as_millis());
         }
         thread::sleep(Duration::from_millis(2));
@@ -52,16 +60,26 @@ fn drain(mut pipe: impl Read + Send + 'static) -> thread::JoinHandle<Vec<u8>> {
 
 /// Запустить и собрать вывод.
 pub fn run(cmd: &str, args: &[&str], timeout: Duration) -> Result<Output> {
+    let started = Instant::now();
     let mut child = session_command(cmd)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .process_group(0)
         .spawn()
         .with_context(|| format!("{cmd}: не запускается"))?;
     let stdout = drain(child.stdout.take().expect("stdout"));
     let stderr = drain(child.stderr.take().expect("stderr"));
     let status = wait(&mut child, cmd, timeout)?;
+    // Команда завершилась, а запущенный ею фоновый процесс ещё держит вывод.
+    while !(stdout.is_finished() && stderr.is_finished()) {
+        if started.elapsed() >= timeout {
+            kill_group(&mut child);
+            bail!("{cmd}: вывод не закрыт за {} мс", timeout.as_millis());
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
     Ok(Output {
         ok: status.success(),
         stdout: stdout.join().unwrap_or_default(),
@@ -93,6 +111,7 @@ pub fn feed(cmd: &str, args: &[&str], input: &[u8]) -> Result<()> {
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
+        .process_group(0)
         .spawn()
         .with_context(|| format!("{cmd}: не запускается"))?;
     let mut stdin = child.stdin.take().expect("stdin");
@@ -152,6 +171,22 @@ mod tests {
     fn times_out() {
         let started = Instant::now();
         assert!(run("sleep", &["5"], Duration::from_millis(100)).is_err());
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn background_child_does_not_hang() {
+        // Фоновый процесс унаследовал вывод и держит его после выхода команды.
+        let started = Instant::now();
+        assert!(
+            run(
+                "sh",
+                &["-c", "sleep 5 & echo hi"],
+                Duration::from_millis(300)
+            )
+            .is_err()
+        );
+        assert!(run("sh", &["-c", "sleep 5"], Duration::from_millis(300)).is_err());
         assert!(started.elapsed() < Duration::from_secs(2));
     }
 
