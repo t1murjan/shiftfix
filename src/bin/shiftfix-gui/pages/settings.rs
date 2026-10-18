@@ -62,6 +62,9 @@ fn combo(ui: &mut Ui, id: &str, value: &mut String, options: &[(&str, &str)]) ->
     changed
 }
 
+/// Почему «Сохранить» неактивна, когда config.toml не прочитался.
+const LOCKED: &str = "Пока в файле ошибка, окно его не меняет: исправьте её и перечитайте файл.";
+
 pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
     let shown = shown_path(app.settings.path());
     page_header(
@@ -84,11 +87,19 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
         });
         ui.add_space(8.0);
     }
-    if let Some(err) = app.settings.error() {
+    if let Some(err) = app.settings.error().map(str::to_owned) {
         ui.horizontal_wrapped(|ui| {
             ui.label(widgets::icon(icons::WARNING, 16.0).color(p.negative));
             ui.label(RichText::new(err).color(p.negative));
         });
+        let mut reload = false;
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(LOCKED).color(p.weak));
+            reload = widgets::button(ui, p, icons::ARROW_CLOCKWISE, "Перечитать", false).clicked();
+        });
+        if reload {
+            app.settings.reload();
+        }
         ui.add_space(8.0);
     }
     let s = &mut app.settings.current;
@@ -294,11 +305,15 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             ui.label(RichText::new(format!("{err:#}")).color(p.negative));
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let save = ui
-                .add_enabled_ui(dirty && valid.is_ok(), |ui| {
+            let locked = app.settings.error().is_some();
+            let mut save = ui
+                .add_enabled_ui(dirty && valid.is_ok() && !locked, |ui| {
                     widgets::button(ui, p, icons::FLOPPY_DISK, "Сохранить", true)
                 })
                 .inner;
+            if locked {
+                save = save.on_disabled_hover_text(LOCKED);
+            }
             if save.clicked() {
                 app.save_settings("Настройки сохранены");
             }
