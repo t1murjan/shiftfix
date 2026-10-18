@@ -117,6 +117,8 @@ impl Link {
 fn refresh(shared: &Arc<Mutex<Snapshot>>, with_service: bool) {
     let result = ipc::request(&Request::Status);
     let service = with_service.then(query_service);
+    // journalctl идёт до нескольких секунд: под замком он держал бы кадр окна.
+    let journal = (result.is_err() && with_service).then(journal);
     let Ok(mut snap) = shared.lock() else { return };
     match result {
         Ok(response) => {
@@ -127,8 +129,8 @@ fn refresh(shared: &Arc<Mutex<Snapshot>>, with_service: bool) {
         Err(err) => {
             snap.status = None;
             snap.error = Some(format!("{err:#}"));
-            if with_service {
-                snap.journal = journal();
+            if let Some(journal) = journal {
+                snap.journal = journal;
             }
         }
     }
