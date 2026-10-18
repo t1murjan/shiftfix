@@ -330,6 +330,11 @@ scenario 36-install-no-sudo 1 './install.sh'
 as_user 'rm ~/.fakesd/no-sudo'
 scenario 37-install-with-sudo 0 './install.sh'
 
+# install.sh --uninstall — это uninstall.sh с теми же параметрами; --keep-build
+# оставляет сборку и при --purge.
+scenario 38-uninstall-via-install-keep-build 0 './install.sh --uninstall --yes --purge --keep-build &&
+    ls target/release'
+
 if ((${#unexpected[@]})); then
     echo "Код выхода не тот, что ожидался: ${unexpected[*]}" >&2
     exit 1
