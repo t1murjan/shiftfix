@@ -63,7 +63,7 @@ fn combo(ui: &mut Ui, id: &str, value: &mut String, options: &[(&str, &str)]) ->
 }
 
 pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
-    let shown = shown_path(&app.config_path());
+    let shown = shown_path(app.config_path());
     page_header(
         ui,
         p,
@@ -71,6 +71,19 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
         "Настройки",
         &format!("Сохраняются в {shown}"),
     );
+    if let Some(other) = app.service_config() {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(widgets::icon(icons::INFO, 16.0).color(p.warning));
+            ui.label(
+                RichText::new(format!(
+                    "Служба запущена с другим конфигом — {}: изменения здесь на неё не подействуют.",
+                    shown_path(&other)
+                ))
+                .color(p.warning),
+            );
+        });
+        ui.add_space(8.0);
+    }
     if let Some(err) = &app.settings_error {
         ui.horizontal_wrapped(|ui| {
             ui.label(widgets::icon(icons::WARNING, 16.0).color(p.negative));

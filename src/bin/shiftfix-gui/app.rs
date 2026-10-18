@@ -1,6 +1,7 @@
 //! Окно: боковая панель, страницы, всплывающие сообщения.
 
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -87,6 +88,8 @@ pub struct App {
     pub link: Link,
     pub snap: Snapshot,
     toasts: Toasts,
+    /// config.toml окна: отсюда читаются настройки и тема, сюда же пишутся.
+    config_path: PathBuf,
     pub settings: Settings,
     pub saved: Settings,
     pub settings_error: Option<String>,
@@ -114,12 +117,12 @@ impl App {
         let logo_image =
             egui::ColorImage::from_rgba_unmultiplied([96, 96], &shiftfix::icon::rgba(96, true));
         let logo = ctx.load_texture("logo", logo_image, TextureOptions::LINEAR);
-        let theme_path = config::default_path();
-        let (mut settings, settings_error) = match Settings::load(&theme_path) {
+        let config_path = config::default_path();
+        let (mut settings, settings_error) = match Settings::load(&config_path) {
             Ok(s) => (s, None),
             Err(err) => {
                 // Ошибка в другом параметре — тему всё равно берём из файла.
-                let theme = ThemeSettings::load(&theme_path).unwrap_or_default();
+                let theme = ThemeSettings::load(&config_path).unwrap_or_default();
                 let settings = Settings {
                     theme,
                     ..Settings::default()
@@ -127,12 +130,13 @@ impl App {
                 (settings, Some(format!("{err:#}")))
             }
         };
-        theme::migrate_legacy(&theme_path, &mut settings.theme);
+        theme::migrate_legacy(&config_path, &mut settings.theme);
         App {
             page,
             link,
             snap: Snapshot::default(),
             toasts,
+            config_path: config_path.clone(),
             saved: settings.clone(),
             settings,
             settings_error,
@@ -141,7 +145,7 @@ impl App {
             checking: false,
             local_devices: None,
             logo,
-            theme: theme::ThemeState::new(theme_path, forced_mode, watch),
+            theme: theme::ThemeState::new(config_path, forced_mode, watch),
             about_focus: false,
         }
     }
@@ -186,13 +190,20 @@ impl App {
         p
     }
 
-    pub fn config_path(&self) -> PathBuf {
-        self.snap
-            .status
-            .as_ref()
-            .map(|s| PathBuf::from(&s.config_path))
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or_else(config::default_path)
+    pub fn config_path(&self) -> &Path {
+        &self.config_path
+    }
+
+    /// Конфиг службы, если это не файл окна: службу запустили с `--config`.
+    /// Окно в него не пишет — только говорит, что служба читает другой файл.
+    pub fn service_config(&self) -> Option<PathBuf> {
+        let theirs = PathBuf::from(&self.status()?.config_path);
+        let ours = &self.config_path;
+        let same = theirs.as_os_str().is_empty()
+            || theirs == *ours
+            || fs::canonicalize(&theirs)
+                .is_ok_and(|t| fs::canonicalize(ours).is_ok_and(|o| o == t));
+        (!same).then_some(theirs)
     }
 
     pub fn status(&self) -> Option<&Status> {
@@ -237,7 +248,7 @@ impl App {
 
     /// Сохранить настройки в файл и попросить службу перечитать их.
     pub fn save_settings(&mut self, success: &'static str) {
-        match self.settings.save(&self.config_path()) {
+        match self.settings.save(&self.config_path) {
             Ok(()) => {
                 self.saved = self.settings.clone();
                 self.settings_error = None;

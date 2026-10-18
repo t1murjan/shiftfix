@@ -61,7 +61,7 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             }
             if widgets::button(ui, p, icons::FOLDER_OPEN, "Открыть конфиг", false).clicked()
             {
-                let path = app.config_path();
+                let path = app.config_path().to_owned();
                 if !path.exists() {
                     let _ = app.saved.save(&path);
                 }
