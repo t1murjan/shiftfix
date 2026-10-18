@@ -298,6 +298,20 @@ fake_installed_version 0.3.0
 scenario 31-update-no-graphical 0 './install.sh'
 as_user 'rm ~/.fakesd/no-graphical'
 
+# Без systemd служба — процесс из автозапуска сеанса: обновление останавливает его и
+# запускает новый тоже процессом.
+as_user './uninstall.sh --yes --keep-group >/dev/null 2>&1; touch ~/.fakesd/off &&
+    ./install.sh >/dev/null 2>&1; rm -f ~/log/*.log'
+fake_installed_version 0.3.0
+scenario 32-no-systemd-update-process 0 './install.sh'
+
+# systemd снова есть, а служба — всё тот же процесс из автозапуска сеанса: обновление
+# записывает и включает юнит, убирает файл автозапуска сеанса и запускает службу уже
+# через systemd.
+as_user 'rm ~/.fakesd/off'
+fake_installed_version 0.3.0
+scenario 33-session-autostart-to-unit 0 './install.sh'
+
 if ((${#unexpected[@]})); then
     echo "Код выхода не тот, что ожидался: ${unexpected[*]}" >&2
     exit 1
