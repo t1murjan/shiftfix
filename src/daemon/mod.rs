@@ -88,6 +88,8 @@ struct Daemon {
     engine: Engine,
     registry: Arc<Registry>,
     tray: Option<TrayIcon>,
+    /// Что сейчас в трее: работает ли служба и раскладки в подсказке.
+    tray_shown: Option<(bool, String)>,
     tx: Sender<Msg>,
     selection_note: Option<String>,
     /// Через что сейчас следим за выделением.
@@ -155,6 +157,7 @@ pub fn run(path: PathBuf, cfg: Config) -> Result<()> {
     let mut daemon = Daemon {
         path,
         tray: None,
+        tray_shown: None,
         engine,
         registry,
         tx,
@@ -176,7 +179,7 @@ pub fn run(path: PathBuf, cfg: Config) -> Result<()> {
             "выключено"
         }
     );
-    daemon.update_tray(&layouts.codes);
+    daemon.update_tray();
 
     for msg in rx {
         if !daemon.handle(msg) {
@@ -192,8 +195,10 @@ impl Daemon {
     fn apply_side_effects(&mut self) {
         if self.cfg.tray && self.tray.is_none() {
             self.tray = TrayIcon::spawn(self.tx.clone(), self.engine.enabled());
+            self.tray_shown = None;
         } else if !self.cfg.tray {
             self.tray = None;
+            self.tray_shown = None;
         }
         if self.cfg.selection && !self.watching_primary {
             selection::spawn_watcher(self.tx.clone(), self.selection_active.clone());
@@ -201,10 +206,23 @@ impl Daemon {
         }
     }
 
-    fn update_tray(&self, codes: &[String]) {
-        if let Some(tray) = &self.tray {
-            tray.update(self.engine.enabled(), &codes.join(" · "));
+    /// Значок и подсказку — по службе: пауза, список раскладок (его меняют
+    /// новая keymap и смена переключателя в конфиге).
+    fn update_tray(&mut self) {
+        if !self.cfg.tray {
+            return;
         }
+        let shown = (
+            self.engine.enabled(),
+            self.engine.layout_info().codes.join(" · "),
+        );
+        if self.tray_shown.as_ref() == Some(&shown) {
+            return;
+        }
+        if let Some(tray) = &self.tray {
+            tray.update(shown.0, &shown.1);
+        }
+        self.tray_shown = Some(shown);
     }
 
     fn set_enabled(&mut self, enabled: bool) {
@@ -221,8 +239,7 @@ impl Daemon {
         if self.cfg.notify {
             proc::notify(state, &["-t", "1500"]);
         }
-        let codes = self.engine.layout_info().codes;
-        self.update_tray(&codes);
+        self.update_tray();
     }
 
     fn reload(&mut self) -> Result<()> {
@@ -239,6 +256,7 @@ impl Daemon {
         self.registry.apply(&cfg);
         self.cfg = cfg;
         self.apply_side_effects();
+        self.update_tray();
         info!("конфиг перечитан");
         Ok(())
     }
@@ -296,7 +314,10 @@ impl Daemon {
                     self.selection_note = note;
                 }
             }
-            Msg::Keymap(keymap) => self.engine.set_keymap(keymap),
+            Msg::Keymap(keymap) => {
+                self.engine.set_keymap(keymap);
+                self.update_tray();
+            }
             Msg::TogglePause => {
                 let enabled = !self.engine.enabled();
                 self.set_enabled(enabled);
@@ -348,6 +369,7 @@ impl Daemon {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::sync::Mutex;
 
     use super::*;
     use crate::engine::{Backend, Keys};
@@ -401,6 +423,7 @@ mod tests {
             engine,
             registry,
             tray: None,
+            tray_shown: None,
             tx,
             selection_note: None,
             selection_via: None,
@@ -484,6 +507,43 @@ mod tests {
             ),
             ("us", "ru")
         );
+    }
+
+    #[test]
+    fn tray_follows_layout_list() {
+        struct Listed(Arc<Mutex<Vec<String>>>);
+        impl Backend for Listed {
+            fn name(&self) -> &'static str {
+                "тест"
+            }
+            fn layouts(&mut self) -> Result<Vec<String>> {
+                Ok(self.0.lock().unwrap().clone())
+            }
+            fn current(&mut self) -> Result<Option<usize>> {
+                Ok(Some(0))
+            }
+            fn set(&mut self, _: usize, _: &mut dyn Keys) -> Result<()> {
+                Ok(())
+            }
+            fn toggle(&mut self, _: &mut dyn Keys) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut d = daemon(std::env::temp_dir().join("shiftfix-none.toml"));
+        let codes = Arc::new(Mutex::new(vec!["us".to_owned(), "ru".to_owned()]));
+        d.engine.set_backend(Box::new(Listed(codes.clone())));
+        // Значка в тесте нет, но служба помнит, что ему отдала.
+        d.cfg.tray = true;
+        d.update_tray();
+        assert_eq!(d.tray_shown, Some((true, "us · ru".into())));
+
+        // Раскладку добавили в настройках системы — пришла новая keymap.
+        codes.lock().unwrap().push("de".into());
+        assert!(d.handle(Msg::Keymap(Keymap::default())));
+        assert_eq!(d.tray_shown, Some((true, "us · ru · de".into())));
+        assert!(d.handle(Msg::TogglePause));
+        assert_eq!(d.tray_shown, Some((false, "us · ru · de".into())));
     }
 
     #[test]
