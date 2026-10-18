@@ -1,5 +1,5 @@
 //! Слушать устройства: обход /dev/input, поток чтения на каждое устройство
-//! и перевод событий в сообщения службе.
+//! и перевод событий в `Event` для службы.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -7,7 +7,6 @@ use std::io::ErrorKind;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
-use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Instant, UNIX_EPOCH};
@@ -21,7 +20,6 @@ use super::{
     node_number,
 };
 use crate::config::Config;
-use crate::daemon::Msg;
 use crate::keys::{is_button, is_click};
 
 struct Shared {
@@ -57,6 +55,29 @@ impl Entry {
     }
 }
 
+/// Событие устройства для движка — уже с учётом роли устройства.
+pub enum Event {
+    Key {
+        key: KeyCode,
+        value: i32,
+        ts: f64,
+    },
+    Button {
+        value: i32,
+        ts: f64,
+    },
+    Touch {
+        device: Arc<str>,
+        value: i32,
+        ts: f64,
+    },
+    /// Ядро потеряло события (SYN_DROPPED).
+    Dropped,
+    Gone {
+        name: String,
+    },
+}
+
 /// Итог обхода /dev/input: сколько устройств открылось и сколько — нет прав.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ScanStats {
@@ -73,17 +94,21 @@ pub struct Registry {
     scanning: Mutex<()>,
     rules: Mutex<Rules>,
     start: Instant,
-    tx: Sender<Msg>,
+    /// Куда отдавать события; `false` — получателя больше нет.
+    send: Box<dyn Fn(Event) -> bool + Send + Sync>,
 }
 
 impl Registry {
-    pub fn new(cfg: &Config, tx: Sender<Msg>) -> Arc<Registry> {
+    pub fn new(
+        cfg: &Config,
+        send: impl Fn(Event) -> bool + Send + Sync + 'static,
+    ) -> Arc<Registry> {
         Arc::new(Registry {
             entries: Mutex::default(),
             scanning: Mutex::default(),
             rules: Mutex::new(Rules::from_config(cfg)),
             start: Instant::now(),
-            tx,
+            send: Box::new(send),
         })
     }
 
@@ -192,15 +217,15 @@ impl Registry {
                             .last_event
                             .store(registry.now_ms(), Ordering::Relaxed);
                         let role = Role::from_u8(shared.role.load(Ordering::Relaxed));
-                        if let Some(msg) = translate(role, &tag, event)
-                            && registry.tx.send(msg).is_err()
+                        if let Some(event) = translate(role, &tag, event)
+                            && !(registry.send)(event)
                         {
                             break 'read;
                         }
                     }
                 }
                 shared.alive.store(false, Ordering::Relaxed);
-                let _ = registry.tx.send(Msg::DeviceGone { name });
+                (registry.send)(Event::Gone { name });
             });
         if let Err(err) = spawned {
             warn!("поток чтения {} не запустился: {err}", path.display());
@@ -289,8 +314,8 @@ impl Registry {
     }
 }
 
-/// Перевод события в сообщение движку с учётом роли устройства.
-pub fn translate(role: Role, tag: &Arc<str>, event: InputEvent) -> Option<Msg> {
+/// Перевод события evdev для движка с учётом роли устройства.
+pub fn translate(role: Role, tag: &Arc<str>, event: InputEvent) -> Option<Event> {
     if !role.listens() {
         return None;
     }
@@ -302,15 +327,15 @@ pub fn translate(role: Role, tag: &Arc<str>, event: InputEvent) -> Option<Msg> {
         let key = KeyCode::new(event.code());
         let value = event.value();
         return if is_click(key) {
-            Some(Msg::Button { value, ts })
+            Some(Event::Button { value, ts })
         } else if key == KeyCode::BTN_TOUCH {
             match role {
                 // Касание экрана или пера — всегда клик: курсор и фокус могли сместиться.
                 Role::Touchscreen | Role::Tablet => {
-                    (value == 1).then_some(Msg::Button { value: 1, ts })
+                    (value == 1).then_some(Event::Button { value: 1, ts })
                 }
                 // На тачпаде кликом считается только короткий тап.
-                _ => Some(Msg::Touch {
+                _ => Some(Event::Touch {
                     device: tag.clone(),
                     value,
                     ts,
@@ -319,12 +344,12 @@ pub fn translate(role: Role, tag: &Arc<str>, event: InputEvent) -> Option<Msg> {
         } else if is_button(key) {
             None
         } else {
-            Some(Msg::Key { key, value, ts })
+            Some(Event::Key { key, value, ts })
         };
     }
     let dropped = event.event_type() == EventType::SYNCHRONIZATION
         && event.code() == SynchronizationCode::SYN_DROPPED.0;
-    dropped.then_some(Msg::Dropped)
+    dropped.then_some(Event::Dropped)
 }
 
 #[cfg(test)]
@@ -392,8 +417,7 @@ mod tests {
 
     #[test]
     fn new_rules_wait_for_scan_in_progress() {
-        let (tx, _rx) = std::sync::mpsc::channel();
-        let registry = Registry::new(&Config::default(), tx);
+        let registry = Registry::new(&Config::default(), |_| true);
         let mut cfg = Config::default();
         cfg.devices.insert("1:1 Pad".into(), "ignore".into());
         let has_new_rules =
@@ -428,13 +452,13 @@ mod tests {
         };
         assert!(matches!(
             touch(Role::Touchscreen, 1),
-            Some(Msg::Button { value: 1, .. })
+            Some(Event::Button { value: 1, .. })
         ));
         assert!(touch(Role::Touchscreen, 0).is_none());
-        assert!(matches!(touch(Role::Tablet, 1), Some(Msg::Button { .. })));
+        assert!(matches!(touch(Role::Tablet, 1), Some(Event::Button { .. })));
         assert!(matches!(
             touch(Role::Touchpad, 1),
-            Some(Msg::Touch { value: 1, .. })
+            Some(Event::Touch { value: 1, .. })
         ));
         assert!(touch(Role::Ignore, 1).is_none());
         let key = translate(
@@ -444,7 +468,7 @@ mod tests {
         );
         assert!(matches!(
             key,
-            Some(Msg::Key {
+            Some(Event::Key {
                 key: KeyCode::KEY_A,
                 value: 1,
                 ..
@@ -463,7 +487,7 @@ mod tests {
         );
         assert!(matches!(
             translate(Role::Mouse, &tag, dropped),
-            Some(Msg::Dropped)
+            Some(Event::Dropped)
         ));
         assert!(
             translate(

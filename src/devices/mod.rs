@@ -18,7 +18,7 @@ use evdev::{KeyCode, PropType, RelativeAxisCode};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
-pub use registry::{Registry, ScanStats};
+pub use registry::{Event, Registry, ScanStats};
 
 /// Имя виртуальной клавиатуры службы (`daemon/uinput.rs`): по нему служба не
 /// слушает саму себя.
