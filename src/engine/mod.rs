@@ -5,8 +5,8 @@
 //! клавиши ещё раз; таблицы для этого не нужны.
 //!
 //! Здесь — разбор событий и исправление; через что движок нажимает клавиши,
-//! переключает раскладку и читает выделение — в `ports.rs`, что он сообщает
-//! окну — в `report.rs`.
+//! переключает раскладку, читает выделение и спрашивает службу (`Hooks`) —
+//! в `ports.rs`, что он сообщает окну — в `report.rs`.
 
 mod ports;
 mod report;
@@ -21,7 +21,7 @@ use anyhow::{Result, bail};
 use evdev::KeyCode;
 use log::{debug, error, info, warn};
 
-pub use ports::{Backend, Guard, Keys, Selection};
+pub use ports::{Backend, Hooks, Keys, Selection};
 pub use report::{Action, ActionKind, LayoutInfo};
 
 use crate::config::{Config, SelectionMethod};
@@ -49,9 +49,7 @@ pub struct Engine {
     backend: Box<dyn Backend>,
     keys: Box<dyn Keys>,
     clip: Option<Box<dyn Selection>>,
-    caps_on: Box<dyn FnMut() -> bool>,
-    clock: Box<dyn Fn() -> f64>,
-    guard: Guard,
+    hooks: Hooks,
     keymap: Keymap,
     enabled: bool,
     buf: Vec<Stroke>,
@@ -89,18 +87,14 @@ impl Engine {
         backend: Box<dyn Backend>,
         keys: Box<dyn Keys>,
         clip: Option<Box<dyn Selection>>,
-        caps_on: Box<dyn FnMut() -> bool>,
-        clock: Box<dyn Fn() -> f64>,
-        guard: Guard,
+        hooks: Hooks,
     ) -> Self {
         Engine {
             cfg,
             backend,
             keys,
             clip,
-            caps_on,
-            clock,
-            guard,
+            hooks,
             keymap: Keymap::default(),
             enabled: true,
             buf: Vec::new(),
@@ -213,7 +207,7 @@ impl Engine {
     }
 
     pub fn primary_changed(&mut self, size: usize) {
-        if self.enabled && (self.clock)() >= self.sel_ignore_until {
+        if self.enabled && (self.hooks.clock)() >= self.sel_ignore_until {
             self.sel_valid = size > 0;
         }
     }
@@ -381,7 +375,7 @@ impl Engine {
     // Исправление.
 
     pub fn trigger(&mut self) {
-        if let Some(reason) = (self.guard)() {
+        if let Some(reason) = (self.hooks.guard)() {
             info!("⇧⇧ пропущен: {reason}");
             self.sel_valid = false;
             self.reset("исправлять нельзя");
@@ -559,11 +553,11 @@ impl Engine {
             return Ok(());
         };
         // CapsLock, переключающий раскладку, регистр не меняет.
-        let caps = !self.keymap.caps_switches_group && (self.caps_on)();
+        let caps = !self.keymap.caps_switches_group && (self.hooks.caps_on)();
         let plan = keymap::plan_strokes(&text, &src_layout, &tgt_layout, caps, tgt);
         // Наша вставка сама меняет PRIMARY и буфер обмена. Отсчёт — и до неё:
         // если она оборвётся ошибкой, второй установки ниже не будет.
-        self.sel_ignore_until = (self.clock)() + SELF_CHANGE_GRACE;
+        self.sel_ignore_until = (self.hooks.clock)() + SELF_CHANGE_GRACE;
 
         let how = match &plan {
             Some(strokes) if self.cfg.selection_method == SelectionMethod::Type => {
@@ -588,7 +582,7 @@ impl Engine {
         };
         // Вставка и набор бывают долгими (до нескольких секунд), а события
         // PRIMARY за это время движок разберёт только теперь: отсчёт заново.
-        self.sel_ignore_until = (self.clock)() + SELF_CHANGE_GRACE;
+        self.sel_ignore_until = (self.hooks.clock)() + SELF_CHANGE_GRACE;
         match plan {
             Some(strokes) if strokes.len() <= SEGMENT_MAX => {
                 self.buf = strokes; // повторный ⇧⇧ вернёт как было
