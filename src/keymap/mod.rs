@@ -45,7 +45,9 @@ pub fn spawn_watcher(on_change: impl Fn(Keymap) + Send + 'static) {
     let spawned = thread::Builder::new().name("keymap".into()).spawn(move || {
         loop {
             if let Some(conn) = connect() {
-                wayland::watch(&conn, &on_change);
+                if let Err(err) = wayland::watch(&conn, &on_change) {
+                    debug!("keymap Wayland: {err:#}");
+                }
             } else if env::wayland_display().is_none() && env::x11_display().is_some() {
                 // Сеанс X11: keymap строится из свойства корневого окна — и тогда,
                 // когда выделение не исправляется.

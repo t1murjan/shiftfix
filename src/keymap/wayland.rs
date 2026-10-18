@@ -5,10 +5,11 @@
 use std::fs::File;
 use std::os::unix::fs::FileExt;
 
+use anyhow::Result;
 use log::{debug, info};
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::{wl_keyboard, wl_registry, wl_seat};
-use wayland_client::{Connection, Dispatch, QueueHandle, WEnum};
+use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, WEnum};
 
 use super::{Keymap, xkb};
 use crate::sys::wayland::connect;
@@ -84,11 +85,17 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
     }
 }
 
+/// Очередь событий с привязанным wl_seat: клавиатура и её keymap придут в `State`.
+fn seat_queue(conn: &Connection) -> Result<(EventQueue<State>, wl_seat::WlSeat)> {
+    let (globals, queue) = registry_queue_init::<State>(conn)?;
+    let seat = globals.bind(&queue.handle(), 1..=8, ())?;
+    Ok((queue, seat))
+}
+
 /// Один раз получить keymap композитора.
 pub fn fetch() -> Option<Keymap> {
     let conn = connect()?;
-    let (globals, mut queue) = registry_queue_init::<State>(&conn).ok()?;
-    let _seat: wl_seat::WlSeat = globals.bind(&queue.handle(), 1..=8, ()).ok()?;
+    let (mut queue, _seat) = seat_queue(&conn).ok()?;
     let mut state = State::default();
     for _ in 0..4 {
         queue.roundtrip(&mut state).ok()?;
@@ -100,15 +107,11 @@ pub fn fetch() -> Option<Keymap> {
 }
 
 /// Присылать keymap, пока жива связь с композитором.
-pub(super) fn watch(conn: &Connection, on_change: &impl Fn(Keymap)) {
-    let Ok((globals, mut queue)) = registry_queue_init::<State>(conn) else {
-        return;
-    };
-    let Ok(_seat) = globals.bind::<wl_seat::WlSeat, _, _>(&queue.handle(), 1..=8, ()) else {
-        return;
-    };
+pub(super) fn watch(conn: &Connection, on_change: &impl Fn(Keymap)) -> Result<()> {
+    let (mut queue, _seat) = seat_queue(conn)?;
     let mut state = State::default();
-    while queue.blocking_dispatch(&mut state).is_ok() {
+    loop {
+        queue.blocking_dispatch(&mut state)?;
         if let Some(text) = state.keymap.take() {
             match xkb::from_text(&text) {
                 Some(keymap) => {
@@ -130,6 +133,14 @@ mod tests {
 
     use super::*;
     use crate::testutil::TempDir;
+
+    #[test]
+    fn watch_reports_lost_compositor() {
+        let (socket, server) = UnixStream::pair().unwrap();
+        drop(server);
+        let conn = Connection::from_socket(socket).unwrap();
+        assert!(watch(&conn, &|_| {}).is_err());
+    }
 
     /// Ту же keymap заново не разбирать и не писать в журнал.
     #[test]
