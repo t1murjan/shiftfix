@@ -6,8 +6,8 @@
 //!
 //! Здесь — разбор событий и исправление; через что движок нажимает клавиши,
 //! переключает раскладку, читает выделение и спрашивает службу (`Hooks`) —
-//! в `ports.rs`, где в буфере последнее слово — в `buffer.rs`, что движок
-//! сообщает окну — в `report.rs`.
+//! в `ports.rs`, буфер нажатий и последнее слово в нём — в `buffer.rs`, что
+//! движок сообщает окну — в `report.rs`.
 
 mod buffer;
 mod ports;
@@ -29,10 +29,8 @@ pub use report::{Action, ActionKind, LayoutInfo};
 use crate::config::{Config, SelectionMethod};
 use crate::keymap::{self, Keymap, Layout};
 use crate::keys::{Stroke, is_char, is_ctrl, is_modifier, is_nav, is_neutral, is_shift};
-use buffer::last_word_start;
+use buffer::Buffer;
 
-/// Сколько последних нажатий помнить.
-pub const BUF_MAX: usize = 256;
 /// Вставку длиннее нельзя «прокрутить» повторным ⇧⇧.
 pub const SEGMENT_MAX: usize = 200;
 /// Касание тачпада короче этого считаем кликом (тап).
@@ -55,12 +53,7 @@ pub struct Engine {
     hooks: Hooks,
     keymap: Keymap,
     enabled: bool,
-    buf: Vec<Stroke>,
-    /// Начало буфера отрезано (BUF_MAX): первое слово в нём может быть
-    /// неполным, и Backspace этого не меняет.
-    cut: bool,
-    /// Буфер — только что вставленный фрагмент целиком.
-    segment: bool,
+    buf: Buffer,
     /// Зажатые физические клавиши.
     down: HashSet<KeyCode>,
     /// «Чистое» нажатие Shift: в этот момент больше ничего не зажато.
@@ -101,9 +94,7 @@ impl Engine {
             hooks,
             keymap: Keymap::default(),
             enabled: true,
-            buf: Vec::new(),
-            cut: false,
-            segment: false,
+            buf: Buffer::default(),
             down: HashSet::new(),
             shift_press: None,
             first_tap: None,
@@ -280,7 +271,6 @@ impl Engine {
             self.typed(key, held.shift);
         } else if key == KeyCode::KEY_BACKSPACE {
             self.selection_valid = false;
-            self.segment = false;
             self.buf.pop();
         } else {
             // Стрелки, Home/End, Enter, Tab, Esc, Delete, F1…
@@ -320,9 +310,7 @@ impl Engine {
 
     fn typed(&mut self, key: KeyCode, shift: bool) {
         self.selection_valid = false;
-        self.segment = false;
-        let word_start = self.buf.last().is_none_or(|s| s.key == KeyCode::KEY_SPACE);
-        if key != KeyCode::KEY_SPACE && (self.layout_dirty || word_start) {
+        if key != KeyCode::KEY_SPACE && (self.layout_dirty || self.buf.at_word_start()) {
             self.layout = self.current_layout();
             self.layout_dirty = false;
         }
@@ -347,11 +335,6 @@ impl Engine {
             shift,
             layout: self.layout,
         });
-        if self.buf.len() > BUF_MAX {
-            let extra = self.buf.len() - BUF_MAX;
-            self.buf.drain(..extra);
-            self.cut = true;
-        }
     }
 
     fn clear_taps(&mut self) {
@@ -365,8 +348,6 @@ impl Engine {
             debug!("буфер сброшен: {why}");
         }
         self.buf.clear();
-        self.cut = false;
-        self.segment = false;
     }
 
     fn current_layout(&mut self) -> Option<usize> {
@@ -400,24 +381,20 @@ impl Engine {
     }
 
     fn fix_word(&mut self) -> Result<()> {
-        let undo = self.segment;
-        let start = if self.segment {
-            0
-        } else {
-            match last_word_start(&self.buf, self.cut, self.cfg.max_word_len) {
-                Ok(start) => start,
-                Err(why) => {
-                    debug!("⇧⇧: {why}");
-                    return Ok(());
-                }
+        let undo = self.buf.is_segment();
+        let start = match self.buf.fix_start(self.cfg.max_word_len) {
+            Ok(start) => start,
+            Err(why) => {
+                debug!("⇧⇧: {why}");
+                return Ok(());
             }
         };
         // Слово вместе с пробелами после него.
-        let count = self.buf.len() - start;
-        let source = self.buf[start].layout;
+        let count = self.buf.strokes().len() - start;
+        let source = self.buf.strokes()[start].layout;
         let target = self.next_layout(source)?;
         if let Some(t) = target
-            && self.has_dead_key(t, &self.buf[start..])
+            && self.has_dead_key(t, &self.buf.strokes()[start..])
         {
             // Мёртвая клавиша напечатает не символ, а часть следующего: слово
             // вышло бы другим, а повторный ⇧⇧ стёр бы лишнее.
@@ -429,10 +406,8 @@ impl Engine {
         }
         self.switch(target)?;
         self.keys.backspace(count)?;
-        self.keys.type_strokes(&self.buf[start..])?;
-        for stroke in &mut self.buf[start..] {
-            stroke.layout = target;
-        }
+        self.keys.type_strokes(&self.buf.strokes()[start..])?;
+        self.buf.retyped(start, target);
         self.layout = target;
         self.layout_dirty = target.is_none();
         let kind = if undo {
@@ -573,9 +548,7 @@ impl Engine {
         self.selection_ignore_until = (self.hooks.clock)() + SELF_CHANGE_GRACE;
         match plan {
             Some(strokes) if strokes.len() <= SEGMENT_MAX => {
-                self.buf = strokes; // повторный ⇧⇧ вернёт как было
-                self.cut = false;
-                self.segment = true;
+                self.buf.set_segment(strokes); // повторный ⇧⇧ вернёт как было
             }
             _ => self.reset("выделение заменено"),
         }
