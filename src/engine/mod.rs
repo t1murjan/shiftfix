@@ -6,8 +6,10 @@
 //!
 //! Здесь — разбор событий и исправление; через что движок нажимает клавиши,
 //! переключает раскладку, читает выделение и спрашивает службу (`Hooks`) —
-//! в `ports.rs`, что он сообщает окну — в `report.rs`.
+//! в `ports.rs`, где в буфере последнее слово — в `buffer.rs`, что движок
+//! сообщает окну — в `report.rs`.
 
+mod buffer;
 mod ports;
 mod report;
 #[cfg(test)]
@@ -27,6 +29,7 @@ pub use report::{Action, ActionKind, LayoutInfo};
 use crate::config::{Config, SelectionMethod};
 use crate::keymap::{self, Keymap, Layout};
 use crate::keys::{Stroke, is_char, is_ctrl, is_modifier, is_nav, is_neutral, is_shift};
+use buffer::last_word_start;
 
 /// Сколько последних нажатий помнить.
 pub const BUF_MAX: usize = 256;
@@ -401,29 +404,13 @@ impl Engine {
         let start = if self.segment {
             0
         } else {
-            let mut end = self.buf.len();
-            while end > 0 && self.buf[end - 1].key == KeyCode::KEY_SPACE {
-                end -= 1;
+            match last_word_start(&self.buf, self.cut, self.cfg.max_word_len) {
+                Ok(start) => start,
+                Err(why) => {
+                    debug!("⇧⇧: {why}");
+                    return Ok(());
+                }
             }
-            let mut start = end;
-            while start > 0 && self.buf[start - 1].key != KeyCode::KEY_SPACE {
-                start -= 1;
-            }
-            if start == end {
-                debug!("⇧⇧: после пробелов нет слова");
-                return Ok(());
-            }
-            if start == 0 && self.cut {
-                // Начало слова вытеснено из буфера, а исправить только хвост —
-                // исправить полслова.
-                debug!("⇧⇧: слово не поместилось в буфер, пропускаю");
-                return Ok(());
-            }
-            if end - start > self.cfg.max_word_len {
-                debug!("⇧⇧: слово длиннее max_word_len, пропускаю");
-                return Ok(());
-            }
-            start
         };
         // Слово вместе с пробелами после него.
         let count = self.buf.len() - start;
