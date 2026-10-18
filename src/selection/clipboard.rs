@@ -8,6 +8,12 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
+use anyhow::Result;
+use evdev::KeyCode;
+use log::{debug, warn};
+
+use crate::config::Config;
+use crate::engine::Keys;
 use crate::sys::env;
 
 pub(super) const TEXT_TYPES: [&str; 5] = [
@@ -29,7 +35,7 @@ const FILE_MARKERS: [&str; 3] = [
 
 /// Что вернуть в буфер обмена после вставки.
 #[derive(Debug, PartialEq, Eq)]
-pub enum Restore {
+enum Restore {
     /// Буфер был пуст или в нём пароль — очистить.
     Clear,
     /// Вернуть данные этого типа.
@@ -37,7 +43,7 @@ pub enum Restore {
 }
 
 /// Выбрать тип для возврата по списку типов буфера обмена.
-pub fn restore_plan(types: &[String], gnome: bool) -> Restore {
+fn restore_plan(types: &[String], gnome: bool) -> Restore {
     let find = |wanted: &str| types.iter().find(|t| t.eq_ignore_ascii_case(wanted));
     if find(SECRET).is_some() {
         return Restore::Clear;
@@ -68,13 +74,76 @@ pub fn restore_plan(types: &[String], gnome: bool) -> Restore {
         .map_or(Restore::Clear, |t| Restore::Type(t.clone()))
 }
 
-pub(super) fn is_gnome() -> bool {
+/// Буфер обмена через внешнюю программу: wl-clipboard или xclip.
+pub(super) trait Clipboard {
+    /// Тип, в котором кладётся вставляемый текст.
+    const TEXT: &str;
+    /// Типы содержимого; `None` — буфер обмена пуст.
+    fn types(&self) -> Option<Vec<String>>;
+    fn read(&self, mime: &str) -> Option<Vec<u8>>;
+    fn copy(&self, data: &[u8], mime: &str) -> Result<()>;
+    /// Очистить после вставки (буфер был пуст или в нём был пароль).
+    fn clear(&self) -> Result<()>;
+}
+
+/// Как вставлять: настройки из конфига.
+pub(super) struct Paste {
+    keys: Vec<KeyCode>,
+    restore: bool,
+    restore_delay: Duration,
+}
+
+impl Paste {
+    pub fn new(cfg: &Config) -> Self {
+        Paste {
+            keys: cfg.paste_keys.clone(),
+            restore: cfg.restore_clipboard,
+            restore_delay: cfg.paste_restore,
+        }
+    }
+
+    /// Положить текст в буфер обмена, нажать «вставить» и вернуть прежнее
+    /// содержимое буфера.
+    pub fn run<C: Clipboard>(&self, clip: &C, text: &str, keys: &mut dyn Keys) -> Result<()> {
+        let saved = self.restore.then(|| {
+            let plan = match clip.types() {
+                None => Restore::Clear,
+                Some(types) => restore_plan(&types, is_gnome()),
+            };
+            match plan {
+                Restore::Type(mime) => match clip.read(&mime) {
+                    Some(data) => (Restore::Type(mime), data),
+                    None => (Restore::Clear, Vec::new()),
+                },
+                Restore::Clear => (Restore::Clear, Vec::new()),
+            }
+        });
+        clip.copy(text.as_bytes(), C::TEXT)?;
+        if !wait_until(|| clip.read(C::TEXT), text.as_bytes()) {
+            warn!("буфер обмена не обновился вовремя, вставляю всё равно");
+        }
+        keys.combo(&self.keys)?;
+        // Приложение забирает данные асинхронно — не подменять буфер раньше времени.
+        thread::sleep(self.restore_delay);
+        match saved {
+            Some((Restore::Type(mime), data)) => clip.copy(&data, &mime)?,
+            Some((Restore::Clear, _)) => {
+                debug!("буфер обмена очищен (был пуст или в нём был пароль)");
+                clip.clear()?;
+            }
+            None => {}
+        }
+        Ok(())
+    }
+}
+
+fn is_gnome() -> bool {
     env::desktop().contains("gnome")
 }
 
 /// Подождать, пока буфер обмена действительно получит `data`: копирующая
 /// программа уходит в фон раньше, чем композитор объявит новое содержимое.
-pub(super) fn wait_until(read: impl Fn() -> Option<Vec<u8>>, data: &[u8]) -> bool {
+fn wait_until(read: impl Fn() -> Option<Vec<u8>>, data: &[u8]) -> bool {
     let deadline = Instant::now() + Duration::from_millis(500);
     while Instant::now() < deadline {
         if read().is_some_and(|got| got == data) {

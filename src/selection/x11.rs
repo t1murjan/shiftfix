@@ -2,18 +2,15 @@
 //! или XWayland — слежение через XFixes, чтение и вставка через xclip.
 
 use std::sync::mpsc::Sender;
-use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
-use evdev::KeyCode;
-use log::warn;
 use x11rb::connection::Connection as _;
 use x11rb::protocol::Event;
 use x11rb::protocol::xfixes::{ConnectionExt as _, SelectionEventMask};
 use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, CreateWindowAux, WindowClass};
 
-use super::clipboard::{Restore, UTF8, is_gnome, restore_plan, wait_until};
+use super::clipboard::{Clipboard, Paste, UTF8};
 use crate::config::Config;
 use crate::daemon::Msg;
 use crate::engine::{Keys, Selection};
@@ -21,23 +18,19 @@ use crate::sys::proc::{TIMEOUT, feed, run};
 use crate::sys::x11::connect;
 
 pub struct XClipboard {
-    paste_keys: Vec<KeyCode>,
-    restore: bool,
-    restore_delay: Duration,
+    paste: Paste,
     xclip: String,
 }
 
 impl XClipboard {
     pub fn new(cfg: &Config, xclip: &str) -> Self {
         XClipboard {
-            paste_keys: cfg.paste_keys.clone(),
-            restore: cfg.restore_clipboard,
-            restore_delay: cfg.paste_restore,
+            paste: Paste::new(cfg),
             xclip: xclip.into(),
         }
     }
 
-    fn read(&self, selection: &str, target: &str, timeout: Duration) -> Option<Vec<u8>> {
+    fn read_from(&self, selection: &str, target: &str, timeout: Duration) -> Option<Vec<u8>> {
         let out = run(
             &self.xclip,
             &["-o", "-selection", selection, "-t", target],
@@ -46,9 +39,13 @@ impl XClipboard {
         .ok()?;
         out.ok.then_some(out.stdout)
     }
+}
 
-    fn targets(&self) -> Option<Vec<String>> {
-        let data = self.read("clipboard", "TARGETS", Duration::from_secs(1))?;
+impl Clipboard for XClipboard {
+    const TEXT: &str = "UTF8_STRING";
+
+    fn types(&self) -> Option<Vec<String>> {
+        let data = self.read_from("clipboard", "TARGETS", Duration::from_secs(1))?;
         Some(
             String::from_utf8_lossy(&data)
                 .lines()
@@ -59,6 +56,10 @@ impl XClipboard {
         )
     }
 
+    fn read(&self, target: &str) -> Option<Vec<u8>> {
+        self.read_from("clipboard", target, TIMEOUT)
+    }
+
     fn copy(&self, data: &[u8], target: &str) -> Result<()> {
         // xclip уходит в фон и отдаёт данные, пока буфер не займёт кто-то другой.
         feed(
@@ -67,46 +68,23 @@ impl XClipboard {
             data,
         )
     }
+
+    /// Очистить буфер X11 нельзя без владельца — кладём пустую строку.
+    fn clear(&self) -> Result<()> {
+        self.copy(b"", Self::TEXT)
+    }
 }
 
 impl Selection for XClipboard {
     fn read_primary(&mut self) -> Option<String> {
         ["UTF8_STRING", UTF8, "STRING"]
             .iter()
-            .find_map(|target| self.read("primary", target, TIMEOUT))
+            .find_map(|target| self.read_from("primary", target, TIMEOUT))
             .map(|data| String::from_utf8_lossy(&data).into_owned())
     }
 
     fn paste(&mut self, text: &str, keys: &mut dyn Keys) -> Result<()> {
-        let saved = if self.restore {
-            let plan = match self.targets() {
-                None => Restore::Clear,
-                Some(targets) => restore_plan(&targets, is_gnome()),
-            };
-            Some(match plan {
-                Restore::Type(target) => match self.read("clipboard", &target, TIMEOUT) {
-                    Some(data) => (Restore::Type(target), data),
-                    None => (Restore::Clear, Vec::new()),
-                },
-                Restore::Clear => (Restore::Clear, Vec::new()),
-            })
-        } else {
-            None
-        };
-        self.copy(text.as_bytes(), "UTF8_STRING")?;
-        let read = || self.read("clipboard", "UTF8_STRING", Duration::from_secs(1));
-        if !wait_until(read, text.as_bytes()) {
-            warn!("буфер обмена не обновился вовремя, вставляю всё равно");
-        }
-        keys.combo(&self.paste_keys)?;
-        thread::sleep(self.restore_delay);
-        match saved {
-            Some((Restore::Type(target), data)) => self.copy(&data, &target)?,
-            // Очистить буфер X11 нельзя без владельца — кладём пустую строку.
-            Some((Restore::Clear, _)) => self.copy(b"", "UTF8_STRING")?,
-            None => {}
-        }
-        Ok(())
+        self.paste.run(self, text, keys)
     }
 }
 
