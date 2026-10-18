@@ -9,7 +9,6 @@ mod tests;
 mod theme;
 
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -22,7 +21,7 @@ use crate::devices::Role;
 use crate::keymap::norm_layout;
 use crate::keys::parse_keys;
 use crate::sys::env;
-use file::{merge_table, write_atomic};
+use file::merge_table;
 pub use theme::{ThemeMode, ThemeSettings};
 
 /// Конфиг по умолчанию с комментариями: его печатает `shiftfix --print-config`.
@@ -100,52 +99,39 @@ impl Settings {
         toml::from_str(&text).with_context(|| format!("{}: неверное значение", path.display()))
     }
 
-    /// Записать, сохранив комментарии и порядок строк файла. Нет файла —
-    /// основа DEFAULT_CONFIG; файл не читается или не разбирается — `Err`, и
-    /// файл остаётся как был.
+    /// Записать, сохранив комментарии и порядок строк файла (см. `file::edit`:
+    /// битый файл не перезаписывается).
     pub fn save(&self, path: &Path) -> Result<()> {
-        let original = match fs::read_to_string(path) {
-            Ok(text) => Some(text),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-            Err(err) => {
-                return Err(err).with_context(|| format!("не читается {}", path.display()));
-            }
-        };
-        let mut doc: toml_edit::DocumentMut = original
-            .as_deref()
-            .unwrap_or(DEFAULT_CONFIG)
-            .parse()
-            .with_context(|| format!("{}: ошибка TOML", path.display()))?;
         let fresh: toml_edit::DocumentMut = toml::to_string(self)?
             .parse()
             .context("сериализация конфига")?;
-        for (key, item) in fresh.iter() {
-            if key == "devices" {
-                continue;
-            }
-            if let Some(table) = item.as_table() {
-                // [theme]: слить, чтобы не терять комментарии внутри таблицы.
-                merge_table(&mut doc, key, table);
-                continue;
-            }
-            match doc.get_mut(key) {
-                Some(slot) if slot.is_value() => file::set_value(slot, item),
-                _ => {
-                    doc.insert(key, item.clone());
+        file::edit(path, |doc| {
+            for (key, item) in fresh.iter() {
+                if key == "devices" {
+                    continue;
+                }
+                if let Some(table) = item.as_table() {
+                    // [theme]: слить, чтобы не терять комментарии внутри таблицы.
+                    merge_table(doc, key, table);
+                    continue;
+                }
+                match doc.get_mut(key) {
+                    Some(slot) if slot.is_value() => file::set_value(slot, item),
+                    _ => {
+                        doc.insert(key, item.clone());
+                    }
                 }
             }
-        }
-        // [devices] заменяется целиком: удалённая роль устройства должна исчезнуть.
-        let mut devices = toml_edit::Table::new();
-        for (key, role) in &self.devices {
-            devices.insert(key, toml_edit::value(role.as_str()));
-        }
-        if let Some(old) = doc.get("devices").and_then(toml_edit::Item::as_table) {
-            *devices.decor_mut() = old.decor().clone();
-        }
-        doc.insert("devices", toml_edit::Item::Table(devices));
-
-        write_atomic(path, &doc.to_string())
+            // [devices] заменяется целиком: удалённая роль устройства должна исчезнуть.
+            let mut devices = toml_edit::Table::new();
+            for (key, role) in &self.devices {
+                devices.insert(key, toml_edit::value(role.as_str()));
+            }
+            if let Some(old) = doc.get("devices").and_then(toml_edit::Item::as_table) {
+                *devices.decor_mut() = old.decor().clone();
+            }
+            doc.insert("devices", toml_edit::Item::Table(devices));
+        })
     }
 }
 

@@ -1,14 +1,12 @@
 //! Секция `[theme]`: оформление окна shiftfix-gui. Служба её не читает.
 
-use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use log::warn;
 use serde::{Deserialize, Serialize};
 
-use super::DEFAULT_CONFIG;
-use super::file::{merge_table, write_atomic};
+use super::file::merge_table;
 
 /// Режим оформления окна.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -92,30 +90,21 @@ impl ThemeSettings {
             .unwrap_or_default())
     }
 
-    /// Записать только `[theme]`, остальной файл не трогать. Нет файла — основа
-    /// DEFAULT_CONFIG; файл не разбирается — `Err`, и файл остаётся как был.
+    /// Записать только `[theme]`, остальной файл не трогать (см. `file::edit`:
+    /// нет файла — основа DEFAULT_CONFIG, битый файл не перезаписывается).
     pub fn save(&self, path: &Path) -> Result<()> {
-        let original = match fs::read_to_string(path) {
-            Ok(text) => Some(text),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-            Err(err) => {
-                return Err(err).with_context(|| format!("не читается {}", path.display()));
-            }
-        };
-        let mut doc: toml_edit::DocumentMut = original
-            .as_deref()
-            .unwrap_or(DEFAULT_CONFIG)
-            .parse()
-            .with_context(|| format!("{}: ошибка TOML", path.display()))?;
         let fresh: toml_edit::DocumentMut = toml::to_string(self)?
             .parse()
             .context("сериализация темы")?;
-        merge_table(&mut doc, "theme", fresh.as_table());
-        let text = doc.to_string();
-        if original.as_deref() == Some(text.as_str()) {
-            return Ok(());
-        }
-        write_atomic(path, &text)
+        super::file::edit(path, |doc| merge_table(doc, "theme", fresh.as_table()))
+    }
+
+    /// Задан ли в файле `theme.mode` — для переноса режима из старого файла
+    /// окна `gui-theme`. Нет файла — `false`; файл не читается или не
+    /// разбирается — `Err`.
+    pub fn has_mode(path: &Path) -> Result<bool> {
+        let table = super::file::read(path)?.map(|(_, table)| table);
+        Ok(table.is_some_and(|t| t.get("theme").and_then(|v| v.get("mode")).is_some()))
     }
 }
 

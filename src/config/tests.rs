@@ -1,3 +1,5 @@
+use std::fs;
+
 use super::*;
 use crate::testutil::TempDir;
 
@@ -47,6 +49,7 @@ fn default_text_matches_defaults() {
         ThemeSettings::load(&path).unwrap(),
         ThemeSettings::default()
     );
+    assert!(ThemeSettings::has_mode(&path).unwrap());
     Config::load(&path).unwrap();
 }
 
@@ -175,6 +178,7 @@ fn old_config_without_theme() {
             ThemeSettings::load(&path).unwrap(),
             ThemeSettings::default()
         );
+        assert!(!ThemeSettings::has_mode(&path).unwrap());
         Config::from_settings(settings).unwrap();
         Config::load(&path).unwrap();
     }
@@ -314,6 +318,7 @@ fn theme_save_without_file_starts_from_default() {
     // со всеми комментариями.
     let dir = TempDir::new("config-theme-new");
     let path = dir.join("shiftfix").join("config.toml");
+    assert!(!ThemeSettings::has_mode(&path).unwrap());
     let theme = ThemeSettings {
         mode: ThemeMode::Dark,
         dark_palette: "nord".into(),
@@ -386,6 +391,7 @@ fn save_refuses_broken_file() {
         assert_eq!(fs::read(&path).unwrap(), bytes, "{tag}");
         assert!(!file::tmp_path(&path).exists(), "{tag}");
         assert!(ThemeSettings::load(&path).is_err(), "{tag}");
+        assert!(ThemeSettings::has_mode(&path).is_err(), "{tag}");
         assert!(Settings::load(&path).is_err(), "{tag}");
     }
 }
@@ -411,8 +417,12 @@ fn settings_save_merges_theme() {
     settings.devices.remove("1:2 mouse");
     settings.save(&path).unwrap();
     let saved = fs::read_to_string(&path).unwrap();
+    // Повторное сохранение: тот же текст, файл не переписывается.
+    use std::os::unix::fs::MetadataExt;
+    let inode = fs::metadata(&path).unwrap().ino();
     settings.save(&path).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), saved);
+    assert_eq!(fs::metadata(&path).unwrap().ino(), inode);
 
     assert!(
         saved.contains("# мой комментарий к теме\nmode = \"dark\" # ночью\n"),

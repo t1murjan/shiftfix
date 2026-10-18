@@ -2,21 +2,50 @@
 //! атомарная замена файла.
 
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+use super::DEFAULT_CONFIG;
+
+/// Текст конфига; нет файла — `None`.
+fn read_text(path: &Path) -> Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).with_context(|| format!("не читается {}", path.display())),
+    }
+}
+
 /// Прочитать конфиг: текст и разобранная таблица. Нет файла — `None`.
 pub(super) fn read(path: &Path) -> Result<Option<(String, toml::Table)>> {
-    if !path.exists() {
+    let Some(text) = read_text(path)? else {
         return Ok(None);
-    }
-    let text =
-        fs::read_to_string(path).with_context(|| format!("не читается {}", path.display()))?;
+    };
     let table = text
         .parse()
         .with_context(|| format!("{}: ошибка TOML", path.display()))?;
     Ok(Some((text, table)))
+}
+
+/// Правка конфига с сохранением комментариев: `change` меняет документ, файл
+/// пишется, только если текст изменился. Нет файла — основа DEFAULT_CONFIG;
+/// файл не читается или не разбирается — `Err`, и файл остаётся как был:
+/// собрать его заново значило бы потерять всё, чего нет в правке.
+pub(super) fn edit(path: &Path, change: impl FnOnce(&mut toml_edit::DocumentMut)) -> Result<()> {
+    let original = read_text(path)?;
+    let mut doc: toml_edit::DocumentMut = original
+        .as_deref()
+        .unwrap_or(DEFAULT_CONFIG)
+        .parse()
+        .with_context(|| format!("{}: ошибка TOML", path.display()))?;
+    change(&mut doc);
+    let text = doc.to_string();
+    if original.as_deref() == Some(text.as_str()) {
+        return Ok(());
+    }
+    write_atomic(path, &text)
 }
 
 /// Записать в `slot` новое значение, оставив комментарии над строкой и после неё.
@@ -79,7 +108,7 @@ pub(super) fn tmp_path(path: &Path) -> PathBuf {
 /// Атомарная запись: временный файл рядом с настоящим и с его правами, затем rename.
 /// Перед rename данные сбрасываются на диск: иначе после сбоя питания на месте
 /// конфига мог бы остаться пустой файл.
-pub(super) fn write_atomic(path: &Path, text: &str) -> Result<()> {
+fn write_atomic(path: &Path, text: &str) -> Result<()> {
     use std::io::Write;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 

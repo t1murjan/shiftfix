@@ -1,7 +1,6 @@
 //! Перенос режима окна из старого файла `gui-theme` (до версии 0.4) в `[theme]`.
 
 use std::fs;
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use shiftfix::config::{ThemeMode, ThemeSettings};
@@ -46,19 +45,13 @@ pub fn migrate_legacy(config: &Path, theme: &mut ThemeSettings) {
     let Ok(text) = fs::read_to_string(&legacy) else {
         return;
     };
-    let raw = match fs::read_to_string(config) {
-        Ok(text) => Some(text),
-        Err(err) if err.kind() == ErrorKind::NotFound => None,
+    let (config_ok, has_mode) = match ThemeSettings::has_mode(config) {
+        Ok(has_mode) => (true, has_mode),
         Err(err) => {
-            log::warn!("gui-theme не перенесён: {}: {err}", config.display());
-            return;
+            log::warn!("gui-theme не перенесён: {err:#}");
+            (false, false)
         }
     };
-    let table = raw.as_deref().map(str::parse::<toml::Table>);
-    let config_ok = table.as_ref().is_none_or(Result::is_ok);
-    let has_mode = table
-        .and_then(Result::ok)
-        .is_some_and(|t| t.get("theme").and_then(|v| v.get("mode")).is_some());
     let remove = || {
         if let Err(err) = fs::remove_file(&legacy) {
             log::warn!("не удалён {}: {err}", legacy.display());
