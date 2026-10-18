@@ -234,7 +234,7 @@ impl Daemon {
             self.engine.set_backend(backend::make(&cfg));
         }
         self.engine
-            .set_clip(selection::make(&cfg, &self.selection_active));
+            .set_selection(selection::make(&cfg, &self.selection_active));
         self.engine.set_config(cfg.clone());
         self.registry.apply(&cfg);
         self.cfg = cfg;

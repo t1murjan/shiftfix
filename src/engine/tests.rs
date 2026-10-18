@@ -141,9 +141,9 @@ impl Backend for FakeBackend {
     }
 }
 
-struct FakeClip(Rc<RefCell<World>>, Rc<Cell<f64>>);
+struct FakeSelection(Rc<RefCell<World>>, Rc<Cell<f64>>);
 
-impl Selection for FakeClip {
+impl Selection for FakeSelection {
     fn read_primary(&mut self) -> Option<String> {
         self.0.borrow().primary.clone()
     }
@@ -204,7 +204,7 @@ impl Rig {
             cfg,
             Box::new(FakeBackend(w.clone())),
             Box::new(FakeKeys(w.clone())),
-            Some(Box::new(FakeClip(w.clone(), clock.clone()))),
+            Some(Box::new(FakeSelection(w.clone(), clock.clone()))),
             Hooks {
                 caps_on: Box::new(move || cw.borrow().caps),
                 clock: Box::new(move || ck.get()),

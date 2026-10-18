@@ -48,7 +48,7 @@ pub struct Engine {
     cfg: Config,
     backend: Box<dyn Backend>,
     keys: Box<dyn Keys>,
-    clip: Option<Box<dyn Selection>>,
+    selection: Option<Box<dyn Selection>>,
     hooks: Hooks,
     keymap: Keymap,
     enabled: bool,
@@ -68,8 +68,9 @@ pub struct Engine {
     lone_mod: Option<KeyCode>,
     touch_down: HashMap<String, f64>,
     /// В PRIMARY актуальное выделение.
-    sel_valid: bool,
-    sel_ignore_until: f64,
+    selection_valid: bool,
+    /// До этого времени события PRIMARY — эхо нашей вставки.
+    selection_ignore_until: f64,
     /// Раскладка, в которой сейчас набираются буквы.
     layout: Option<usize>,
     layout_dirty: bool,
@@ -86,14 +87,14 @@ impl Engine {
         cfg: Config,
         backend: Box<dyn Backend>,
         keys: Box<dyn Keys>,
-        clip: Option<Box<dyn Selection>>,
+        selection: Option<Box<dyn Selection>>,
         hooks: Hooks,
     ) -> Self {
         Engine {
             cfg,
             backend,
             keys,
-            clip,
+            selection,
             hooks,
             keymap: Keymap::default(),
             enabled: true,
@@ -105,8 +106,8 @@ impl Engine {
             first_tap: None,
             lone_mod: None,
             touch_down: HashMap::new(),
-            sel_valid: false,
-            sel_ignore_until: 0.0,
+            selection_valid: false,
+            selection_ignore_until: 0.0,
             layout: None,
             layout_dirty: true,
             codes: Vec::new(),
@@ -120,12 +121,12 @@ impl Engine {
     }
 
     pub fn selection_enabled(&self) -> bool {
-        self.clip.is_some()
+        self.selection.is_some()
     }
 
-    pub fn set_clip(&mut self, clip: Option<Box<dyn Selection>>) {
-        self.clip = clip;
-        self.sel_valid = false;
+    pub fn set_selection(&mut self, selection: Option<Box<dyn Selection>>) {
+        self.selection = selection;
+        self.selection_valid = false;
     }
 
     pub fn set_config(&mut self, cfg: Config) {
@@ -183,7 +184,7 @@ impl Engine {
         self.clear_taps();
         self.layout_dirty = true;
         if self.enabled {
-            self.sel_valid = false; // клик снимает выделение; новое придёт событием PRIMARY
+            self.selection_valid = false; // клик снимает выделение; новое придёт событием PRIMARY
             self.reset("клик");
         }
     }
@@ -207,8 +208,8 @@ impl Engine {
     }
 
     pub fn primary_changed(&mut self, size: usize) {
-        if self.enabled && (self.hooks.clock)() >= self.sel_ignore_until {
-            self.sel_valid = size > 0;
+        if self.enabled && (self.hooks.clock)() >= self.selection_ignore_until {
+            self.selection_valid = size > 0;
         }
     }
 
@@ -222,7 +223,7 @@ impl Engine {
 
     pub fn set_enabled(&mut self, flag: bool) {
         self.enabled = flag;
-        self.sel_valid = false;
+        self.selection_valid = false;
         self.clear_taps();
         self.layout_dirty = true;
         self.reset(if flag {
@@ -266,7 +267,7 @@ impl Engine {
             let keeps_selection =
                 key == KeyCode::KEY_C || key == KeyCode::KEY_INSERT || (held.shift && is_nav(key));
             if !keeps_selection {
-                self.sel_valid = false;
+                self.selection_valid = false;
             }
             self.reset("сочетание клавиш");
             self.layout_dirty = true;
@@ -275,13 +276,13 @@ impl Engine {
         if is_char(key) {
             self.typed(key, held.shift);
         } else if key == KeyCode::KEY_BACKSPACE {
-            self.sel_valid = false;
+            self.selection_valid = false;
             self.segment = false;
             self.buf.pop();
         } else {
             // Стрелки, Home/End, Enter, Tab, Esc, Delete, F1…
             if !(held.shift && is_nav(key)) {
-                self.sel_valid = false; // Shift+стрелки выделение только расширяют
+                self.selection_valid = false; // Shift+стрелки выделение только расширяют
             }
             self.reset("курсор сдвинулся");
             self.layout_dirty = true;
@@ -308,14 +309,14 @@ impl Engine {
             self.lone_mod = None;
             if !is_ctrl(key) {
                 // Одиночный Alt открывает меню, Meta — лаунчер: фокус ушёл.
-                self.sel_valid = false;
+                self.selection_valid = false;
                 self.reset("одиночный Alt/Meta");
             }
         }
     }
 
     fn typed(&mut self, key: KeyCode, shift: bool) {
-        self.sel_valid = false;
+        self.selection_valid = false;
         self.segment = false;
         let word_start = self.buf.last().is_none_or(|s| s.key == KeyCode::KEY_SPACE);
         if key != KeyCode::KEY_SPACE && (self.layout_dirty || word_start) {
@@ -377,11 +378,11 @@ impl Engine {
     pub fn trigger(&mut self) {
         if let Some(reason) = (self.hooks.guard)() {
             info!("⇧⇧ пропущен: {reason}");
-            self.sel_valid = false;
+            self.selection_valid = false;
             self.reset("исправлять нельзя");
             return;
         }
-        let result = if self.sel_valid && self.clip.is_some() {
+        let result = if self.selection_valid && self.selection.is_some() {
             self.fix_selection()
         } else if !self.buf.is_empty() {
             self.fix_word()
@@ -521,11 +522,11 @@ impl Engine {
     }
 
     fn fix_selection(&mut self) -> Result<()> {
-        self.sel_valid = false;
+        self.selection_valid = false;
         let Some(text) = self
-            .clip
+            .selection
             .as_mut()
-            .and_then(|c| c.read_primary())
+            .and_then(|s| s.read_primary())
             .filter(|t| !t.is_empty())
         else {
             debug!("⇧⇧: выделение пустое");
@@ -557,7 +558,7 @@ impl Engine {
         let plan = keymap::plan_strokes(&text, &src_layout, &tgt_layout, caps, tgt);
         // Наша вставка сама меняет PRIMARY и буфер обмена. Отсчёт — и до неё:
         // если она оборвётся ошибкой, второй установки ниже не будет.
-        self.sel_ignore_until = (self.hooks.clock)() + SELF_CHANGE_GRACE;
+        self.selection_ignore_until = (self.hooks.clock)() + SELF_CHANGE_GRACE;
 
         let how = match &plan {
             Some(strokes) if self.cfg.selection_method == SelectionMethod::Type => {
@@ -573,8 +574,8 @@ impl Engine {
                     );
                 }
                 let converted = keymap::convert_text(&text, &src_layout, &tgt_layout);
-                if let Some(clip) = self.clip.as_mut() {
-                    clip.paste(&converted, self.keys.as_mut())?;
+                if let Some(selection) = self.selection.as_mut() {
+                    selection.paste(&converted, self.keys.as_mut())?;
                 }
                 self.switch_from(current, tgt)?;
                 "вставка"
@@ -582,7 +583,7 @@ impl Engine {
         };
         // Вставка и набор бывают долгими (до нескольких секунд), а события
         // PRIMARY за это время движок разберёт только теперь: отсчёт заново.
-        self.sel_ignore_until = (self.hooks.clock)() + SELF_CHANGE_GRACE;
+        self.selection_ignore_until = (self.hooks.clock)() + SELF_CHANGE_GRACE;
         match plan {
             Some(strokes) if strokes.len() <= SEGMENT_MAX => {
                 self.buf = strokes; // повторный ⇧⇧ вернёт как было
