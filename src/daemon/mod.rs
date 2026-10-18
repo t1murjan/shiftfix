@@ -359,7 +359,7 @@ mod tests {
     use evdev::KeyCode;
 
     use super::*;
-    use crate::engine::{Backend, Keys};
+    use crate::engine::{Backend, Keys, Selection};
     use crate::testutil::{NoKeys, TempDir};
 
     struct TwoLayouts(usize);
@@ -493,6 +493,36 @@ mod tests {
                 status.actions[0].to.as_str()
             ),
             ("us", "ru")
+        );
+    }
+
+    #[test]
+    fn reports_selection_watcher_state() {
+        struct NoSelection;
+        impl Selection for NoSelection {
+            fn read_primary(&mut self) -> Option<String> {
+                None
+            }
+            fn paste(&mut self, _: &str, _: &mut dyn Keys) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut d = daemon(std::env::temp_dir().join("shiftfix-none.toml"));
+        d.engine.set_selection(Some(Box::new(NoSelection)));
+        let status = |d: &mut Daemon| {
+            let s = ask(d, Request::Status).1.status.unwrap();
+            (s.selection, s.selection_note, s.selection_via)
+        };
+
+        d.handle(Msg::Selection(Err("нет wl-paste".into())));
+        assert_eq!(status(&mut d), (false, Some("нет wl-paste".into()), None));
+        d.handle(Msg::Selection(Ok("X11")));
+        assert_eq!(status(&mut d), (true, None, Some("X11".into())));
+        d.engine.set_selection(None);
+        assert_eq!(
+            status(&mut d),
+            (false, Some("выключено в настройках".into()), None)
         );
     }
 
