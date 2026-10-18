@@ -358,7 +358,7 @@ fn about(app: &mut App, ui: &mut Ui, p: &Palette) {
 
                 ui.label(RichText::new("Настройки").color(p.weak));
                 ui.label(
-                    RichText::new(shown_path(app.config_path()))
+                    RichText::new(shown_path(app.settings.path()))
                         .monospace()
                         .color(p.text),
                 );

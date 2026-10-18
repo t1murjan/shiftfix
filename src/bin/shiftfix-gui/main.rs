@@ -2,6 +2,7 @@
 //! настройки, инструкция и журнал.
 
 mod app;
+mod edit;
 mod format;
 mod link;
 mod pages;

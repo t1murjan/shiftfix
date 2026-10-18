@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Align, Layout, RichText, Slider, Ui};
 use egui_phosphor::regular as icons;
-use shiftfix::config::{BackendKind, Config, SelectionMethod, Settings};
+use shiftfix::config::{BackendKind, Config, SelectionMethod};
 
 use crate::app::App;
 use crate::format::shown_path;
@@ -63,7 +63,7 @@ fn combo(ui: &mut Ui, id: &str, value: &mut String, options: &[(&str, &str)]) ->
 }
 
 pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
-    let shown = shown_path(app.config_path());
+    let shown = shown_path(app.settings.path());
     page_header(
         ui,
         p,
@@ -84,14 +84,14 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
         });
         ui.add_space(8.0);
     }
-    if let Some(err) = &app.settings_error {
+    if let Some(err) = app.settings.error() {
         ui.horizontal_wrapped(|ui| {
             ui.label(widgets::icon(icons::WARNING, 16.0).color(p.negative));
             ui.label(RichText::new(err).color(p.negative));
         });
         ui.add_space(8.0);
     }
-    let s = &mut app.settings;
+    let s = &mut app.settings.current;
 
     card(ui, p, |ui| {
         card_title(ui, p, icons::ARROW_FAT_LINES_UP, "Двойной Shift");
@@ -238,7 +238,7 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
     super::appearance::show(app, ui, p);
     ui.add_space(12.0);
 
-    let s = &mut app.settings;
+    let s = &mut app.settings.current;
     card(ui, p, |ui| {
         card_title(ui, p, icons::BELL, "Интерфейс");
         toggle_row(
@@ -286,9 +286,9 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
     });
     ui.add_space(18.0);
 
-    let dirty = app.settings != app.saved;
+    let dirty = app.settings.dirty();
     ui.horizontal(|ui| {
-        let valid = Config::from_settings(&app.settings);
+        let valid = Config::from_settings(&app.settings.current);
         if let Err(err) = &valid {
             ui.label(widgets::icon(icons::WARNING, 16.0).color(p.negative));
             ui.label(RichText::new(format!("{err:#}")).color(p.negative));
@@ -309,17 +309,10 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
                 .inner
                 .clicked()
             {
-                app.settings = app.saved.clone();
+                app.settings.revert();
             }
             if widgets::button(ui, p, icons::BROOM, "По умолчанию", false).clicked() {
-                // Роли устройств и оформление сбрасываются отдельно.
-                let devices = std::mem::take(&mut app.settings.devices);
-                let theme = app.settings.theme.clone();
-                app.settings = Settings {
-                    devices,
-                    theme,
-                    ..Settings::default()
-                };
+                app.settings.reset_to_defaults();
                 app.toast(
                     ToastKind::Info,
                     "Значения по умолчанию — нажмите «Сохранить»",

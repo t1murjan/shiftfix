@@ -61,9 +61,9 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             }
             if widgets::button(ui, p, icons::FOLDER_OPEN, "Открыть конфиг", false).clicked()
             {
-                let path = app.config_path().to_owned();
+                let path = app.settings.path().to_owned();
                 if !path.exists() {
-                    let _ = app.saved.save(&path);
+                    let _ = app.settings.saved().save(&path);
                 }
                 if let Err(err) =
                     shiftfix::sys::proc::spawn_detached("xdg-open", &[&path.to_string_lossy()])
