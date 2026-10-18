@@ -15,12 +15,17 @@ pub fn uid() -> u32 {
     unsafe { libc::getuid() }
 }
 
+/// Домашний каталог (`$HOME`).
+pub fn home() -> Option<PathBuf> {
+    env::var_os("HOME").map(PathBuf::from)
+}
+
 /// Каталог настроек: `$XDG_CONFIG_HOME`, иначе `~/.config`.
 pub fn config_home() -> PathBuf {
     env::var_os("XDG_CONFIG_HOME")
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+        .or_else(|| home().map(|home| home.join(".config")))
         .unwrap_or_else(|| PathBuf::from("."))
 }
 

@@ -58,6 +58,19 @@ impl Output {
     pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.stdout).into_owned()
     }
+
+    /// Ошибка с текстом stderr, если команда завершилась неудачно.
+    pub fn check(&self, what: &str) -> Result<()> {
+        if !self.ok {
+            let reason = if self.stderr.is_empty() {
+                "ошибка"
+            } else {
+                &self.stderr
+            };
+            bail!("{what}: {reason}");
+        }
+        Ok(())
+    }
 }
 
 /// Команда запускается своей группой процессов: по таймауту убивается вся
@@ -127,14 +140,7 @@ pub fn run(cmd: &str, args: &[&str], timeout: Duration) -> Result<Output> {
 /// Запустить, а при ненулевом коде вернуть ошибку с текстом stderr.
 pub fn run_text(cmd: &str, args: &[&str]) -> Result<String> {
     let out = run(cmd, args, TIMEOUT)?;
-    if !out.ok {
-        let reason = if out.stderr.is_empty() {
-            "ошибка".to_owned()
-        } else {
-            out.stderr
-        };
-        bail!("{cmd} {}: {reason}", args.join(" "));
-    }
+    out.check(&format!("{cmd} {}", args.join(" ")))?;
     Ok(out.text())
 }
 

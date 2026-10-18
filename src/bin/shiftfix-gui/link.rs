@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use eframe::egui;
 use shiftfix::ipc::{self, Request, Status};
 use shiftfix::service;
@@ -202,20 +202,6 @@ fn unit_text() -> String {
     service::unit_text(&daemon_binary(), service::graphical_target_active())
 }
 
-fn checked(out: proc::Output, what: &str) -> Result<()> {
-    if !out.ok {
-        bail!(
-            "{what}: {}",
-            if out.stderr.is_empty() {
-                "ошибка"
-            } else {
-                &out.stderr
-            }
-        );
-    }
-    Ok(())
-}
-
 fn run_service_action(action: ServiceAction) -> Result<String> {
     let systemd =
         paths::in_path("systemctl") && systemctl(&["show-environment"]).is_ok_and(|o| o.ok);
@@ -223,25 +209,28 @@ fn run_service_action(action: ServiceAction) -> Result<String> {
         return run_without_systemd(action);
     }
     match action {
-        ServiceAction::Start => {
-            checked(systemctl(&["start", UNIT])?, "запуск").map(|()| "Служба запущена".into())
-        }
-        ServiceAction::Stop => {
-            checked(systemctl(&["stop", UNIT])?, "остановка").map(|()| "Служба остановлена".into())
-        }
-        ServiceAction::Restart => checked(systemctl(&["restart", UNIT])?, "перезапуск")
+        ServiceAction::Start => systemctl(&["start", UNIT])?
+            .check("запуск")
+            .map(|()| "Служба запущена".into()),
+        ServiceAction::Stop => systemctl(&["stop", UNIT])?
+            .check("остановка")
+            .map(|()| "Служба остановлена".into()),
+        ServiceAction::Restart => systemctl(&["restart", UNIT])?
+            .check("перезапуск")
             .map(|()| "Служба перезапущена".into()),
-        ServiceAction::Autostart(true) => checked(systemctl(&["enable", UNIT])?, "автозапуск")
+        ServiceAction::Autostart(true) => systemctl(&["enable", UNIT])?
+            .check("автозапуск")
             .map(|()| "Автозапуск включён".into()),
-        ServiceAction::Autostart(false) => checked(systemctl(&["disable", UNIT])?, "автозапуск")
+        ServiceAction::Autostart(false) => systemctl(&["disable", UNIT])?
+            .check("автозапуск")
             .map(|()| "Автозапуск выключен".into()),
         ServiceAction::Install => {
             let path = paths::config_home().join("systemd/user").join(UNIT);
             fs::create_dir_all(path.parent().expect("parent")).context("каталог юнитов systemd")?;
             fs::write(&path, unit_text())
                 .with_context(|| format!("не записывается {}", path.display()))?;
-            checked(systemctl(&["daemon-reload"])?, "daemon-reload")?;
-            checked(systemctl(&["enable", "--now", UNIT])?, "включение службы")?;
+            systemctl(&["daemon-reload"])?.check("daemon-reload")?;
+            systemctl(&["enable", "--now", UNIT])?.check("включение службы")?;
             Ok("Служба установлена и запущена".into())
         }
     }
