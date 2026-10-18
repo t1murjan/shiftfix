@@ -2,10 +2,11 @@
 
 use std::cmp::Reverse;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use log::warn;
 use serde_json::Value;
 
+use super::{is_ours, run_json};
 use crate::engine::{Backend, Keys};
 use crate::keymap::code_from_long_name;
 use crate::sys::proc::run_text;
@@ -18,24 +19,19 @@ pub struct Sway {
 
 impl Default for Sway {
     fn default() -> Self {
-        Sway::with_swaymsg("swaymsg")
+        Sway {
+            swaymsg: "swaymsg".into(),
+            warned: false,
+        }
     }
 }
 
 impl Sway {
-    fn with_swaymsg(swaymsg: &str) -> Self {
-        Sway {
-            swaymsg: swaymsg.into(),
-            warned: false,
-        }
-    }
-
     /// Клавиатура, у которой берём раскладки. «Power Button», «Video Bus» и т. п.
     /// в sway тоже клавиатуры и обычно идут первыми, а раскладки, заданные для
     /// конкретной клавиатуры, есть только у неё, — берём ту, где их больше.
     fn keyboard(&mut self) -> Result<Value> {
-        let out = run_text(&self.swaymsg, &["-t", "get_inputs", "-r"])?;
-        let inputs: Value = serde_json::from_str(&out).context("swaymsg: неожиданный ответ")?;
+        let inputs = run_json(&self.swaymsg, &["-t", "get_inputs", "-r"])?;
         let keyboards: Vec<&Value> = inputs
             .as_array()
             .into_iter()
@@ -43,10 +39,9 @@ impl Sway {
             .filter(|i| i["type"] == "keyboard")
             .collect();
         let count = |kb: &Value| kb["xkb_layout_names"].as_array().map_or(0, Vec::len);
-        let ours = |kb: &Value| kb["name"].as_str().unwrap_or_default().contains("shiftfix");
         let main = keyboards
             .iter()
-            .filter(|kb| !ours(kb))
+            .filter(|kb| !is_ours(kb))
             .min_by_key(|kb| Reverse(count(kb)))
             .copied()
             .ok_or_else(|| anyhow!("swaymsg: клавиатуры не найдены"))?;
@@ -55,7 +50,7 @@ impl Sway {
         if !self.warned
             && keyboards
                 .iter()
-                .any(|kb| ours(kb) && count(kb) < count(main))
+                .any(|kb| is_ours(kb) && count(kb) < count(main))
         {
             self.warned = true;
             warn!(
@@ -64,6 +59,14 @@ impl Sway {
             );
         }
         Ok(main.clone())
+    }
+
+    fn switch(&self, arg: &str) -> Result<()> {
+        run_text(
+            &self.swaymsg,
+            &["input", "type:keyboard", "xkb_switch_layout", arg],
+        )
+        .map(drop)
     }
 }
 
@@ -94,29 +97,18 @@ impl Backend for Sway {
     }
 
     fn set(&mut self, index: usize, _keys: &mut dyn Keys) -> Result<()> {
-        run_text(
-            &self.swaymsg,
-            &[
-                "input",
-                "type:keyboard",
-                "xkb_switch_layout",
-                &index.to_string(),
-            ],
-        )
-        .map(drop)
+        self.switch(&index.to_string())
     }
 
     fn toggle(&mut self, _keys: &mut dyn Keys) -> Result<()> {
-        run_text(
-            &self.swaymsg,
-            &["input", "type:keyboard", "xkb_switch_layout", "next"],
-        )
-        .map(drop)
+        self.switch("next")
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use crate::testutil::{NoKeys, fake_command};
 
@@ -124,7 +116,7 @@ mod tests {
     fn sway_over_swaymsg() {
         // Как в sway: Power Button — тоже клавиатура и идёт первой, а раскладки
         // заданы только настоящей (input "1:1:AT_…" { xkb_layout us,ru }).
-        let (_dir, swaymsg) = fake_command(
+        let (dir, swaymsg) = fake_command(
             "swaymsg",
             r#"if [ "$1 $2" = "-t get_inputs" ]; then
   echo '[{"name":"Power Button","type":"keyboard","xkb_layout_names":["English (US)"],"xkb_active_layout_index":0},
@@ -132,13 +124,22 @@ mod tests {
          {"name":"AT Keyboard","type":"keyboard","xkb_layout_names":["English (US)","Russian"],"xkb_active_layout_index":1},
          {"name":"shiftfix virtual keyboard","type":"keyboard","xkb_layout_names":["English (US)"],"xkb_active_layout_index":0}]'
 else
-  echo '[{"success":true}]'
+  echo "$*" >> "$(dirname "$0")/switched"; echo '[{"success":true}]'
 fi"#,
         );
-        let mut sway = Sway::with_swaymsg(&swaymsg);
+        let mut sway = Sway {
+            swaymsg,
+            warned: false,
+        };
         assert_eq!(sway.layouts().unwrap(), ["us", "ru"]);
         assert_eq!(sway.current().unwrap(), Some(1));
         assert!(sway.warned, "у виртуальной клавиатуры одна раскладка");
         sway.set(1, &mut NoKeys).unwrap();
+        sway.toggle(&mut NoKeys).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("switched")).unwrap(),
+            "input type:keyboard xkb_switch_layout 1\n\
+             input type:keyboard xkb_switch_layout next\n"
+        );
     }
 }

@@ -1,8 +1,9 @@
 //! Hyprland: раскладки и переключение через `hyprctl`.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use serde_json::Value;
 
+use super::{is_ours, run_json};
 use crate::engine::{Backend, Keys};
 use crate::keymap::{code_from_long_name, norm_layout};
 use crate::sys::proc::run_text;
@@ -22,13 +23,12 @@ impl Default for Hyprland {
 impl Hyprland {
     /// Клавиатуры Hyprland; `ours` — вместе с виртуальной клавиатурой shiftfix.
     fn keyboards(&self, ours: bool) -> Result<Vec<Value>> {
-        let out = run_text(&self.hyprctl, &["-j", "devices"])?;
-        let value: Value = serde_json::from_str(&out).context("hyprctl: неожиданный ответ")?;
+        let value = run_json(&self.hyprctl, &["-j", "devices"])?;
         let keyboards: Vec<Value> = value["keyboards"]
             .as_array()
             .into_iter()
             .flatten()
-            .filter(|k| ours || !k["name"].as_str().unwrap_or_default().contains("shiftfix"))
+            .filter(|k| ours || !is_ours(k))
             .cloned()
             .collect();
         if keyboards.is_empty() {
