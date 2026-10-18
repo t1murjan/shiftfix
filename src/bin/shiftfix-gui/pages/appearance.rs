@@ -120,7 +120,7 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
         ui.add_space(10.0);
 
         // Плитки — по списку палитр: новая палитра появится здесь сама.
-        let t = app.settings.theme.clone();
+        let t = app.settings.current.theme.clone();
         let chosen = theme::find(variant.palette_id(&t)).id;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(14.0, 12.0);

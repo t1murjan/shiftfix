@@ -1,7 +1,7 @@
 //! Окно: боковая панель, страницы, всплывающие сообщения.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -10,10 +10,11 @@ use eframe::egui::{
     Sense, Stroke, TextureHandle, TextureOptions, Ui, load::SizedTexture, vec2,
 };
 use egui_phosphor::regular as icons;
-use shiftfix::config::{self, Config, Settings, ThemeMode, ThemeSettings};
+use shiftfix::config::{self, Config, ThemeMode, ThemeSettings};
 use shiftfix::devices::{self, DeviceInfo, Role};
 use shiftfix::ipc::{Request, Status};
 
+use crate::edit::SettingsEdit;
 use crate::format::versions_differ;
 use crate::link::{Link, ServiceAction, Snapshot};
 use crate::pages;
@@ -88,11 +89,8 @@ pub struct App {
     pub link: Link,
     pub snap: Snapshot,
     toasts: Toasts,
-    /// config.toml окна: отсюда читаются настройки и тема, сюда же пишутся.
-    config_path: PathBuf,
-    pub settings: Settings,
-    pub saved: Settings,
-    pub settings_error: Option<String>,
+    /// Правка config.toml окна: отсюда читаются настройки и тема, сюда же пишутся.
+    pub settings: SettingsEdit,
     pub try_text: String,
     pub check_output: Arc<Mutex<Option<String>>>,
     pub checking: bool,
@@ -117,42 +115,29 @@ impl App {
         let logo_image =
             egui::ColorImage::from_rgba_unmultiplied([96, 96], &shiftfix::icon::rgba(96, true));
         let logo = ctx.load_texture("logo", logo_image, TextureOptions::LINEAR);
-        let config_path = config::default_path();
-        let (mut settings, settings_error) = match Settings::load(&config_path) {
-            Ok(s) => (s, None),
-            Err(err) => {
-                // Ошибка в другом параметре — тему всё равно берём из файла.
-                let theme = ThemeSettings::load(&config_path).unwrap_or_default();
-                let settings = Settings {
-                    theme,
-                    ..Settings::default()
-                };
-                (settings, Some(format!("{err:#}")))
-            }
-        };
-        theme::migrate_legacy(&config_path, &mut settings.theme);
+        let mut settings = SettingsEdit::load(config::default_path());
+        let mut theme = settings.current.theme.clone();
+        theme::migrate_legacy(settings.path(), &mut theme);
+        settings.set_theme(theme);
         App {
             page,
             link,
             snap: Snapshot::default(),
             toasts,
-            config_path: config_path.clone(),
-            saved: settings.clone(),
+            theme: theme::ThemeState::new(settings.path().to_owned(), forced_mode, watch),
             settings,
-            settings_error,
             try_text: String::new(),
             check_output: Arc::default(),
             checking: false,
             local_devices: None,
             logo,
-            theme: theme::ThemeState::new(config_path, forced_mode, watch),
             about_focus: false,
         }
     }
 
     /// Режим, в котором окно сейчас: `--theme` или из настроек.
     pub fn theme_mode(&self) -> ThemeMode {
-        self.theme.mode(&self.settings.theme)
+        self.theme.mode(&self.settings.current.theme)
     }
 
     /// Выбор режима в окне (боковая панель и «Оформление»): отменяет `--theme`,
@@ -165,42 +150,37 @@ impl App {
     /// Изменить тему: видно сразу, в файл — чуть позже и только секция `[theme]`.
     /// «Сохранить» на странице настроек тема не включает.
     pub fn set_theme(&mut self, change: impl FnOnce(&mut ThemeSettings)) {
-        let mut theme = self.settings.theme.clone();
+        let mut theme = self.settings.current.theme.clone();
         change(&mut theme);
-        if theme == self.settings.theme {
+        if theme == self.settings.current.theme {
             return;
         }
-        self.saved.theme = theme.clone();
-        self.settings.theme = theme;
+        self.settings.set_theme(theme);
         self.theme.changed();
     }
 
     fn save_theme(&mut self) {
-        if let Some(err) = self.theme.save(&self.settings.theme) {
+        if let Some(err) = self.theme.save(&self.settings.current.theme) {
             self.toast(ToastKind::Error, format!("Тема не сохранилась: {err}"));
         }
     }
 
     /// Цвета кадра: применить к egui, если тема изменилась, и вовремя записать её.
     fn palette(&mut self, ctx: &egui::Context) -> Palette {
-        let p = self.theme.apply(ctx, &self.settings.theme);
+        let p = self.theme.apply(ctx, &self.settings.current.theme);
         if self.theme.time_to_save(ctx) {
             self.save_theme();
         }
         p
     }
 
-    pub fn config_path(&self) -> &Path {
-        &self.config_path
-    }
-
     /// Конфиг службы, если это не файл окна: службу запустили с `--config`.
     /// Окно в него не пишет — только говорит, что служба читает другой файл.
     pub fn service_config(&self) -> Option<PathBuf> {
         let theirs = PathBuf::from(&self.status()?.config_path);
-        let ours = &self.config_path;
+        let ours = self.settings.path();
         let same = theirs.as_os_str().is_empty()
-            || theirs == *ours
+            || theirs == ours
             || fs::canonicalize(&theirs)
                 .is_ok_and(|t| fs::canonicalize(ours).is_ok_and(|o| o == t));
         (!same).then_some(theirs)
@@ -233,7 +213,7 @@ impl App {
             .as_ref()
             .is_none_or(|(at, _)| at.elapsed() > Duration::from_secs(3));
         if stale {
-            let cfg = Config::from_settings(&self.saved).unwrap_or_default();
+            let cfg = Config::from_settings(self.settings.saved()).unwrap_or_default();
             let list = devices::event_nodes()
                 .iter()
                 .filter_map(|p| devices::describe(p, &cfg))
@@ -248,10 +228,19 @@ impl App {
 
     /// Сохранить настройки в файл и попросить службу перечитать их.
     pub fn save_settings(&mut self, success: &'static str) {
-        match self.settings.save(&self.config_path) {
+        let result = self.settings.save();
+        self.after_save(result, success);
+    }
+
+    /// Роль устройства вручную (`None` — снова автоматически).
+    pub fn set_device_role(&mut self, key: &str, role: Option<Role>) {
+        let result = self.settings.set_role(key, role);
+        self.after_save(result, "Роль устройства сохранена");
+    }
+
+    fn after_save(&mut self, result: anyhow::Result<()>, success: &'static str) {
+        match result {
             Ok(()) => {
-                self.saved = self.settings.clone();
-                self.settings_error = None;
                 self.local_devices = None;
                 if self.status().is_some() {
                     self.link.send(Request::Reload, Some(success));
@@ -262,33 +251,8 @@ impl App {
                     );
                 }
             }
-            Err(err) => {
-                self.settings_error = Some(format!("{err:#}"));
-                self.toast(ToastKind::Error, format!("Не сохранилось: {err:#}"));
-            }
+            Err(err) => self.toast(ToastKind::Error, format!("Не сохранилось: {err:#}")),
         }
-    }
-
-    /// Роль устройства вручную (`None` — снова автоматически).
-    pub fn set_device_role(&mut self, key: &str, role: Option<Role>) {
-        // Остальные несохранённые правки настроек не трогаем.
-        let mut on_disk = self.saved.clone();
-        match role {
-            Some(role) => on_disk
-                .devices
-                .insert(key.to_owned(), role.as_str().to_owned()),
-            None => on_disk.devices.remove(key),
-        };
-        match role {
-            Some(role) => self
-                .settings
-                .devices
-                .insert(key.to_owned(), role.as_str().to_owned()),
-            None => self.settings.devices.remove(key),
-        };
-        let edited = std::mem::replace(&mut self.settings, on_disk);
-        self.save_settings("Роль устройства сохранена");
-        self.settings = edited;
     }
 
     pub fn service(&mut self, action: ServiceAction) {
