@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::os::unix::fs::{FileTypeExt, MetadataExt};
+use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -38,13 +38,25 @@ pub fn config_home() -> PathBuf {
 }
 
 /// Каталог сокетов и блокировок: `$XDG_RUNTIME_DIR`, иначе `/run/user/UID`,
-/// иначе временный каталог.
+/// иначе свой каталог во временном.
 pub fn runtime_dir() -> PathBuf {
     if let Some(dir) = non_empty("XDG_RUNTIME_DIR") {
         return dir.into();
     }
     let run = PathBuf::from(format!("/run/user/{}", uid()));
-    if run.is_dir() { run } else { env::temp_dir() }
+    if run.is_dir() {
+        run
+    } else {
+        private_dir(&env::temp_dir())
+    }
+}
+
+/// В общем `/tmp` блокировка и сокет службы другого пользователя мешали бы
+/// нашим, поэтому — `shiftfix-UID` с доступом только себе.
+fn private_dir(tmp: &Path) -> PathBuf {
+    let dir = tmp.join(format!("shiftfix-{}", uid()));
+    let _ = fs::DirBuilder::new().mode(0o700).create(&dir);
+    dir
 }
 
 type Slot<T> = Mutex<Option<(Instant, T)>>;
@@ -303,6 +315,7 @@ pub fn sibling_binary(name: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::UnixListener;
 
     use super::*;
@@ -314,6 +327,17 @@ mod tests {
         assert_eq!(x11_number("unix/:12"), Some(12));
         assert_eq!(x11_number("wayland-0"), None);
         assert_eq!(x11_number(""), None);
+    }
+
+    #[test]
+    fn private_runtime_fallback() {
+        let tmp = crate::testutil::TempDir::new("runtime");
+        let dir = private_dir(&tmp);
+        assert_eq!(dir, tmp.join(format!("shiftfix-{}", uid())));
+        assert_eq!(private_dir(&tmp), dir);
+        let meta = fs::metadata(&dir).unwrap();
+        assert!(meta.is_dir());
+        assert_eq!(meta.permissions().mode() & 0o777, 0o700);
     }
 
     #[test]
