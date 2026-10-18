@@ -1,8 +1,7 @@
-//! Один экземпляр программы: блокировка файла через flock.
+//! Один экземпляр программы: блокировка файла (flock).
 
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::os::fd::AsRawFd;
 use std::path::Path;
 
 /// Взять блокировку `path`, не дожидаясь. `Ok(None)` — её держит другой
@@ -13,7 +12,21 @@ pub fn try_lock(path: &Path) -> io::Result<Option<File>> {
         .write(true)
         .truncate(false)
         .open(path)?;
-    // SAFETY: flock на собственном открытом дескрипторе.
-    let locked = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
-    Ok(locked.then_some(file))
+    Ok(file.try_lock().is_ok().then_some(file))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn second_lock_fails_until_first_is_closed() {
+        let dir = crate::testutil::TempDir::new("lock");
+        let path = dir.join("x.lock");
+        let first = try_lock(&path).unwrap();
+        assert!(first.is_some());
+        assert!(try_lock(&path).unwrap().is_none());
+        drop(first);
+        assert!(try_lock(&path).unwrap().is_some());
+    }
 }
