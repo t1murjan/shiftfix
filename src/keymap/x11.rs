@@ -33,8 +33,7 @@ pub fn watch(on_change: &impl Fn(Keymap)) -> Result<()> {
     conn.flush()?;
     let send = || {
         if let Some(keymap) = fetch(&x) {
-            let list: Vec<&str> = keymap.layouts.iter().map(|l| l.name.as_str()).collect();
-            info!("раскладки из X11: {}", list.join(", "));
+            info!("раскладки из X11: {}", keymap.names());
             on_change(keymap);
         }
     };

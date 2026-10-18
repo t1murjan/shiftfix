@@ -32,6 +32,14 @@ pub struct Keymap {
     pub caps_switches_group: bool,
 }
 
+impl Keymap {
+    /// Имена раскладок через запятую — для журнала и `--check`.
+    pub fn names(&self) -> String {
+        let names: Vec<&str> = self.layouts.iter().map(|l| l.name.as_str()).collect();
+        names.join(", ")
+    }
+}
+
 /// Следить за keymap: при смене списка раскладок композитор пришлёт новую.
 pub fn spawn_watcher(on_change: impl Fn(Keymap) + Send + 'static) {
     let spawned = thread::Builder::new().name("keymap".into()).spawn(move || {

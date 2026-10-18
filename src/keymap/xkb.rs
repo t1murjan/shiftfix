@@ -222,6 +222,10 @@ mod tests {
             keymap.layouts[0].name
         );
         assert_eq!(keymap.layouts[1].name, "Russian");
+        assert_eq!(
+            keymap.names(),
+            format!("{}, Russian", keymap.layouts[0].name)
+        );
         assert!(!keymap.caps_switches_group);
         for (xkb, code) in keymap.layouts.iter().zip(["us", "ru"]) {
             let ours = builtin(code).unwrap();

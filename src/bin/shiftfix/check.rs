@@ -132,10 +132,7 @@ fn layouts(report: &mut Report, cfg: &Config) {
         Err(err) => report.bad(format!("{}: {err:#}", switcher.name())),
     }
     match keymap::wayland::fetch() {
-        Some(keymap) => {
-            let names: Vec<&str> = keymap.layouts.iter().map(|l| l.name.as_str()).collect();
-            report.ok(format!("keymap композитора: {}", names.join(", ")));
-        }
+        Some(keymap) => report.ok(format!("keymap композитора: {}", keymap.names())),
         None => match x11_keymap() {
             Some(names) => report.ok(format!("keymap X11: {names}")),
             None => report.note("keymap недоступна — для выделения будут встроенные таблицы us/ru"),
@@ -148,9 +145,7 @@ fn x11_keymap() -> Option<String> {
     if env::wayland_display().is_some() {
         return None;
     }
-    let keymap = keymap::x11::fetch(&x11::connect().ok()?)?;
-    let list: Vec<&str> = keymap.layouts.iter().map(|l| l.name.as_str()).collect();
-    Some(list.join(", "))
+    Some(keymap::x11::fetch(&x11::connect().ok()?)?.names())
 }
 
 fn session(report: &mut Report) {

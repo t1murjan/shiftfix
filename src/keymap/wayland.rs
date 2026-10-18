@@ -112,8 +112,7 @@ pub(super) fn watch(conn: &Connection, on_change: &impl Fn(Keymap)) {
         if let Some(text) = state.keymap.take() {
             match xkb::from_text(&text) {
                 Some(keymap) => {
-                    let names: Vec<&str> = keymap.layouts.iter().map(|l| l.name.as_str()).collect();
-                    info!("раскладки из keymap: {}", names.join(", "));
+                    info!("раскладки из keymap: {}", keymap.names());
                     on_change(keymap);
                 }
                 None => debug!("keymap не разобрана (нет libxkbcommon?)"),
