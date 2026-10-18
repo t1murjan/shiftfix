@@ -16,11 +16,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use evdev::KeyCode;
 use log::{debug, error, info, warn};
 
 use crate::config::Config;
-use crate::devices::Registry;
+use crate::devices::{Event, Registry};
 use crate::engine::{Engine, Hooks};
 use crate::ipc::{Request, Response, Status};
 use crate::keymap::{self, Keymap};
@@ -33,25 +32,8 @@ use uinput::Injector;
 
 /// Событие для главного цикла службы.
 pub enum Msg {
-    Key {
-        key: KeyCode,
-        value: i32,
-        ts: f64,
-    },
-    Button {
-        value: i32,
-        ts: f64,
-    },
-    Touch {
-        device: Arc<str>,
-        value: i32,
-        ts: f64,
-    },
-    /// Ядро потеряло события (SYN_DROPPED).
-    Dropped,
-    DeviceGone {
-        name: String,
-    },
+    /// От устройств ввода (`devices`).
+    Input(Event),
     /// PRIMARY изменился; размер нового выделения в байтах.
     Primary(usize),
     /// Слежение за PRIMARY: `Ok(чем)` — работает, иначе причина, почему нет.
@@ -103,7 +85,8 @@ pub fn run(path: PathBuf, cfg: Config) -> Result<()> {
     let injector = Injector::new(cfg.key_delay)?;
     let (tx, rx) = mpsc::channel();
 
-    let registry = Registry::new(&cfg, tx.clone());
+    let input_tx = tx.clone();
+    let registry = Registry::new(&cfg, move |event| input_tx.send(Msg::Input(event)).is_ok());
     let mut stats = registry.scan();
     if registry.keyboard_count() == 0 && stats.denied > 0 {
         // Узел, который udev только что создал, бывает недоступен долю секунды.
@@ -290,11 +273,13 @@ impl Daemon {
     /// `false` — пора выходить.
     fn handle(&mut self, msg: Msg) -> bool {
         match msg {
-            Msg::Key { key, value, ts } => self.engine.key(key, value, ts),
-            Msg::Button { value, ts } => self.engine.button(value, ts),
-            Msg::Touch { device, value, ts } => self.engine.touch(&device, value, ts),
-            Msg::Dropped => self.engine.resync(self.registry.held_keys()),
-            Msg::DeviceGone { name } => {
+            Msg::Input(Event::Key { key, value, ts }) => self.engine.key(key, value, ts),
+            Msg::Input(Event::Button { value, ts }) => self.engine.button(value, ts),
+            Msg::Input(Event::Touch { device, value, ts }) => {
+                self.engine.touch(&device, value, ts);
+            }
+            Msg::Input(Event::Dropped) => self.engine.resync(self.registry.held_keys()),
+            Msg::Input(Event::Gone { name }) => {
                 info!("устройство отключено: {name}");
                 self.engine.resync(self.registry.held_keys());
             }
@@ -371,6 +356,8 @@ mod tests {
     use std::fs;
     use std::sync::Mutex;
 
+    use evdev::KeyCode;
+
     use super::*;
     use crate::engine::{Backend, Keys};
     use crate::testutil::{NoKeys, TempDir};
@@ -405,7 +392,7 @@ mod tests {
             ..Config::default()
         };
         let (tx, _rx) = mpsc::channel();
-        let registry = Registry::new(&cfg, tx.clone());
+        let registry = Registry::new(&cfg, |_| true);
         let engine = Engine::new(
             cfg.clone(),
             Box::new(TwoLayouts(0)),
@@ -491,7 +478,7 @@ mod tests {
             (KeyCode::KEY_LEFTSHIFT, 1, 1.35),
             (KeyCode::KEY_LEFTSHIFT, 0, 1.40),
         ] {
-            assert!(d.handle(Msg::Key { key, value, ts }));
+            assert!(d.handle(Msg::Input(Event::Key { key, value, ts })));
         }
         let status = ask(&mut d, Request::Status).1.status.unwrap();
         assert_eq!(
