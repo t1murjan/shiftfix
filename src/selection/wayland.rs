@@ -173,13 +173,11 @@ pub fn watch(tx: &Sender<Msg>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
     use std::fs;
-    use std::path::{Path, PathBuf};
-    use std::rc::Rc;
+    use std::path::Path;
 
+    use super::super::clipboard::testing::App;
     use super::*;
-    use crate::keys::Stroke;
     use crate::testutil::{TempDir, write_script};
 
     /// Фальшивые wl-paste/wl-copy: буферы — файлы `clip`/`primary` и их типы.
@@ -199,31 +197,6 @@ cat > "$d/clip"; printf '%s\n' "$2" > "$d/clip.types""#;
             write_script(dir, "wl-paste", paste),
             write_script(dir, "wl-copy", copy),
         )
-    }
-
-    /// «Приложение»: на Ctrl+V читает текущий буфер обмена.
-    struct App {
-        dir: PathBuf,
-        pasted: Rc<RefCell<Vec<String>>>,
-    }
-
-    impl Keys for App {
-        fn backspace(&mut self, _: usize) -> Result<()> {
-            Ok(())
-        }
-        fn type_strokes(&mut self, _: &[Stroke]) -> Result<()> {
-            Ok(())
-        }
-        fn combo(&mut self, keys: &[KeyCode]) -> Result<()> {
-            assert_eq!(keys, [KeyCode::KEY_LEFTCTRL, KeyCode::KEY_V]);
-            self.pasted
-                .borrow_mut()
-                .push(fs::read_to_string(self.dir.join("clip"))?);
-            Ok(())
-        }
-        fn chord(&mut self, _: &[KeyCode], _: KeyCode, _: usize) -> Result<()> {
-            Ok(())
-        }
     }
 
     fn clipboard(dir: &Path) -> WlClipboard {
@@ -257,13 +230,12 @@ cat > "$d/clip"; printf '%s\n' "$2" > "$d/clip.types""#;
         let mut clip = clipboard(&dir);
         fs::write(dir.join("clip"), [0x89, b'P', b'N', b'G']).unwrap();
         fs::write(dir.join("clip.types"), "image/png\n").unwrap();
-        let pasted = Rc::new(RefCell::new(Vec::new()));
         let mut app = App {
             dir: dir.to_path_buf(),
-            pasted: pasted.clone(),
+            pasted: Vec::new(),
         };
         clip.paste("Привет мир", &mut app).unwrap();
-        assert_eq!(*pasted.borrow(), ["Привет мир"]);
+        assert_eq!(app.pasted, ["Привет мир"]);
         assert_eq!(
             fs::read(dir.join("clip")).unwrap(),
             [0x89, b'P', b'N', b'G']
@@ -276,7 +248,7 @@ cat > "$d/clip"; printf '%s\n' "$2" > "$d/clip.types""#;
         // Пустой буфер обмена после вставки снова пуст.
         fs::remove_file(dir.join("clip")).unwrap();
         clip.paste("ещё", &mut app).unwrap();
-        assert_eq!(pasted.borrow().last().unwrap(), "ещё");
+        assert_eq!(app.pasted.last().unwrap(), "ещё");
         assert!(!dir.join("clip").exists());
 
         // Пароль из менеджера паролей обратно не кладётся.
@@ -287,7 +259,7 @@ cat > "$d/clip"; printf '%s\n' "$2" > "$d/clip.types""#;
         )
         .unwrap();
         clip.paste("и ещё", &mut app).unwrap();
-        assert_eq!(pasted.borrow().last().unwrap(), "и ещё");
+        assert_eq!(app.pasted.last().unwrap(), "и ещё");
         assert!(!dir.join("clip").exists(), "пароль не вернулся в буфер");
     }
 }

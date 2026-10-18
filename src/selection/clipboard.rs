@@ -86,6 +86,40 @@ pub(super) fn wait_until(read: impl Fn() -> Option<Vec<u8>>, data: &[u8]) -> boo
 }
 
 #[cfg(test)]
+pub(super) mod testing {
+    use anyhow::Result;
+    use evdev::KeyCode;
+
+    use crate::engine::Keys;
+    use crate::keys::Stroke;
+
+    /// «Приложение»: на Ctrl+V читает буфер обмена — файл `clip` фальшивых
+    /// wl-clipboard и xclip.
+    pub struct App {
+        pub dir: std::path::PathBuf,
+        pub pasted: Vec<String>,
+    }
+
+    impl Keys for App {
+        fn backspace(&mut self, _: usize) -> Result<()> {
+            Ok(())
+        }
+        fn type_strokes(&mut self, _: &[Stroke]) -> Result<()> {
+            Ok(())
+        }
+        fn combo(&mut self, keys: &[KeyCode]) -> Result<()> {
+            assert_eq!(keys, [KeyCode::KEY_LEFTCTRL, KeyCode::KEY_V]);
+            self.pasted
+                .push(std::fs::read_to_string(self.dir.join("clip"))?);
+            Ok(())
+        }
+        fn chord(&mut self, _: &[KeyCode], _: KeyCode, _: usize) -> Result<()> {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
