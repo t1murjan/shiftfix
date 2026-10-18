@@ -8,7 +8,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use log::{debug, warn};
@@ -42,7 +42,12 @@ pub fn serve(path: PathBuf, tx: Sender<Msg>) -> Result<Socket> {
                         .name("ipc client".into())
                         .spawn(move || handle(stream, &tx));
                 }
-                Err(err) => warn!("IPC: {err}"),
+                Err(err) => {
+                    warn!("IPC: {err}");
+                    // Ошибка бывает постоянной (кончились дескрипторы) —
+                    // не крутиться вхолостую.
+                    thread::sleep(Duration::from_millis(200));
+                }
             }
         }
     })?;
@@ -91,7 +96,6 @@ fn handle(stream: UnixStream, tx: &Sender<Msg>) {
 mod tests {
     use std::path::Path;
     use std::sync::mpsc::Receiver;
-    use std::time::Duration;
 
     use super::*;
     use crate::daemon::Daemon;
