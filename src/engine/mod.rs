@@ -564,7 +564,9 @@ impl Engine {
         self.selection_ignore_until = (self.hooks.clock)() + SELF_CHANGE_GRACE;
         match plan {
             Some(strokes) if strokes.len() <= SEGMENT_MAX => {
-                self.buf.set_segment(strokes); // повторный ⇧⇧ вернёт как было
+                // Повторный ⇧⇧ переведёт фрагмент в следующую раскладку: при
+                // двух раскладках — обратно, при трёх — по кругу.
+                self.buf.set_segment(strokes);
             }
             _ => self.reset("выделение заменено"),
         }
