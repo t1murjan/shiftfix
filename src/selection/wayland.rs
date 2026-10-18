@@ -173,6 +173,7 @@ cat "$d/$sel""#;
         let copy = r#"d="$(dirname "$0")"
 if [ "$1" = "--clear" ]; then rm -f "$d/clip" "$d/clip.types"; exit 0; fi
 [ "$1" = "--type" ] || exit 2
+[ "$2" = image/bmp ] && { echo "не удалось" >&2; exit 1; }
 cat > "$d/clip"; printf '%s\n' "$2" > "$d/clip.types""#;
         (
             write_script(dir, "wl-paste", paste),
@@ -211,10 +212,7 @@ cat > "$d/clip"; printf '%s\n' "$2" > "$d/clip.types""#;
         let mut clip = clipboard(&dir);
         fs::write(dir.join("clip"), [0x89, b'P', b'N', b'G']).unwrap();
         fs::write(dir.join("clip.types"), "image/png\n").unwrap();
-        let mut app = App {
-            dir: dir.to_path_buf(),
-            pasted: Vec::new(),
-        };
+        let mut app = App::new(&dir);
         clip.paste("Привет мир", &mut app).unwrap();
         assert_eq!(app.pasted, ["Привет мир"]);
         assert_eq!(
@@ -242,5 +240,30 @@ cat > "$d/clip"; printf '%s\n' "$2" > "$d/clip.types""#;
         clip.paste("и ещё", &mut app).unwrap();
         assert_eq!(app.pasted.last().unwrap(), "и ещё");
         assert!(!dir.join("clip").exists(), "пароль не вернулся в буфер");
+    }
+
+    #[test]
+    fn restores_clipboard_when_paste_fails() {
+        let dir = TempDir::new("clip-paste-fails");
+        let mut clip = clipboard(&dir);
+        fs::write(dir.join("clip"), "было").unwrap();
+        fs::write(dir.join("clip.types"), format!("{UTF8}\n")).unwrap();
+        let mut app = App::new(&dir);
+        app.broken = true;
+        assert!(clip.paste("стало", &mut app).is_err());
+        assert_eq!(fs::read_to_string(dir.join("clip")).unwrap(), "было");
+    }
+
+    #[test]
+    fn failed_restore_does_not_fail_paste() {
+        // Текст уже вставлен: если прежний буфер не вернуть, движок всё равно
+        // должен переключить раскладку и запомнить исправление.
+        let dir = TempDir::new("clip-restore-fails");
+        let mut clip = clipboard(&dir);
+        fs::write(dir.join("clip"), "BM").unwrap();
+        fs::write(dir.join("clip.types"), "image/bmp\n").unwrap();
+        let mut app = App::new(&dir);
+        clip.paste("Привет", &mut app).unwrap();
+        assert_eq!(app.pasted, ["Привет"]);
     }
 }
