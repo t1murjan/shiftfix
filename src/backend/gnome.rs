@@ -92,18 +92,8 @@ impl Gnome {
         run_text(&self.gsettings, &["get", schema, key])
     }
 
-    fn pairs(&self, key: &str) -> Result<Vec<Source>> {
-        Ok(source_pairs(
-            &self.get("org.gnome.desktop.input-sources", key)?,
-        ))
-    }
-
-    fn sources(&self) -> Result<Vec<Source>> {
-        non_empty(self.pairs("sources")?)
-    }
-
-    /// `sources` и `mru-sources` одним запуском gsettings: `current()` нужен
-    /// в начале каждого слова.
+    /// Источники ввода и `mru-sources` одним запуском gsettings: `current()`
+    /// нужен в начале каждого слова.
     fn sources_and_mru(&self) -> Result<(Vec<Source>, Vec<Source>)> {
         let text = run_text(
             &self.gsettings,
@@ -119,19 +109,31 @@ impl Gnome {
                 _ => {}
             }
         }
-        Ok((non_empty(sources)?, mru))
+        if sources.is_empty() {
+            bail!("в GNOME не настроены источники ввода");
+        }
+        Ok((sources, mru))
     }
 
     /// Порядок источников по `mru-sources` прямо сейчас.
     fn order_now(&self, sources: &[Source]) -> Result<Vec<usize>> {
-        Ok(mru_order(sources, &self.pairs("mru-sources")?))
+        let (_, mru) = self.sources_and_mru()?;
+        Ok(mru_order(sources, &mru))
     }
 
-    fn hotkey(&self) -> Option<(Vec<KeyCode>, KeyCode)> {
+    /// Сочетание переключения источников из настроек GNOME, иначе из конфига.
+    fn hotkey(&self) -> Result<(Vec<KeyCode>, KeyCode)> {
         let text = self
             .get("org.gnome.desktop.wm.keybindings", "switch-input-source")
-            .ok()?;
-        gvariant_strings(&text).iter().find_map(|a| parse_accel(a))
+            .unwrap_or_default();
+        gvariant_strings(&text)
+            .iter()
+            .find_map(|a| parse_accel(a))
+            .or_else(|| {
+                let (&tap, hold) = self.fallback.split_last()?;
+                Some((hold.to_vec(), tap))
+            })
+            .context("GNOME: неизвестно сочетание переключения источников ввода")
     }
 }
 
@@ -141,8 +143,8 @@ impl Backend for Gnome {
     }
 
     fn layouts(&mut self) -> Result<Vec<String>> {
-        Ok(self
-            .sources()?
+        let (sources, _) = self.sources_and_mru()?;
+        Ok(sources
             .iter()
             .map(|(kind, id)| {
                 if kind == "xkb" {
@@ -169,13 +171,7 @@ impl Backend for Gnome {
         if steps == 0 {
             return Ok(());
         }
-        let (hold, tap) = self
-            .hotkey()
-            .or_else(|| {
-                let (&tap, hold) = self.fallback.split_last()?;
-                Some((hold.to_vec(), tap))
-            })
-            .context("GNOME: неизвестно сочетание переключения источников ввода")?;
+        let (hold, tap) = self.hotkey()?;
         // Super+Space N раз при зажатом Super — как в переключателе GNOME.
         keys.chord(&hold, tap, steps)?;
         let deadline = Instant::now() + Duration::from_millis(700);
@@ -210,13 +206,6 @@ fn source_pairs(gvariant: &str) -> Vec<Source> {
         .iter()
         .map(|[kind, id]| (kind.clone(), id.clone()))
         .collect()
-}
-
-fn non_empty(sources: Vec<Source>) -> Result<Vec<Source>> {
-    if sources.is_empty() {
-        bail!("в GNOME не настроены источники ввода");
-    }
-    Ok(sources)
 }
 
 /// Порядок, в котором GNOME перебирает источники: недавние первыми, текущий — нулевой.
@@ -310,7 +299,6 @@ fi"#,
             r#"if [ "$1" = list-recursively ]; then
   echo "org.gnome.desktop.input-sources mru-sources [('xkb', 'ru'), ('xkb', 'us')]"
   echo "org.gnome.desktop.input-sources sources [('xkb', 'us'), ('xkb', 'ru')]"
-elif [ "$3" = mru-sources ]; then echo "[('xkb', 'ru'), ('xkb', 'us')]"
 else echo "@as []"
 fi"#,
         );
@@ -339,8 +327,6 @@ if [ "$1" = list-recursively ]; then
   echo "org.gnome.desktop.input-sources mru-sources $mru"
   echo "org.gnome.desktop.input-sources per-window false"
   echo "org.gnome.desktop.input-sources sources $src"
-elif [ "$3" = sources ]; then echo "$src"
-elif [ "$3" = mru-sources ]; then echo "$mru"
 elif [ "$3" = switch-input-source ]; then echo "['<Super>space', 'XF86Keyboard']"
 fi"#,
         );
@@ -349,13 +335,13 @@ fi"#,
             gsettings,
             fallback: Vec::new(),
         };
-        assert_eq!(gnome.layouts().unwrap(), ["us", "ru"]);
         assert_eq!(gnome.current().unwrap(), Some(1));
         assert_eq!(
             fs::read_to_string(dir.join("calls")).unwrap(),
             "list\n",
             "current() — один запуск gsettings"
         );
+        assert_eq!(gnome.layouts().unwrap(), ["us", "ru"]);
 
         /// Как GNOME Shell: Super+Space делает текущим следующий по MRU источник.
         struct Shell(PathBuf);
