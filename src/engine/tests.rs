@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell, RefMut};
 use std::rc::Rc;
 
+use super::report::LAYOUT_INFO_TTL;
 use super::*;
 use crate::keys::ROW_KEYS;
 

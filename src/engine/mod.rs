@@ -5,23 +5,24 @@
 //! клавиши ещё раз; таблицы для этого не нужны.
 //!
 //! Здесь — разбор событий и исправление; через что движок нажимает клавиши,
-//! переключает раскладку и читает выделение — в `ports.rs`.
+//! переключает раскладку и читает выделение — в `ports.rs`, что он сообщает
+//! окну — в `report.rs`.
 
 mod ports;
+mod report;
 #[cfg(test)]
 mod tests;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, bail};
 use evdev::KeyCode;
 use log::{debug, error, info, warn};
-use serde::{Deserialize, Serialize};
 
 pub use ports::{Backend, Guard, Keys, Selection};
+pub use report::{Action, ActionKind, LayoutInfo};
 
 use crate::config::{Config, SelectionMethod};
 use crate::keymap::{self, Keymap, Layout};
@@ -35,47 +36,6 @@ pub const SEGMENT_MAX: usize = 200;
 const TOUCH_TAP_MAX: f64 = 0.3;
 /// Столько секунд после нашей вставки события PRIMARY не учитываются.
 const SELF_CHANGE_GRACE: f64 = 2.0;
-/// Сколько последних исправлений показывать в GUI.
-const ACTIONS_MAX: usize = 30;
-/// Сколько секунд GUI получает сведения о раскладках из кеша: в GNOME и Hyprland
-/// каждое обращение к переключателю — запуск процесса, а GUI спрашивает часто.
-const LAYOUT_INFO_TTL: f64 = 1.5;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ActionKind {
-    #[default]
-    Word,
-    Selection,
-    /// Повторный ⇧⇧ сразу после исправления выделения.
-    Undo,
-}
-
-/// Одно исправление — для списка в GUI. Текста здесь нет, только длина.
-/// Полей, которых служба не прислала, — по умолчанию, как в `ipc::Status`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Action {
-    /// Unix-время, секунды.
-    pub time: u64,
-    pub kind: ActionKind,
-    pub chars: usize,
-    pub from: String,
-    pub to: String,
-}
-
-/// Сведения о раскладках для GUI; полей, которых служба не прислала, — по
-/// умолчанию, как в `ipc::Status`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct LayoutInfo {
-    pub backend: String,
-    pub codes: Vec<String>,
-    pub current: Option<usize>,
-    /// Таблицы взяты из настоящей keymap, а не встроенные.
-    pub from_keymap: bool,
-    pub error: Option<String>,
-}
 
 #[derive(Clone, Copy)]
 struct Held {
@@ -190,39 +150,6 @@ impl Engine {
     pub fn set_keymap(&mut self, keymap: Keymap) {
         self.keymap = keymap;
         self.info_cache = None;
-    }
-
-    pub fn actions(&self) -> Vec<Action> {
-        self.actions.iter().cloned().collect()
-    }
-
-    /// Раскладки и текущая раскладка — для GUI.
-    pub fn layout_info(&mut self) -> LayoutInfo {
-        let now = (self.clock)();
-        if let Some((at, info)) = &self.info_cache
-            && now - at < LAYOUT_INFO_TTL
-        {
-            return info.clone();
-        }
-        let (codes, current, error) = match self.backend.layouts() {
-            Ok(codes) => (codes, self.current_layout(), None),
-            Err(err) => (Vec::new(), None, Some(format!("{err:#}"))),
-        };
-        // Имя — после layouts(): Auto выбирает переключатель при первом обращении.
-        let backend = self.backend.name().to_owned();
-        let from_keymap = self.keymap_layouts(&codes).is_some();
-        if !codes.is_empty() {
-            self.codes.clone_from(&codes);
-        }
-        let info = LayoutInfo {
-            backend,
-            codes,
-            current,
-            from_keymap,
-            error,
-        };
-        self.info_cache = Some((now, info.clone()));
-        info
     }
 
     // Входящие события.
@@ -679,33 +606,5 @@ impl Engine {
             self.label(Some(tgt))
         );
         Ok(())
-    }
-
-    fn label(&self, index: Option<usize>) -> String {
-        match index {
-            Some(i) => self
-                .codes
-                .get(i)
-                .cloned()
-                .unwrap_or_else(|| format!("№{}", i + 1)),
-            None => "?".into(),
-        }
-    }
-
-    fn record(&mut self, kind: ActionKind, chars: usize, from: Option<usize>, to: Option<usize>) {
-        let time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
-        let action = Action {
-            time,
-            kind,
-            chars,
-            from: self.label(from),
-            to: self.label(to),
-        };
-        if self.actions.len() == ACTIONS_MAX {
-            self.actions.pop_front();
-        }
-        self.actions.push_back(action);
     }
 }
