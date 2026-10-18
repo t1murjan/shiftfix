@@ -16,7 +16,7 @@
 set -euo pipefail
 
 if [[ ${1:-} != --container || $# -ne 4 ]]; then
-    sed -n '2,15s/^# \{0,1\}//p' "$0" >&2
+    awk 'NR > 1 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "$0" >&2
     exit 2
 fi
 if ((EUID != 0)); then
@@ -84,6 +84,8 @@ cp -r "$PROJECT/install.sh" "$PROJECT/uninstall.sh" "$PROJECT/scripts" "$PROJECT
     "$PROJECT/assets" "$SRC/"
 chown -R "$U:$U" "$H/src"
 mkdir -p "$OUT"
+# Журналы прошлого прогона: иначе от переименованных сценариев остались бы старые.
+rm -f -- "${OUT:?}"/*.txt
 
 # ─── Запуск и журнал сценария ───────────────────────────────────────────────
 
@@ -146,10 +148,32 @@ scenario() {
 }
 
 # Поставить в ~/.local/bin «установленную» службу версии $1.
-installed() {
+fake_installed_version() {
     as_user "mkdir -p ~/.local/bin && rm -f ~/.local/bin/shiftfix && printf '%s\n' \
         '#!/bin/bash' '[[ \$1 == --version ]] && { echo \"shiftfix $1\"; exit 0; }' \
         'exec $WORK/build/shiftfix \"\$@\"' >~/.local/bin/shiftfix && chmod 755 ~/.local/bin/shiftfix"
+}
+
+# Сценарий $1: install.sh с выводом через tee, Ctrl+C — как только он начнёт
+# останавливать службу. Ctrl+C в терминале получают все процессы сеанса: install.sh,
+# tee, systemctl.
+interrupted_stop() {
+    local out pid
+    out="$(mktemp)"
+    as_user 'exec setsid bash -c "./install.sh 2>&1 | tee ~/log/tee.out"' >"$out" 2>&1 &
+    for _ in {1..100}; do
+        grep -qs -- '--user stop' "$H/log/systemctl.log" && break
+        sleep 0.1
+    done
+    if pid="$(pgrep -u "$U" -f '^bash ./install.sh' | head -1)" && [[ -n $pid ]]; then
+        pkill -INT -s "$(ps -o sid= -p "$pid" | tr -d ' ')" || true
+    else
+        echo "install.sh не дошёл до остановки службы" >>"$out"
+    fi
+    wait || true
+    sleep 1
+    report "$1" "-" "$out"
+    rm -f "$out"
 }
 
 # ─── Сценарии ───────────────────────────────────────────────────────────────
@@ -157,44 +181,29 @@ installed() {
 scenario 01-install './install.sh'
 scenario 02-same './install.sh'
 as_user 'systemctl --user start shiftfix.service'
-installed 0.3.0
+fake_installed_version 0.3.0
 scenario 03-update './install.sh'
-installed 0.3.0
+fake_installed_version 0.3.0
 as_user 'touch ~/.fakesd/cargo-fail'
 scenario 04-build-fails './install.sh'
 as_user 'rm ~/.fakesd/cargo-fail'
 scenario 05-update-after-fail './install.sh'
-installed 99.0.0
+fake_installed_version 99.0.0
 scenario 06-older-no-terminal './install.sh'
 scenario 07-older-answer-no "printf 'n\n' | script -qec ./install.sh /dev/null"
 scenario 08-older-yes './install.sh --yes'
 as_user 'systemctl --user disable shiftfix.service'
-installed 0.3.0
+fake_installed_version 0.3.0
 scenario 09-autostart-disabled './install.sh'
 as_user 'systemctl --user enable shiftfix.service'
 as_user "rm ~/.local/bin/shiftfix && ln -s $WORK/build/shiftfix ~/.local/bin/shiftfix"
 scenario 10-symlink './install.sh'
 
-# Ctrl+C, пока служба останавливается, а вывод идёт через tee: служба должна
-# подняться снова.
+# Ctrl+C, пока служба останавливается (медленно), а вывод идёт через tee: служба
+# должна подняться снова.
 as_user 'systemctl --user start shiftfix.service; touch ~/.fakesd/slow-stop'
-installed 0.3.0
-out="$(mktemp)"
-as_user 'exec setsid bash -c "./install.sh 2>&1 | tee ~/log/tee.out"' >"$out" 2>&1 &
-for _ in {1..100}; do
-    grep -qs -- '--user stop' "$H/log/systemctl.log" && break
-    sleep 0.1
-done
-# Ctrl+C в терминале получают все процессы сеанса: install.sh, tee, systemctl.
-if pid="$(pgrep -u "$U" -f '^bash ./install.sh' | head -1)" && [[ -n $pid ]]; then
-    pkill -INT -s "$(ps -o sid= -p "$pid" | tr -d ' ')" || true
-else
-    echo "install.sh не дошёл до остановки службы" >>"$out"
-fi
-wait || true
-sleep 1
-report 11-interrupted-stop "-" "$out"
-rm -f "$out"
+fake_installed_version 0.3.0
+interrupted_stop 11-interrupted-stop
 as_user 'rm -f ~/.fakesd/slow-stop'
 
 scenario 12-repair-after-interrupt './install.sh'
