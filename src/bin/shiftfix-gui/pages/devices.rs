@@ -75,9 +75,18 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
 
     // Пока служба не отвечает, а окно ещё не нашло устройства, — пусто, без
     // предупреждения: поиск займёт мгновение.
-    let Some(devices) = app.devices().map(<[DeviceInfo]>::to_vec) else {
+    let Some(mut devices) = app.devices().map(<[DeviceInfo]>::to_vec) else {
         return;
     };
+    // Простой устройства — на момент опроса; досчитываем, чтобы точка гасла
+    // плавно, а не ступеньками раз в 400 мс.
+    let since_poll = app
+        .snap
+        .updated
+        .map_or(0, |t| t.elapsed().as_millis() as u64);
+    for dev in &mut devices {
+        dev.idle_ms = dev.idle_ms.map(|ms| ms + since_poll);
+    }
     if devices.is_empty() {
         card(ui, p, |ui| {
             widgets::empty_state(

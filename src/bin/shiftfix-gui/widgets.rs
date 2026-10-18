@@ -1,5 +1,7 @@
 //! Свои виджеты: карточки, переключатель, клавиши, бейджи, градиент.
 
+use std::time::Duration;
+
 use eframe::egui::text::{LayoutJob, TextFormat};
 use eframe::egui::{
     self, Align, Color32, CornerRadius, FontFamily, FontId, Frame, Layout, Margin, Mesh, Pos2,
@@ -356,7 +358,8 @@ pub fn activity_dot(ui: &mut Ui, p: &Palette, idle_ms: Option<u64>) {
     if glow > 0.0 {
         ui.painter()
             .circle_filled(rect.center(), 7.0, p.positive.gamma_multiply(0.25 * glow));
-        ui.ctx().request_repaint();
+        // Пока гаснет — 20 кадров в секунду хватает, частота монитора ни к чему.
+        ui.ctx().request_repaint_after(Duration::from_millis(50));
     }
     ui.painter().circle_filled(rect.center(), 4.5, color);
 }

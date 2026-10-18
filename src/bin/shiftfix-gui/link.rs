@@ -43,6 +43,7 @@ pub struct Snapshot {
     /// Устройства, которые окно нашло само, пока служба не отвечает
     /// (`None` — ещё не искало).
     pub local_devices: Option<Vec<DeviceInfo>>,
+    /// Когда снимок обновлён: от него досчитывается простой устройств.
     pub updated: Option<Instant>,
 }
 
