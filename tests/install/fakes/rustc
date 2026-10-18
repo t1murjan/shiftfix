@@ -1,2 +1,4 @@
 #!/bin/sh
-echo "rustc 1.95.0 (fake)"
+# Заведомо новее rust-version из Cargo.toml (с ней install.sh сравнивает версию rustc):
+# с точной версией стенд ломался бы, стоит проекту её поднять.
+echo "rustc 999.0.0 (fake)"
