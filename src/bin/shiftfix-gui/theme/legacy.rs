@@ -5,8 +5,6 @@ use std::path::{Path, PathBuf};
 
 use shiftfix::config::{ThemeMode, ThemeSettings};
 
-use super::parse_mode;
-
 /// Что делать со старым файлом `gui-theme` (режим окна до версии 0.4).
 #[derive(Debug, PartialEq, Eq)]
 pub enum Migration {
@@ -27,7 +25,7 @@ pub fn migration(legacy: Option<&str>, config_ok: bool, config_has_mode: bool) -
     if !config_ok {
         return Migration::Keep;
     }
-    match parse_mode(text) {
+    match ThemeMode::parse(text.trim()) {
         Some(mode) if !config_has_mode => Migration::Adopt(mode),
         _ => Migration::Remove,
     }

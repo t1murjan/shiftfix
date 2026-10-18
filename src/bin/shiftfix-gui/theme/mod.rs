@@ -132,16 +132,6 @@ pub fn set_own_accent(t: &mut ThemeSettings, v: Variant, on: bool) {
     }
 }
 
-/// Режим из параметра `--theme` (только на этот запуск, в файл не пишется).
-pub fn parse_mode(s: &str) -> Option<ThemeMode> {
-    match s.trim() {
-        "system" => Some(ThemeMode::System),
-        "light" => Some(ThemeMode::Light),
-        "dark" => Some(ThemeMode::Dark),
-        _ => None,
-    }
-}
-
 /// Пора ли записать тему: срок вышел и кнопка мыши отпущена. Пока тянут
 /// ползунок пипетки, цвет меняется каждый кадр, а файл пишется один раз.
 pub fn save_due(at: Option<Instant>, now: Instant, pointer_down: bool) -> bool {

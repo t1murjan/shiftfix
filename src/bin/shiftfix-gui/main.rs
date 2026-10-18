@@ -21,6 +21,7 @@ use std::thread;
 use std::time::Duration;
 
 use eframe::egui;
+use shiftfix::config::ThemeMode;
 use shiftfix::sys::{env, lock, proc};
 
 const USAGE: &str = "\
@@ -97,7 +98,12 @@ fn main() -> eframe::Result {
                     std::process::exit(2);
                 }
             },
-            "--theme" => match args.next().as_deref().and_then(theme::parse_mode) {
+            "--theme" => match args
+                .next()
+                .as_deref()
+                .map(str::trim)
+                .and_then(ThemeMode::parse)
+            {
                 Some(t) => forced_theme = Some(t),
                 None => {
                     eprintln!("{USAGE}");

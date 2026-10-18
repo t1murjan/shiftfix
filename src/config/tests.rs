@@ -521,5 +521,12 @@ fn enum_names_round_trip() {
     for method in SelectionMethod::ALL {
         assert_eq!(SelectionMethod::parse(method.as_str()), Some(method));
     }
+    // Режим темы пишется в файл через serde: имена должны совпадать.
+    for mode in ThemeMode::ALL {
+        assert_eq!(ThemeMode::parse(mode.as_str()), Some(mode));
+        let value = toml::Value::try_from(mode).unwrap();
+        assert_eq!(value.as_str(), Some(mode.as_str()));
+    }
+    assert_eq!(ThemeMode::parse("Dark"), None);
     assert_eq!(BackendKind::parse("windows"), None);
 }

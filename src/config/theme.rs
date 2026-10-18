@@ -19,6 +19,23 @@ pub enum ThemeMode {
     Dark,
 }
 
+impl ThemeMode {
+    pub const ALL: [ThemeMode; 3] = [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark];
+
+    /// Значение в config.toml и в `shiftfix-gui --theme`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ThemeMode::System => "system",
+            ThemeMode::Light => "light",
+            ThemeMode::Dark => "dark",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<ThemeMode> {
+        ThemeMode::ALL.into_iter().find(|m| m.as_str() == s)
+    }
+}
+
 /// Секция `[theme]`: оформление окна shiftfix-gui.
 ///
 /// Акцент — строка, а не `Option`: `save` не удаляет ключи файла, и сброшенный

@@ -16,14 +16,6 @@ fn own_accent(mode: ThemeMode, light: &str, dark: &str) -> ThemeSettings {
 }
 
 #[test]
-fn mode_from_argument() {
-    assert_eq!(parse_mode("light"), Some(ThemeMode::Light));
-    assert_eq!(parse_mode(" dark\n"), Some(ThemeMode::Dark));
-    assert_eq!(parse_mode("system"), Some(ThemeMode::System));
-    assert_eq!(parse_mode("Dark"), None);
-}
-
-#[test]
 fn save_waits_for_deadline_and_release() {
     let now = Instant::now();
     let later = now + std::time::Duration::from_millis(400);
