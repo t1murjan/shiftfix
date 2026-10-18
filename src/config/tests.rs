@@ -66,6 +66,9 @@ fn partial_config_and_errors() {
     assert_eq!(cfg.double_tap, 0.25);
     assert_eq!(cfg.backend, BackendKind::Kde);
     assert_eq!(cfg.max_word_len, 50);
+    let raw: Settings = toml::from_str("[devices]\n\"1:2 x\" = \"touchscreen\"").unwrap();
+    let cfg = Config::from_settings(raw).unwrap();
+    assert_eq!(cfg.devices["1:2 x"], Role::Touchscreen);
 
     let err = |text: &str| {
         let bad: Settings = toml::from_str(text).unwrap();

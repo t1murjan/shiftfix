@@ -9,7 +9,7 @@
 
 mod registry;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -177,18 +177,14 @@ pub struct DeviceInfo {
 }
 
 struct Rules {
-    overrides: HashMap<String, Role>,
+    overrides: BTreeMap<String, Role>,
     ignore_names: Vec<String>,
 }
 
 impl Rules {
     fn from_config(cfg: &Config) -> Rules {
         Rules {
-            overrides: cfg
-                .devices
-                .iter()
-                .filter_map(|(k, v)| Some((k.clone(), Role::parse(v)?)))
-                .collect(),
+            overrides: cfg.devices.clone(),
             ignore_names: cfg.ignore_devices.clone(),
         }
     }
@@ -351,7 +347,7 @@ mod tests {
     fn rules_prefer_manual_roles() {
         let mut cfg = Config::default();
         cfg.devices
-            .insert("1234:5678 Panel".into(), "touchscreen".into());
+            .insert("1234:5678 Panel".into(), Role::Touchscreen);
         let rules = Rules::from_config(&cfg);
         assert_eq!(
             rules.role("1234:5678 Panel", "Panel", Role::Touchpad),

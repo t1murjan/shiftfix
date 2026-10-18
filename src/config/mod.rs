@@ -251,7 +251,7 @@ pub struct Config {
     pub tray: bool,
     pub notify: bool,
     pub ignore_devices: Vec<String>,
-    pub devices: BTreeMap<String, String>,
+    pub devices: BTreeMap<String, Role>,
 }
 
 impl Default for Config {
@@ -286,13 +286,15 @@ impl Config {
                 one_of(BackendKind::ALL.map(BackendKind::as_str))
             );
         };
+        let mut devices = BTreeMap::new();
         for (device, role) in &raw.devices {
-            if Role::parse(role).is_none() {
+            let Some(parsed) = Role::parse(role) else {
                 bail!(
                     "devices.{device:?} = {role:?}: допустимо {}",
                     one_of(Role::CHOICES.map(Role::as_str))
                 );
-            }
+            };
+            devices.insert(device.clone(), parsed);
         }
         let ms = |v: u64| Duration::from_millis(v);
         Ok(Config {
@@ -313,7 +315,7 @@ impl Config {
             tray: raw.tray,
             notify: raw.notify,
             ignore_devices: raw.ignore_devices,
-            devices: raw.devices,
+            devices,
         })
     }
 }
