@@ -28,6 +28,8 @@ const _: () = assert!(
     QUEUE_LIMIT.as_millis() < REPLY_WAIT.as_millis()
         && REPLY_WAIT.as_millis() < TIMEOUT.as_millis()
 );
+/// Самая длинная строка запроса; длиннее — «непонятный запрос».
+pub(crate) const MAX_REQUEST: u64 = 64 * 1024;
 
 pub fn socket_path() -> PathBuf {
     crate::sys::env::runtime_dir().join("shiftfix.sock")

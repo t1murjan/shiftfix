@@ -2,7 +2,7 @@
 //! запрос уходит в главный цикл службы. Протокол и клиент — в `ipc.rs`.
 
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -52,14 +52,15 @@ pub fn serve(path: PathBuf, tx: Sender<Msg>) -> Result<Socket> {
 fn handle(stream: UnixStream, tx: &Sender<Msg>) {
     let _ = stream.set_read_timeout(Some(ipc::TIMEOUT));
     let _ = stream.set_write_timeout(Some(ipc::TIMEOUT));
-    let mut line = String::new();
     let Ok(mut writer) = stream.try_clone() else {
         return;
     };
-    if BufReader::new(stream).read_line(&mut line).is_err() {
+    let mut line = Vec::new();
+    let mut reader = BufReader::new(stream.take(ipc::MAX_REQUEST));
+    if reader.read_until(b'\n', &mut line).is_err() {
         return;
     }
-    let response = match serde_json::from_str::<Request>(&line) {
+    let response = match serde_json::from_slice::<Request>(&line) {
         Ok(req) => {
             debug!("IPC: {req:?}");
             let (reply, answer) = mpsc::channel();
@@ -130,9 +131,9 @@ mod tests {
     }
 
     /// Послать строку как есть и прочитать ответ.
-    fn raw(path: &Path, line: &str) -> Response {
+    fn raw(path: &Path, line: &[u8]) -> Response {
         let mut stream = UnixStream::connect(path).unwrap();
-        stream.write_all(line.as_bytes()).unwrap();
+        stream.write_all(line).unwrap();
         let mut answer = String::new();
         BufReader::new(stream).read_line(&mut answer).unwrap();
         serde_json::from_str(&answer).unwrap()
@@ -150,13 +151,21 @@ mod tests {
         assert!(service.ask(Request::Toggle).unwrap().ok);
         assert!(!service.daemon.engine.enabled());
 
-        for line in ["{\"cmd\":\"fly\"}\n", "не json\n", "\n"] {
+        // Верный запрос, но после MAX_REQUEST пробелов: сервер его не дочитывает.
+        let long = format!(
+            "{}{{\"cmd\":\"status\"}}\n",
+            " ".repeat(ipc::MAX_REQUEST as usize)
+        );
+        for line in [
+            &b"{\"cmd\":\"fly\"}\n"[..],
+            "не json\n".as_bytes(),
+            b"\xd0\n",
+            b"\n",
+            long.as_bytes(),
+        ] {
             let resp = raw(&path, line);
-            assert!(!resp.ok, "{line}");
-            assert!(
-                resp.error.unwrap().starts_with("непонятный запрос"),
-                "{line}"
-            );
+            assert!(!resp.ok);
+            assert!(resp.error.unwrap().starts_with("непонятный запрос"));
         }
 
         drop(service);
