@@ -81,11 +81,8 @@ fn hero(app: &mut App, ui: &mut Ui, p: &Palette) {
         State::Stopped => (
             "Служба остановлена",
             app.snap
-                .journal
-                .iter()
-                .rev()
-                .find(|l| l.contains("ERROR") || l.starts_with("нет ") || l.contains("не видно"))
-                .cloned()
+                .last_error
+                .clone()
                 .unwrap_or_else(|| "Запустите службу, чтобы двойной Shift заработал.".into()),
         ),
         State::NotInstalled => (

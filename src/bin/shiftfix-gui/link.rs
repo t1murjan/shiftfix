@@ -37,6 +37,9 @@ pub struct Snapshot {
     pub service: Service,
     /// Последние строки журнала службы, когда она не отвечает.
     pub journal: Vec<String>,
+    /// Последняя ошибка среди этих строк — скорее всего, почему служба
+    /// остановилась.
+    pub last_error: Option<String>,
     /// Устройства, которые окно нашло само, пока служба не отвечает
     /// (`None` — ещё не искало).
     pub local_devices: Option<Vec<DeviceInfo>>,
@@ -161,12 +164,14 @@ fn refresh(shared: &Arc<Mutex<Snapshot>>, with_service: bool, devices_config: Op
         Ok(response) => {
             snap.status = response.status.map(Arc::from);
             snap.journal.clear();
+            snap.last_error = None;
             snap.local_devices = None;
         }
         Err(_) => {
             snap.status = None;
-            if let Some(journal) = journal {
-                snap.journal = journal;
+            if let Some((lines, last_error)) = journal {
+                snap.journal = lines;
+                snap.last_error = last_error;
             }
             if local_devices.is_some() {
                 snap.local_devices = local_devices;
@@ -211,15 +216,48 @@ fn query_service() -> Service {
     }
 }
 
-fn journal() -> Vec<String> {
-    let Ok(out) = proc::run(
-        "journalctl",
-        &["--user", "-u", UNIT, "-n", "60", "--no-pager", "-o", "cat"],
-        Duration::from_secs(4),
-    ) else {
-        return Vec::new();
-    };
-    out.text().lines().map(str::to_owned).collect()
+/// Последние строки журнала службы и последняя ошибка среди них.
+fn journal() -> (Vec<String>, Option<String>) {
+    // В JSON у строки есть приоритет: ошибку видно не по тексту.
+    let args = [
+        "--user",
+        "-u",
+        UNIT,
+        "-n",
+        "60",
+        "--no-pager",
+        "-o",
+        "json",
+        "--output-fields=MESSAGE,PRIORITY",
+    ];
+    match proc::run("journalctl", &args, Duration::from_secs(4)) {
+        Ok(out) => parse_journal(&out.text()),
+        Err(_) => (Vec::new(), None),
+    }
+}
+
+/// Разобрать `journalctl -o json`: по объекту на строку.
+fn parse_journal(json: &str) -> (Vec<String>, Option<String>) {
+    let mut lines = Vec::new();
+    let mut last_error = None;
+    for entry in json.lines() {
+        let Ok(entry) = serde_json::from_str::<serde_json::Value>(entry) else {
+            continue;
+        };
+        // Сообщение не в UTF-8 приходит массивом байтов — такие пропускаем.
+        let Some(text) = entry["MESSAGE"].as_str() else {
+            continue;
+        };
+        // PRIORITY — строка с числом: 3 — err, меньше — ещё серьёзнее.
+        let priority = entry["PRIORITY"]
+            .as_str()
+            .and_then(|p| p.parse::<u8>().ok());
+        if priority.is_some_and(|p| p <= 3) {
+            last_error = Some(text.to_owned());
+        }
+        lines.push(text.to_owned());
+    }
+    (lines, last_error)
 }
 
 /// Устройства так, как их увидит служба с конфигом `config`.
@@ -340,4 +378,30 @@ pub fn run_check(out: Arc<Mutex<Option<String>>>, ctx: egui::Context) {
         }
         ctx.request_repaint();
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn journal_error_is_found_by_priority() {
+        let json = r#"{"MESSAGE":"готов: раскладки us, ru","PRIORITY":"6"}
+{"MESSAGE":"нет доступа к 3 устройствам в /dev/input","PRIORITY":"3"}
+{"MESSAGE":"shiftfix.service: Main process exited, code=exited, status=2/INVALIDARGUMENT","PRIORITY":"5"}
+{"MESSAGE":[208,189,208],"PRIORITY":"3"}
+не JSON
+"#;
+        let (lines, last_error) = parse_journal(json);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "готов: раскладки us, ru");
+        assert_eq!(
+            last_error.as_deref(),
+            Some("нет доступа к 3 устройствам в /dev/input")
+        );
+        assert_eq!(
+            parse_journal(r#"{"MESSAGE":"выход","PRIORITY":"6"}"#).1,
+            None
+        );
+    }
 }
