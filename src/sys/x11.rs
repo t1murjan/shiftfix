@@ -141,8 +141,35 @@ pub fn connect() -> Result<XConn> {
     Err(last.context(format!("X-сервер {display}")))
 }
 
-/// `_XKB_RULES_NAMES` корневого окна: rules, model, layout, variant, options.
-pub fn rules_names(x: &XConn) -> Result<Vec<String>> {
+/// Свойство `_XKB_RULES_NAMES` корневого окна: из чего X-сервер собрал keymap.
+/// Раскладки и варианты — через запятую: `us,ru` и `,phonetic`.
+#[derive(Debug, Default, PartialEq)]
+pub struct RulesNames {
+    pub rules: String,
+    pub model: String,
+    pub layout: String,
+    pub variant: String,
+    pub options: String,
+}
+
+impl RulesNames {
+    /// Значение свойства — строки через нулевой байт; недостающие пустые.
+    fn parse(value: &[u8]) -> RulesNames {
+        let mut parts = value
+            .split(|b| *b == 0)
+            .map(|part| String::from_utf8_lossy(part).into_owned());
+        let mut next = || parts.next().unwrap_or_default();
+        RulesNames {
+            rules: next(),
+            model: next(),
+            layout: next(),
+            variant: next(),
+            options: next(),
+        }
+    }
+}
+
+pub fn rules_names(x: &XConn) -> Result<RulesNames> {
     let atom = x
         .conn
         .intern_atom(false, b"_XKB_RULES_NAMES")?
@@ -155,11 +182,7 @@ pub fn rules_names(x: &XConn) -> Result<Vec<String>> {
     if reply.value.is_empty() {
         bail!("X-сервер не сообщает раскладки (_XKB_RULES_NAMES)");
     }
-    Ok(reply
-        .value
-        .split(|b| *b == 0)
-        .map(|part| String::from_utf8_lossy(part).into_owned())
-        .collect())
+    Ok(RulesNames::parse(&reply.value))
 }
 
 #[cfg(test)]
@@ -173,6 +196,23 @@ mod tests {
             out.extend(field);
         }
         out
+    }
+
+    #[test]
+    fn parses_rules_names() {
+        let names = RulesNames::parse(b"evdev\0pc105\0us,ru\0,phonetic\0grp:caps_toggle\0");
+        assert_eq!(
+            names,
+            RulesNames {
+                rules: "evdev".into(),
+                model: "pc105".into(),
+                layout: "us,ru".into(),
+                variant: ",phonetic".into(),
+                options: "grp:caps_toggle".into(),
+            }
+        );
+        let short = RulesNames::parse(b"evdev\0pc105\0us");
+        assert_eq!((short.layout.as_str(), short.options.as_str()), ("us", ""));
     }
 
     #[test]
