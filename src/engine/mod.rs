@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{Config, SelectionMethod};
 use crate::keymap::{self, Keymap, Layout};
-use crate::keys::{is_char, is_ctrl, is_modifier, is_nav, is_neutral, is_shift};
+use crate::keys::{Stroke, is_char, is_ctrl, is_modifier, is_nav, is_neutral, is_shift};
 
 /// Сколько последних нажатий помнить.
 pub const BUF_MAX: usize = 256;
@@ -34,14 +34,6 @@ const ACTIONS_MAX: usize = 30;
 /// Сколько секунд GUI получает сведения о раскладках из кеша: в GNOME и Hyprland
 /// каждое обращение к переключателю — запуск процесса, а GUI спрашивает часто.
 const LAYOUT_INFO_TTL: f64 = 1.5;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stroke {
-    pub key: KeyCode,
-    pub shift: bool,
-    /// Индекс раскладки, в которой клавиша нажата (если известен).
-    pub layout: Option<usize>,
-}
 
 /// Эмуляция нажатий.
 pub trait Keys {

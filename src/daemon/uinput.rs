@@ -8,7 +8,8 @@ use evdev::uinput::VirtualDevice;
 use evdev::{AttributeSet, BusType, EventType, InputEvent, InputId, KeyCode};
 
 use crate::devices::OWN_KEYBOARD;
-use crate::engine::{Keys, Stroke};
+use crate::engine::Keys;
+use crate::keys::Stroke;
 
 /// Производитель 0x0FAC keyd считает своим и не перехватывает: иначе он
 /// применил бы свои замены клавиш к уже заменённым нажатиям ещё раз.

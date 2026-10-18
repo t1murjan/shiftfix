@@ -18,7 +18,7 @@ use std::time::Duration;
 use log::debug;
 
 pub use convert::{Tables, convert_text, detect_source, next_with_table, plan_strokes};
-pub use layout::{Layout, ROW_KEYS, builtin, code_from_long_name, norm_layout};
+pub use layout::{Layout, builtin, code_from_long_name, norm_layout};
 pub use xkb::{from_names, from_text};
 
 use crate::sys::env;

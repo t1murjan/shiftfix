@@ -10,7 +10,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use anyhow::Result;
 use evdev::KeyCode;
 
-use crate::engine::{Keys, Stroke};
+use crate::engine::Keys;
+use crate::keys::Stroke;
 
 /// Эмуляция нажатий, которая ничего не делает.
 pub struct NoKeys;

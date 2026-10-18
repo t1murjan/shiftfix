@@ -9,7 +9,8 @@ use anyhow::Result;
 use evdev::KeyCode;
 use shiftfix::backend::XkbLayout;
 use shiftfix::daemon::Msg;
-use shiftfix::engine::{Backend, Keys, Stroke};
+use shiftfix::engine::{Backend, Keys};
+use shiftfix::keys::Stroke;
 use shiftfix::sys::env;
 use shiftfix::{keymap, selection};
 

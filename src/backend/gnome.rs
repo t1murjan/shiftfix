@@ -240,7 +240,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::engine::Stroke;
+    use crate::keys::Stroke;
     use crate::testutil::fake_command;
 
     #[test]

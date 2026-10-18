@@ -179,7 +179,7 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
-    use crate::engine::Stroke;
+    use crate::keys::Stroke;
     use crate::testutil::{TempDir, write_script};
 
     /// Фальшивые wl-paste/wl-copy: буферы — файлы `clip`/`primary` и их типы.

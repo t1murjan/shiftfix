@@ -1,10 +1,35 @@
 //! Классы клавиш: что меняет текст, что двигает курсор, что модификатор;
-//! разбор сочетаний клавиш из конфига.
+//! нажатие для набора (`Stroke`); разбор сочетаний клавиш из конфига.
 
 use anyhow::{Result, anyhow};
 use evdev::KeyCode;
 
-use crate::keymap::ROW_KEYS;
+/// Клавиши основного блока: цифровой ряд, три буквенных ряда и ISO-клавиша
+/// между левым Shift и Z.
+#[rustfmt::skip]
+pub const ROW_KEYS: [KeyCode; 48] = [
+    KeyCode::KEY_GRAVE, KeyCode::KEY_1, KeyCode::KEY_2, KeyCode::KEY_3, KeyCode::KEY_4,
+    KeyCode::KEY_5, KeyCode::KEY_6, KeyCode::KEY_7, KeyCode::KEY_8, KeyCode::KEY_9,
+    KeyCode::KEY_0, KeyCode::KEY_MINUS, KeyCode::KEY_EQUAL,
+    KeyCode::KEY_Q, KeyCode::KEY_W, KeyCode::KEY_E, KeyCode::KEY_R, KeyCode::KEY_T,
+    KeyCode::KEY_Y, KeyCode::KEY_U, KeyCode::KEY_I, KeyCode::KEY_O, KeyCode::KEY_P,
+    KeyCode::KEY_LEFTBRACE, KeyCode::KEY_RIGHTBRACE, KeyCode::KEY_BACKSLASH,
+    KeyCode::KEY_A, KeyCode::KEY_S, KeyCode::KEY_D, KeyCode::KEY_F, KeyCode::KEY_G,
+    KeyCode::KEY_H, KeyCode::KEY_J, KeyCode::KEY_K, KeyCode::KEY_L,
+    KeyCode::KEY_SEMICOLON, KeyCode::KEY_APOSTROPHE,
+    KeyCode::KEY_Z, KeyCode::KEY_X, KeyCode::KEY_C, KeyCode::KEY_V, KeyCode::KEY_B,
+    KeyCode::KEY_N, KeyCode::KEY_M, KeyCode::KEY_COMMA, KeyCode::KEY_DOT, KeyCode::KEY_SLASH,
+    KeyCode::KEY_102ND,
+];
+
+/// Нажатие для набора: клавиша, Shift и раскладка, в которой её нажали.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stroke {
+    pub key: KeyCode,
+    pub shift: bool,
+    /// Индекс раскладки, в которой клавиша нажата (если известен).
+    pub layout: Option<usize>,
+}
 
 /// Печатает символ: пробел или клавиша основного блока (`ROW_KEYS`).
 pub fn is_char(key: KeyCode) -> bool {

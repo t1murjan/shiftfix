@@ -9,7 +9,8 @@ use std::sync::{Arc, OnceLock};
 use evdev::KeyCode;
 use libloading::Library;
 
-use super::{Keymap, Layout, ROW_KEYS};
+use super::{Keymap, Layout};
+use crate::keys::ROW_KEYS;
 
 type Ctx = *mut c_void;
 type Map = *mut c_void;
@@ -204,7 +205,8 @@ mod tests {
 
     use super::*;
 
-    use crate::keymap::{ROW_KEYS, builtin, convert_text};
+    use crate::keymap::{builtin, convert_text};
+    use crate::keys::ROW_KEYS;
     use crate::testutil::skip;
 
     /// Встроенные таблицы должны совпадать с тем, что даёт настоящий xkb.
