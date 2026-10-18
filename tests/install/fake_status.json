@@ -6,7 +6,6 @@
   "layouts": {
     "backend": "KDE",
     "codes": ["us", "ru"],
-    "names": ["English (US)", "Russian"],
     "current": 0,
     "from_keymap": true,
     "error": null
