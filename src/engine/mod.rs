@@ -24,7 +24,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::thread;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use evdev::KeyCode;
 use log::{debug, error, info, warn};
 
@@ -461,6 +461,32 @@ impl Engine {
 
     fn fix_selection(&mut self) -> Result<()> {
         self.selection_valid = false;
+        let Some(text) = self.read_selection() else {
+            return Ok(());
+        };
+        self.codes = self.backend.layouts()?;
+        let current = self.backend.current()?;
+        let Some([(src, from), (tgt, to)]) = self.choose_layouts(&text, current) else {
+            warn!(
+                "нет таблиц для раскладок {:?} — выделение не исправить",
+                self.codes
+            );
+            return Ok(());
+        };
+        let how = self.replace_selection(&text, &from, &to, tgt, current)?;
+        self.switched_to(current.map(|_| tgt));
+        let length = text.chars().count();
+        self.record(ActionKind::Selection, length, Some(src), Some(tgt));
+        info!(
+            "выделение: {length} символов, {} → {} ({how})",
+            self.label(Some(src)),
+            self.label(Some(tgt))
+        );
+        Ok(())
+    }
+
+    /// Текст выделения, если его можно исправить.
+    fn read_selection(&mut self) -> Option<String> {
         let Some(text) = self
             .selection
             .as_mut()
@@ -468,32 +494,43 @@ impl Engine {
             .filter(|t| !t.is_empty())
         else {
             debug!("⇧⇧: выделение пустое");
-            return Ok(());
+            return None;
         };
         let length = text.chars().count();
         if length > self.cfg.max_selection {
             info!("выделение длиннее max_selection ({length}), пропускаю");
-            return Ok(());
+            return None;
         }
-        self.codes = self.backend.layouts()?;
-        let current = self.backend.current()?;
+        Some(text)
+    }
+
+    /// В какой раскладке набран `text` и в какую его перевести: номера
+    /// раскладок и их таблицы. `None` — таблиц для этого нет.
+    fn choose_layouts(
+        &self,
+        text: &str,
+        current: Option<usize>,
+    ) -> Option<[(usize, Arc<Layout>); 2]> {
         let tables = self.tables(&self.codes);
-        let pair = keymap::detect_source(&text, &tables, current)
-            .and_then(|src| keymap::next_with_table(src, &tables).map(|tgt| (src, tgt)));
-        let Some((src, tgt)) = pair else {
-            warn!(
-                "нет таблиц для раскладок {:?} — выделение не исправить",
-                self.codes
-            );
-            return Ok(());
-        };
-        let (Some(src_layout), Some(tgt_layout)) = (tables[src].clone(), tables[tgt].clone())
-        else {
-            return Ok(());
-        };
+        let src = keymap::detect_source(text, &tables, current)?;
+        let tgt = keymap::next_with_table(src, &tables)?;
+        Some([(src, tables[src].clone()?), (tgt, tables[tgt].clone()?)])
+    }
+
+    /// Заменить выделенный `text` тем, что дали бы те же клавиши в раскладке
+    /// `tgt` (таблицы `from` и `to`), и переключиться на неё. Возвращает, как
+    /// заменено: набором или вставкой.
+    fn replace_selection(
+        &mut self,
+        text: &str,
+        from: &Layout,
+        to: &Layout,
+        tgt: usize,
+        current: Option<usize>,
+    ) -> Result<&'static str> {
         // CapsLock, переключающий раскладку, регистр не меняет.
         let caps = !self.keymap.caps_switches_group && (self.hooks.caps_on)();
-        let plan = keymap::plan_strokes(&text, &src_layout, &tgt_layout, caps, tgt);
+        let plan = keymap::plan_strokes(text, from, to, caps, tgt);
         // Наша вставка сама меняет PRIMARY и буфер обмена. Отсчёт — и до неё:
         // если она оборвётся ошибкой, второй установки ниже не будет.
         self.selection_ignore_until = (self.hooks.clock)() + SELF_CHANGE_GRACE;
@@ -511,10 +548,13 @@ impl Engine {
                          раскладки) — вставляю через буфер обмена"
                     );
                 }
-                let converted = keymap::convert_text(&text, &src_layout, &tgt_layout);
-                if let Some(selection) = self.selection.as_mut() {
-                    selection.paste(&converted, self.keys.as_mut())?;
-                }
+                let converted = keymap::convert_text(text, from, to);
+                // Выделение прочитано из этого же источника, так что он есть.
+                let selection = self
+                    .selection
+                    .as_mut()
+                    .context("нечем вставить выделение")?;
+                selection.paste(&converted, self.keys.as_mut())?;
                 self.switch_from(current, tgt)?;
                 "вставка"
             }
@@ -528,13 +568,6 @@ impl Engine {
             }
             _ => self.reset("выделение заменено"),
         }
-        self.switched_to(current.map(|_| tgt));
-        self.record(ActionKind::Selection, length, Some(src), Some(tgt));
-        info!(
-            "выделение: {length} символов, {} → {} ({how})",
-            self.label(Some(src)),
-            self.label(Some(tgt))
-        );
-        Ok(())
+        Ok(how)
     }
 }
