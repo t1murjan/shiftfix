@@ -100,13 +100,22 @@ impl Settings {
         toml::from_str(&text).with_context(|| format!("{}: неверное значение", path.display()))
     }
 
-    /// Записать, сохранив комментарии и порядок строк файла.
+    /// Записать, сохранив комментарии и порядок строк файла. Нет файла —
+    /// основа DEFAULT_CONFIG; файл не читается или не разбирается — `Err`, и
+    /// файл остаётся как был.
     pub fn save(&self, path: &Path) -> Result<()> {
-        let original = fs::read_to_string(path).unwrap_or_else(|_| DEFAULT_CONFIG.to_owned());
+        let original = match fs::read_to_string(path) {
+            Ok(text) => Some(text),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+            Err(err) => {
+                return Err(err).with_context(|| format!("не читается {}", path.display()));
+            }
+        };
         let mut doc: toml_edit::DocumentMut = original
+            .as_deref()
+            .unwrap_or(DEFAULT_CONFIG)
             .parse()
-            .or_else(|_| DEFAULT_CONFIG.parse())
-            .context("не удалось разобрать конфиг для записи")?;
+            .with_context(|| format!("{}: ошибка TOML", path.display()))?;
         let fresh: toml_edit::DocumentMut = toml::to_string(self)?
             .parse()
             .context("сериализация конфига")?;

@@ -367,15 +367,27 @@ fn accent_reset_reaches_file() {
 }
 
 #[test]
-fn theme_save_refuses_broken_toml() {
+fn save_refuses_broken_file() {
+    // Файл не разбирается или не читается как текст (не UTF-8): запись —
+    // ошибка, и файл остаётся как был, а не собирается заново из умолчаний.
     let broken = "double_tap_ms = = 1\n[theme\nmode = \"dark\"\n";
-    let (dir, path) = write("broken", broken);
-    assert_eq!(file::tmp_path(&path), dir.join("config.toml.tmp"));
-    let err = ThemeSettings::default().save(&path).unwrap_err();
-    assert!(format!("{err:#}").contains("ошибка TOML"), "{err:#}");
-    assert_eq!(fs::read(&path).unwrap(), broken.as_bytes());
-    assert!(!file::tmp_path(&path).exists());
-    assert!(ThemeSettings::load(&path).is_err());
+    let latin1 = b"# caf\xe9\ndouble_tap_ms = 350\n";
+    for (tag, bytes, reason) in [
+        ("broken", broken.as_bytes(), "ошибка TOML"),
+        ("latin1", &latin1[..], "не читается"),
+    ] {
+        let (dir, path) = temp(tag);
+        fs::write(&path, bytes).unwrap();
+        assert_eq!(file::tmp_path(&path), dir.join("config.toml.tmp"));
+        let err = ThemeSettings::default().save(&path).unwrap_err();
+        assert!(format!("{err:#}").contains(reason), "{tag}: {err:#}");
+        let err = Settings::default().save(&path).unwrap_err();
+        assert!(format!("{err:#}").contains(reason), "{tag}: {err:#}");
+        assert_eq!(fs::read(&path).unwrap(), bytes, "{tag}");
+        assert!(!file::tmp_path(&path).exists(), "{tag}");
+        assert!(ThemeSettings::load(&path).is_err(), "{tag}");
+        assert!(Settings::load(&path).is_err(), "{tag}");
+    }
 }
 
 #[test]
