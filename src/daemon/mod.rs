@@ -76,7 +76,7 @@ struct Daemon {
     /// Слежение за выделением: `Ok(чем)` — работает, иначе причина, почему нет.
     selection: Result<&'static str, String>,
     selection_active: Active,
-    watching_primary: bool,
+    selection_watcher: Option<selection::Watcher>,
 }
 
 pub fn run(path: PathBuf, cfg: Config) -> Result<()> {
@@ -178,7 +178,7 @@ impl Daemon {
             tx,
             selection: Err("запускается".into()),
             selection_active,
-            watching_primary: false,
+            selection_watcher: None,
         }
     }
 
@@ -191,9 +191,12 @@ impl Daemon {
             self.tray = None;
             self.tray_shown = None;
         }
-        if self.cfg.selection && !self.watching_primary {
-            selection::spawn_watcher(self.tx.clone(), self.selection_active.clone());
-            self.watching_primary = true;
+        if !self.cfg.selection {
+            self.selection_watcher = None;
+        } else if self.selection_watcher.is_none() {
+            self.selection = Err("запускается".into());
+            self.selection_watcher =
+                selection::spawn_watcher(self.tx.clone(), self.selection_active.clone());
         }
     }
 

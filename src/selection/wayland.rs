@@ -4,6 +4,7 @@
 use std::io::{BufRead, BufReader, Read};
 use std::os::unix::process::CommandExt;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -98,10 +99,11 @@ impl Selection for WlClipboard {
 }
 
 /// `wl-paste --primary --watch` печатает размер каждого нового выделения.
-/// Возвращает причину остановки; `None` — служба завершается.
-pub fn watch(tx: &Sender<Msg>) -> Option<String> {
+/// Возвращает причину остановки; `None` — служба завершается или слежение
+/// остановлено (`stop`).
+pub fn watch(tx: &Sender<Msg>, stop: &AtomicBool, wl_paste: &str) -> Option<String> {
     let started = Instant::now();
-    let mut cmd = env::session_command("wl-paste");
+    let mut cmd = env::session_command(wl_paste);
     cmd.args(["--primary", "--watch", "sh", "-c", "wc -c"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -126,6 +128,11 @@ pub fn watch(tx: &Sender<Msg>) -> Option<String> {
     let mut announced = false;
     for line in BufReader::new(child.stdout.take().expect("stdout")).lines() {
         let Ok(line) = line else { break };
+        if stop.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
         if !announced {
             announced = true;
             if tx.send(Msg::Selection(Ok("wl-clipboard"))).is_err() {
@@ -265,5 +272,22 @@ cat > "$d/clip"; printf '%s\n' "$2" > "$d/clip.types""#;
         let mut app = App::new(&dir);
         clip.paste("Привет", &mut app).unwrap();
         assert_eq!(app.pasted, ["Привет"]);
+    }
+
+    #[test]
+    fn watch_stops_on_request() {
+        let dir = TempDir::new("clip-watch");
+        let wl_paste = write_script(&dir, "wl-paste", "while :; do echo 3; sleep 0.05; done");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let (done_tx, done) = std::sync::mpsc::channel();
+        let flag = std::sync::Arc::clone(&stop);
+        thread::spawn(move || done_tx.send(watch(&tx, &flag, &wl_paste)));
+        assert!(matches!(
+            rx.recv_timeout(Duration::from_secs(5)),
+            Ok(Msg::Selection(Ok("wl-clipboard")))
+        ));
+        stop.store(true, Ordering::Relaxed);
+        assert_eq!(done.recv_timeout(Duration::from_secs(5)), Ok(None));
     }
 }
