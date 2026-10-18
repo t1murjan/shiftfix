@@ -317,6 +317,19 @@ scenario 33-session-autostart-to-unit 0 './install.sh'
 as_user 'systemctl --user stop shiftfix.service && touch ~/.fakesd/failed'
 scenario 34-same-service-failed 0 './install.sh'
 
+# Нет sudo (пользователь не из sudoers): uninstall.sh удаляет файлы в домашнем
+# каталоге, а для системных настроек (правило udev, modules-load, группа input)
+# печатает команды для root.
+as_user 'touch ~/.fakesd/no-sudo'
+scenario 35-uninstall-no-sudo 0 './uninstall.sh --yes'
+# Команды для root выполнены, кроме вывода из группы. Правила udev нет, sudo нет:
+# install.sh печатает, что выполнить от root, и выходит с кодом 1, ничего не поставив.
+rm -f /etc/udev/rules.d/80-shiftfix-uinput.rules /etc/modules-load.d/shiftfix-uinput.conf
+scenario 36-install-no-sudo 1 './install.sh'
+# sudo снова есть: install.sh ставит правило udev и загрузку модуля (группа уже есть).
+as_user 'rm ~/.fakesd/no-sudo'
+scenario 37-install-with-sudo 0 './install.sh'
+
 if ((${#unexpected[@]})); then
     echo "Код выхода не тот, что ожидался: ${unexpected[*]}" >&2
     exit 1
