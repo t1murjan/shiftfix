@@ -173,10 +173,7 @@ cat "$d/$sel""#;
         let mut clip = clipboard(&dir);
         fs::write(dir.join("clip"), [0x89, b'P', b'N', b'G']).unwrap();
         fs::write(dir.join("clip.types"), "image/png\n").unwrap();
-        let mut app = App {
-            dir: dir.to_path_buf(),
-            pasted: Vec::new(),
-        };
+        let mut app = App::new(&dir);
         clip.paste("Привет мир", &mut app).unwrap();
         assert_eq!(app.pasted, ["Привет мир"]);
         assert_eq!(

@@ -122,18 +122,24 @@ impl Paste {
         if !wait_until(|| clip.read(C::TEXT), text.as_bytes()) {
             warn!("буфер обмена не обновился вовремя, вставляю всё равно");
         }
-        keys.combo(&self.keys)?;
+        // Буфер возвращается, даже если нажатие не прошло.
+        let pasted = keys.combo(&self.keys);
         // Приложение забирает данные асинхронно — не подменять буфер раньше времени.
         thread::sleep(self.restore_delay);
-        match saved {
-            Some((Restore::Type(mime), data)) => clip.copy(&data, &mime)?,
+        let restored = match saved {
+            Some((Restore::Type(mime), data)) => clip.copy(&data, &mime),
             Some((Restore::Clear, _)) => {
                 debug!("буфер обмена очищен (был пуст или в нём был пароль)");
-                clip.clear()?;
+                clip.clear()
             }
-            None => {}
+            None => Ok(()),
+        };
+        // Текст уже вставлен — это не ошибка вставки: движок должен
+        // переключить раскладку и запомнить исправление.
+        if let Err(err) = restored {
+            warn!("прежний буфер обмена не вернулся: {err:#}");
         }
-        Ok(())
+        pasted
     }
 }
 
@@ -167,6 +173,18 @@ pub(super) mod testing {
     pub struct App {
         pub dir: std::path::PathBuf,
         pub pasted: Vec<String>,
+        /// Нажатие не проходит (uinput отказал).
+        pub broken: bool,
+    }
+
+    impl App {
+        pub fn new(dir: &std::path::Path) -> App {
+            App {
+                dir: dir.to_path_buf(),
+                pasted: Vec::new(),
+                broken: false,
+            }
+        }
     }
 
     impl Keys for App {
@@ -178,6 +196,7 @@ pub(super) mod testing {
         }
         fn combo(&mut self, keys: &[KeyCode]) -> Result<()> {
             assert_eq!(keys, [KeyCode::KEY_LEFTCTRL, KeyCode::KEY_V]);
+            anyhow::ensure!(!self.broken, "нажатие не прошло");
             self.pasted
                 .push(std::fs::read_to_string(self.dir.join("clip"))?);
             Ok(())
