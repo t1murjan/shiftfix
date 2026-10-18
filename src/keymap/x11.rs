@@ -13,8 +13,7 @@ use crate::sys::x11::{XConn, connect, rules_names};
 /// Раскладки сеанса X11 из `_XKB_RULES_NAMES` (`None` — нет libxkbcommon).
 pub fn fetch(x: &XConn) -> Option<Keymap> {
     let names = rules_names(x).ok()?;
-    let part = |i: usize| names.get(i).map(String::as_str).unwrap_or_default();
-    let keymap = xkb::from_names(part(2), part(3), part(4));
+    let keymap = xkb::from_names(&names.layout, &names.variant, &names.options);
     if keymap.is_none() {
         debug!("keymap X11 не разобрана (нет libxkbcommon?)");
     }

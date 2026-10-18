@@ -38,8 +38,7 @@ impl Backend for XkbLayout {
 
     fn layouts(&mut self) -> Result<Vec<String>> {
         self.with(|x| {
-            let names = rules_names(x)?;
-            let layouts = names.get(2).map(String::as_str).unwrap_or_default();
+            let layouts = rules_names(x)?.layout;
             if layouts.is_empty() {
                 bail!("раскладки X11 неизвестны");
             }
