@@ -121,12 +121,12 @@ snapshot() {
     echo "служба: $(pgrep -x -u "$U" shiftfix >/dev/null && echo работает || echo нет)"
 }
 
-# Записать журнал сценария $1: код выхода $2, вывод из файла $3.
+# Записать журнал сценария $1: ожидаемый код выхода $2, настоящий $3, вывод из файла $4.
 report() {
     {
-        echo "== код выхода: $2"
+        echo "== код выхода: $3"
         echo "== вывод"
-        normalize <"$3"
+        normalize <"$4"
         for log in sudo systemctl cargo daemon; do
             echo "== $log"
             if [[ -f $H/log/$log.log ]]; then normalize <"$H/log/$log.log"; fi
@@ -135,15 +135,20 @@ report() {
         snapshot
     } >"$OUT/$1.txt"
     rm -f "$H"/log/{sudo,systemctl,cargo,daemon}.log
-    echo "$1: код $2"
+    if [[ $3 == "$2" ]]; then
+        echo "$1: код $3"
+    else
+        echo "$1: код $3, а ожидался $2"
+        unexpected+=("$1")
+    fi
 }
 
-# Сценарий: имя и команда.
+# Сценарий: имя, ожидаемый код выхода и команда.
 scenario() {
     local out code
     out="$(mktemp)"
-    if as_user "$2" >"$out" 2>&1; then code=0; else code=$?; fi
-    report "$1" "$code" "$out"
+    if as_user "$3" >"$out" 2>&1; then code=0; else code=$?; fi
+    report "$1" "$2" "$code" "$out"
     rm -f "$out"
 }
 
@@ -156,11 +161,12 @@ fake_installed_version() {
 
 # Сценарий $1: install.sh с выводом через tee, Ctrl+C — как только он начнёт
 # останавливать службу. Ctrl+C в терминале получают все процессы сеанса: install.sh,
-# tee, systemctl.
+# tee, systemctl. $2 — ожидаемый код выхода.
 interrupted_stop() {
-    local out pid
+    local out pid job code
     out="$(mktemp)"
     as_user 'exec setsid bash -c "./install.sh 2>&1 | tee ~/log/tee.out"' >"$out" 2>&1 &
+    job=$!
     for _ in {1..100}; do
         grep -qs -- '--user stop' "$H/log/systemctl.log" && break
         sleep 0.1
@@ -170,92 +176,100 @@ interrupted_stop() {
     else
         echo "install.sh не дошёл до остановки службы" >>"$out"
     fi
-    wait || true
+    if wait "$job"; then code=0; else code=$?; fi
     sleep 1
-    report "$1" "-" "$out"
+    report "$1" "$2" "$code" "$out"
     rm -f "$out"
 }
 
 # ─── Сценарии ───────────────────────────────────────────────────────────────
+# scenario ИМЯ КОД КОМАНДА: КОД — какой код выхода ожидается. Если у какого-то
+# сценария код другой, run.sh в конце назовёт их и выйдет с кодом 1 (так падает CI).
+unexpected=()
 
-scenario 01-install './install.sh'
-scenario 02-same './install.sh'
+scenario 01-install 0 './install.sh'
+scenario 02-same 0 './install.sh'
 as_user 'systemctl --user start shiftfix.service'
 fake_installed_version 0.3.0
-scenario 03-update './install.sh'
+scenario 03-update 0 './install.sh'
+# Сборка падает: код 1, установленная версия не тронута; следующий запуск обновляет.
 fake_installed_version 0.3.0
 as_user 'touch ~/.fakesd/cargo-fail'
-scenario 04-build-fails './install.sh'
+scenario 04-build-fails 1 './install.sh'
 as_user 'rm ~/.fakesd/cargo-fail'
-scenario 05-update-after-fail './install.sh'
+scenario 05-update-after-fail 0 './install.sh'
+# Установлена более новая версия: без терминала спросить некого — код 1; ответ «нет» —
+# ничего не меняется; --yes — ставится.
 fake_installed_version 99.0.0
-scenario 06-older-no-terminal './install.sh'
-scenario 07-older-answer-no "printf 'n\n' | script -qec ./install.sh /dev/null"
-scenario 08-older-yes './install.sh --yes'
+scenario 06-older-no-terminal 1 './install.sh'
+scenario 07-older-answer-no 0 "printf 'n\n' | script -qec ./install.sh /dev/null"
+scenario 08-older-yes 0 './install.sh --yes'
 as_user 'systemctl --user disable shiftfix.service'
 fake_installed_version 0.3.0
-scenario 09-autostart-disabled './install.sh'
+scenario 09-autostart-disabled 0 './install.sh'
 as_user 'systemctl --user enable shiftfix.service'
 as_user "rm ~/.local/bin/shiftfix && ln -s $WORK/build/shiftfix ~/.local/bin/shiftfix"
-scenario 10-symlink './install.sh'
+scenario 10-symlink 0 './install.sh'
 
 # Ctrl+C, пока служба останавливается (медленно), а вывод идёт через tee: служба
 # должна подняться снова.
 as_user 'systemctl --user start shiftfix.service; touch ~/.fakesd/slow-stop'
 fake_installed_version 0.3.0
-interrupted_stop 11-interrupted-stop
+interrupted_stop 11-interrupted-stop 130
 as_user 'rm -f ~/.fakesd/slow-stop'
 
-scenario 12-repair-after-interrupt './install.sh'
+scenario 12-repair-after-interrupt 0 './install.sh'
 as_user 'touch ~/.fakesd/off'
-scenario 13-no-systemd-unit-kept './install.sh'
+scenario 13-no-systemd-unit-kept 0 './install.sh'
 as_user "./uninstall.sh --yes --keep-group >/dev/null 2>&1; rm -f ~/.config/systemd/user/shiftfix.service"
-scenario 14-no-systemd-install './install.sh'
+scenario 14-no-systemd-install 0 './install.sh'
 as_user 'rm ~/.fakesd/off'
-scenario 15-uninstall-answer-no "printf 'n\n' | script -qec ./uninstall.sh /dev/null"
-scenario 16-uninstall './uninstall.sh --yes'
-scenario 17-uninstall-again './uninstall.sh --yes'
-scenario 18-install-again './install.sh --yes'
-scenario 19-uninstall-purge './uninstall.sh --yes --purge'
-# Пока install.sh держит блокировку (идёт в другом терминале), uninstall.sh ничего не трогает.
-scenario 20-uninstall-while-locked "flock $RUN/shiftfix-install.lock ./uninstall.sh --yes"
+scenario 15-uninstall-answer-no 0 "printf 'n\n' | script -qec ./uninstall.sh /dev/null"
+scenario 16-uninstall 0 './uninstall.sh --yes'
+scenario 17-uninstall-again 0 './uninstall.sh --yes'
+scenario 18-install-again 0 './install.sh --yes'
+scenario 19-uninstall-purge 0 './uninstall.sh --yes --purge'
+# Пока install.sh держит блокировку (идёт в другом терминале), uninstall.sh ничего не
+# трогает и выходит с кодом 1.
+scenario 20-uninstall-while-locked 1 "flock $RUN/shiftfix-install.lock ./uninstall.sh --yes"
 
-# Первая установка обрывается после замены файлов (daemon-reload падает): повторный
-# запуск доделывает её — включает автозапуск и запускает службу, а uninstall.sh
-# убирает и метку незаконченной установки.
+# Первая установка обрывается после замены файлов (daemon-reload падает, код 1):
+# повторный запуск доделывает её — включает автозапуск и запускает службу, а
+# uninstall.sh убирает и метку незаконченной установки.
 as_user 'touch ~/.fakesd/reload-fail'
-scenario 21-first-install-interrupted './install.sh'
-scenario 22-uninstall-interrupted './uninstall.sh --yes --keep-group'
+scenario 21-first-install-interrupted 1 './install.sh'
+scenario 22-uninstall-interrupted 0 './uninstall.sh --yes --keep-group'
 as_user './install.sh >/dev/null 2>&1; rm ~/.fakesd/reload-fail ~/log/*.log' # снова обрыв, без журнала
-scenario 23-first-install-resumed './install.sh'
+scenario 23-first-install-resumed 0 './install.sh'
 
 # Юнит выключен, а служба запускается из автозапуска сеанса (его записал сеанс без
 # systemd): install.sh этот файл не трогает.
 as_user 'systemctl --user disable shiftfix.service && mkdir -p ~/.config/autostart &&
     ~/.local/bin/shiftfix --print-autostart >~/.config/autostart/shiftfix.desktop'
-scenario 24-unit-off-session-autostart './install.sh'
+scenario 24-unit-off-session-autostart 0 './install.sh'
 
 # Домашний каталог с пробелом: путь в Exec= ярлыка — в кавычках, установка и
 # удаление не спотыкаются. Журналы и состояние systemctl — общие с основным.
 SPACE_HOME="$H/my home"
 as_user "systemctl --user stop shiftfix.service && mkdir '$SPACE_HOME' && ln -s ~/log ~/.fakesd '$SPACE_HOME/'"
-scenario 25-home-with-space "HOME='$SPACE_HOME' ./install.sh &&
+scenario 25-home-with-space 0 "HOME='$SPACE_HOME' ./install.sh &&
     grep '^Exec=' '$SPACE_HOME/.local/share/applications/shiftfix.desktop'"
-scenario 26-home-with-space-uninstall "HOME='$SPACE_HOME' ./uninstall.sh --yes --keep-group"
+scenario 26-home-with-space-uninstall 0 "HOME='$SPACE_HOME' ./uninstall.sh --yes --keep-group"
 
 # Та же версия, но правила udev нет (его убрало удаление выше): ставится только оно.
-scenario 27-same-system-repaired './install.sh'
+scenario 27-same-system-repaired 0 './install.sh'
 
 # Метка незаконченной установки лежит, а блокировку держит install.sh в другом
-# терминале (метку положил он): второй только просит подождать, не «запустите снова».
+# терминале (метку положил он): второй только просит подождать (код 1), не «запустите
+# снова».
 as_user 'mkdir -p ~/.local/state && touch ~/.local/state/shiftfix-install-incomplete'
-scenario 28-install-while-locked "flock $RUN/shiftfix-install.lock ./install.sh"
+scenario 28-install-while-locked 1 "flock $RUN/shiftfix-install.lock ./install.sh"
 as_user 'rm ~/.local/state/shiftfix-install-incomplete'
 
 # Первая установка (программ в ~/.local/bin нет), а юнит уже есть и выключен — его
 # записало окно, потом автозапуск выключили: install.sh выбор не трогает.
 as_user 'rm ~/.local/bin/shiftfix ~/.local/bin/shiftfix-gui ~/.config/autostart/shiftfix.desktop'
-scenario 29-first-install-unit-off './install.sh'
+scenario 29-first-install-unit-off 0 './install.sh'
 
 # Доделка оборванной установки, а цели включённого юнита сменились: обрыв был вне
 # графического сеанса (WantedBy с default.target). Ссылка из default.target.wants
@@ -263,4 +277,9 @@ scenario 29-first-install-unit-off './install.sh'
 as_user 'touch ~/.fakesd/no-graphical && ~/.local/bin/shiftfix --print-unit >~/.config/systemd/user/shiftfix.service &&
     rm ~/.fakesd/no-graphical && systemctl --user enable shiftfix.service &&
     touch ~/.local/state/shiftfix-install-incomplete && rm ~/log/*.log'
-scenario 30-resumed-wanted-changed './install.sh'
+scenario 30-resumed-wanted-changed 0 './install.sh'
+
+if ((${#unexpected[@]})); then
+    echo "Код выхода не тот, что ожидался: ${unexpected[*]}" >&2
+    exit 1
+fi
