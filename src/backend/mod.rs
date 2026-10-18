@@ -19,8 +19,12 @@ pub use kde::Kde;
 pub use sway::Sway;
 pub use x11::XkbLayout;
 
+use anyhow::{Context, Result};
+use serde_json::Value;
+
 use crate::config::{BackendKind, Config};
 use crate::engine::Backend;
+use crate::sys::proc::run_text;
 
 /// Переключатель, выбранный в конфиге (`backend = …`).
 pub fn make(cfg: &Config) -> Box<dyn Backend> {
@@ -34,6 +38,21 @@ pub fn make(cfg: &Config) -> Box<dyn Backend> {
         BackendKind::X11 => Box::new(XkbLayout::default()),
         BackendKind::Hotkey => Box::new(hotkey()),
     }
+}
+
+/// Ответ внешней команды в JSON (`hyprctl -j`, `swaymsg -r`).
+fn run_json(cmd: &str, args: &[&str]) -> Result<Value> {
+    let out = run_text(cmd, args)?;
+    serde_json::from_str(&out).with_context(|| format!("{cmd}: неожиданный ответ"))
+}
+
+/// Виртуальная клавиатура shiftfix в списке клавиатур композитора: через неё
+/// перенабирается слово, а раскладку определяет настоящая.
+fn is_ours(keyboard: &Value) -> bool {
+    keyboard["name"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("shiftfix")
 }
 
 #[cfg(test)]
