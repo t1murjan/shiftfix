@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use evdev::KeyCode;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 
 use crate::config::Config;
 use crate::devices::Registry;
@@ -60,7 +60,13 @@ pub enum Msg {
     TogglePause,
     Reload,
     Quit,
-    Ipc(Request, Sender<Response>),
+    /// Запрос из сокета. После `deadline` главный цикл его не выполняет и
+    /// бросает `reply` — сервер тут же отвечает клиенту «служба занята».
+    Ipc {
+        req: Request,
+        deadline: Instant,
+        reply: Sender<Response>,
+    },
 }
 
 static START: LazyLock<Instant> = LazyLock::new(Instant::now);
@@ -299,7 +305,15 @@ impl Daemon {
                 }
             }
             Msg::Quit => return false,
-            Msg::Ipc(req, reply) => {
+            Msg::Ipc {
+                req,
+                deadline,
+                reply,
+            } => {
+                if Instant::now() > deadline {
+                    debug!("IPC: {req:?} не дождался очереди — пропущен");
+                    return true;
+                }
                 let quit = req == Request::Quit;
                 let response = match req {
                     Request::Status => Response {
@@ -361,7 +375,7 @@ mod tests {
         }
     }
 
-    fn daemon(path: PathBuf) -> Daemon {
+    pub(super) fn daemon(path: PathBuf) -> Daemon {
         let cfg = Config {
             tray: false,
             selection: false,
@@ -395,7 +409,11 @@ mod tests {
 
     fn ask(d: &mut Daemon, req: Request) -> (bool, Response) {
         let (reply, answer) = mpsc::channel();
-        let alive = d.handle(Msg::Ipc(req, reply));
+        let alive = d.handle(Msg::Ipc {
+            req,
+            deadline: Instant::now() + Duration::from_secs(60),
+            reply,
+        });
         (alive, answer.recv().unwrap())
     }
 

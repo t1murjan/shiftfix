@@ -7,7 +7,6 @@ mod check;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use log::error;
@@ -167,7 +166,7 @@ fn print_for_exe(text: impl FnOnce(&Path) -> String) -> ExitCode {
 }
 
 fn send(req: &Request) -> ExitCode {
-    match ipc::request(req, Duration::from_secs(3)) {
+    match ipc::request(req) {
         // После переключения видно, в какую сторону.
         Ok(_) if *req == Request::Toggle => status(),
         Ok(_) => ExitCode::SUCCESS,
@@ -179,7 +178,7 @@ fn send(req: &Request) -> ExitCode {
 }
 
 fn status() -> ExitCode {
-    match ipc::request(&Request::Status, Duration::from_secs(3)) {
+    match ipc::request(&Request::Status) {
         Ok(response) => {
             let Some(s) = response.status else {
                 return ExitCode::FAILURE;

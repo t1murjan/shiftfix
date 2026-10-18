@@ -87,7 +87,7 @@ impl Link {
     pub fn send(&self, req: Request, success: Option<&'static str>) {
         let (shared, toasts, ctx) = (self.shared.clone(), self.toasts.clone(), self.ctx.clone());
         thread::spawn(move || {
-            let toast = match ipc::request(&req, Duration::from_secs(4)) {
+            let toast = match ipc::request(&req) {
                 Ok(_) => success.map(|text| Toast::new(ToastKind::Success, text)),
                 Err(err) => Some(Toast::new(ToastKind::Error, format!("{err:#}"))),
             };
@@ -115,7 +115,7 @@ impl Link {
 }
 
 fn refresh(shared: &Arc<Mutex<Snapshot>>, with_service: bool) {
-    let result = ipc::request(&Request::Status, Duration::from_secs(2));
+    let result = ipc::request(&Request::Status);
     let service = with_service.then(query_service);
     let Ok(mut snap) = shared.lock() else { return };
     match result {
@@ -250,14 +250,13 @@ fn run_without_systemd(action: ServiceAction) -> Result<String> {
     match action {
         ServiceAction::Start | ServiceAction::Restart => {
             if matches!(action, ServiceAction::Restart) {
-                let _ = ipc::request(&Request::Quit, Duration::from_secs(2));
+                let _ = ipc::request(&Request::Quit);
                 thread::sleep(Duration::from_millis(500));
             }
             proc::spawn_detached(daemon_binary(), &[])?;
             Ok("Служба запущена".into())
         }
-        ServiceAction::Stop => ipc::request(&Request::Quit, Duration::from_secs(3))
-            .map(|_| "Служба остановлена".into()),
+        ServiceAction::Stop => ipc::request(&Request::Quit).map(|_| "Служба остановлена".into()),
         ServiceAction::Autostart(true) | ServiceAction::Install => {
             let path = autostart_file();
             fs::create_dir_all(path.parent().expect("parent"))?;

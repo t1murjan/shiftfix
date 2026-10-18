@@ -14,6 +14,21 @@ use crate::devices::DeviceInfo;
 use crate::engine::{Action, LayoutInfo};
 use crate::logbuf::LogLine;
 
+/// Сколько клиент — команды `shiftfix` и окно — ждёт ответа службы.
+pub const TIMEOUT: Duration = Duration::from_secs(3);
+/// Сколько запрос может ждать очереди в главном цикле службы: тот бывает
+/// занят — печатает исправление. Опоздавший запрос не выполняется: сервер
+/// скоро перестанет ждать ответа, и выполненный запрос клиент увидел бы как
+/// «служба занята». На сам запрос остаётся REPLY_WAIT − QUEUE_LIMIT.
+pub(crate) const QUEUE_LIMIT: Duration = Duration::from_millis(1500);
+/// Сколько сервер ждёт ответа главного цикла: очередь и сам запрос. Меньше
+/// TIMEOUT, чтобы «служба занята» успела дойти до клиента.
+pub(crate) const REPLY_WAIT: Duration = Duration::from_millis(2500);
+const _: () = assert!(
+    QUEUE_LIMIT.as_millis() < REPLY_WAIT.as_millis()
+        && REPLY_WAIT.as_millis() < TIMEOUT.as_millis()
+);
+
 pub fn socket_path() -> PathBuf {
     crate::sys::env::runtime_dir().join("shiftfix.sock")
 }
@@ -83,16 +98,16 @@ pub struct Status {
     pub config_path: String,
 }
 
-/// Отправить запрос службе.
-pub fn request(req: &Request, timeout: Duration) -> Result<Response> {
-    request_at(&socket_path(), req, timeout)
+/// Отправить запрос службе и подождать ответа не дольше TIMEOUT.
+pub fn request(req: &Request) -> Result<Response> {
+    request_at(&socket_path(), req)
 }
 
-pub(crate) fn request_at(path: &Path, req: &Request, timeout: Duration) -> Result<Response> {
+pub(crate) fn request_at(path: &Path, req: &Request) -> Result<Response> {
     let mut stream = UnixStream::connect(path)
         .with_context(|| format!("служба не отвечает ({})", path.display()))?;
-    stream.set_read_timeout(Some(timeout))?;
-    stream.set_write_timeout(Some(timeout))?;
+    stream.set_read_timeout(Some(TIMEOUT))?;
+    stream.set_write_timeout(Some(TIMEOUT))?;
     let mut line = serde_json::to_string(req)?;
     line.push('\n');
     stream.write_all(line.as_bytes())?;
