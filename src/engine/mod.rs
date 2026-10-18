@@ -4,14 +4,19 @@
 //! слово — значит переключить раскладку, стереть N символов и нажать те же
 //! клавиши ещё раз; таблицы для этого не нужны.
 //!
-//! Здесь — разбор событий и исправление; через что движок нажимает клавиши,
-//! переключает раскладку, читает выделение и спрашивает службу (`Hooks`) —
-//! в `ports.rs`, буфер нажатий и последнее слово в нём — в `buffer.rs`, что
-//! движок сообщает окну — в `report.rs`.
+//! Здесь — разбор событий и исправление, остальное — рядом:
+//!
+//! - `ports.rs` — через что движок нажимает клавиши, переключает раскладку,
+//!   читает выделение и спрашивает службу (`Hooks`);
+//! - `taps.rs` — двойной Shift и одиночные Ctrl/Alt/Meta;
+//! - `buffer.rs` — буфер нажатий и последнее слово в нём;
+//! - `report.rs` — что движок сообщает окну;
+//! - `tests.rs` — модель поля ввода и тесты на ней.
 
 mod buffer;
 mod ports;
 mod report;
+mod taps;
 #[cfg(test)]
 mod tests;
 
@@ -30,6 +35,7 @@ use crate::config::{Config, SelectionMethod};
 use crate::keymap::{self, Keymap, Layout};
 use crate::keys::{Stroke, is_char, is_ctrl, is_modifier, is_nav, is_neutral, is_shift};
 use buffer::Buffer;
+use taps::Taps;
 
 /// Вставку длиннее нельзя «прокрутить» повторным ⇧⇧.
 pub const SEGMENT_MAX: usize = 200;
@@ -56,12 +62,8 @@ pub struct Engine {
     buf: Buffer,
     /// Зажатые физические клавиши.
     down: HashSet<KeyCode>,
-    /// «Чистое» нажатие Shift: в этот момент больше ничего не зажато.
-    shift_press: Option<f64>,
-    /// Отпускание первого Shift двойного нажатия.
-    first_tap: Option<f64>,
-    /// Одиночный Ctrl/Alt/Meta без других клавиш.
-    lone_mod: Option<KeyCode>,
+    /// ⇧⇧ и одиночные Ctrl/Alt/Meta.
+    taps: Taps,
     touch_down: HashMap<String, f64>,
     /// В PRIMARY актуальное выделение.
     selection_valid: bool,
@@ -96,9 +98,7 @@ impl Engine {
             enabled: true,
             buf: Buffer::default(),
             down: HashSet::new(),
-            shift_press: None,
-            first_tap: None,
-            lone_mod: None,
+            taps: Taps::default(),
             touch_down: HashMap::new(),
             selection_valid: false,
             selection_ignore_until: 0.0,
@@ -175,7 +175,7 @@ impl Engine {
         if value != 1 {
             return;
         }
-        self.clear_taps();
+        self.taps.clear();
         self.layout_dirty = true;
         if self.enabled {
             self.selection_valid = false; // клик снимает выделение; новое придёт событием PRIMARY
@@ -210,7 +210,7 @@ impl Engine {
     /// После потери событий: зажатые клавиши берутся у ядра, буфер забывается.
     pub fn resync(&mut self, held: HashSet<KeyCode>) {
         self.down = held;
-        self.clear_taps();
+        self.taps.clear();
         self.layout_dirty = true;
         self.reset("пересинхронизация");
     }
@@ -218,7 +218,7 @@ impl Engine {
     pub fn set_enabled(&mut self, flag: bool) {
         self.enabled = flag;
         self.selection_valid = false;
-        self.clear_taps();
+        self.taps.clear();
         self.layout_dirty = true;
         self.reset(if flag {
             "снова работаю"
@@ -230,27 +230,18 @@ impl Engine {
     // Разбор нажатий.
 
     fn press(&mut self, key: KeyCode, held: Held, ts: f64) {
+        self.taps.pressed(key, !held.any, ts);
         if is_shift(key) {
-            self.lone_mod = None;
             if held.any {
                 // Alt+Shift, Ctrl+Shift, Shift+Shift — возможно, смена раскладки.
-                self.shift_press = None;
-                self.first_tap = None;
                 self.layout_dirty = true;
-            } else {
-                self.shift_press = Some(ts);
             }
             return;
         }
-        self.shift_press = None;
-        self.first_tap = None;
-
         if is_modifier(key) {
-            self.lone_mod = if held.any { None } else { Some(key) };
             self.layout_dirty = true;
             return;
         }
-        self.lone_mod = None;
         if is_neutral(key) {
             self.layout_dirty |= key == KeyCode::KEY_CAPSLOCK;
             return;
@@ -284,27 +275,13 @@ impl Engine {
 
     fn release(&mut self, key: KeyCode, ts: f64) {
         if is_shift(key) {
-            match self.shift_press.take() {
-                Some(pressed) if ts - pressed <= self.cfg.tap_max_hold => {
-                    if self
-                        .first_tap
-                        .is_some_and(|first| pressed - first <= self.cfg.double_tap)
-                    {
-                        self.first_tap = None;
-                        self.trigger();
-                    } else {
-                        self.first_tap = Some(ts);
-                    }
-                }
-                _ => self.first_tap = None,
+            if self.taps.shift_released(ts, &self.cfg) {
+                self.trigger();
             }
-        } else if self.lone_mod == Some(key) {
-            self.lone_mod = None;
-            if !is_ctrl(key) {
-                // Одиночный Alt открывает меню, Meta — лаунчер: фокус ушёл.
-                self.selection_valid = false;
-                self.reset("одиночный Alt/Meta");
-            }
+        } else if self.taps.lone_mod_released(key) && !is_ctrl(key) {
+            // Одиночный Alt открывает меню, Meta — лаунчер: фокус ушёл.
+            self.selection_valid = false;
+            self.reset("одиночный Alt/Meta");
         }
     }
 
@@ -335,12 +312,6 @@ impl Engine {
             shift,
             layout: self.layout,
         });
-    }
-
-    fn clear_taps(&mut self) {
-        self.shift_press = None;
-        self.first_tap = None;
-        self.lone_mod = None;
     }
 
     fn reset(&mut self, why: &str) {
