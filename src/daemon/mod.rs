@@ -240,10 +240,7 @@ impl Daemon {
 
     fn reload(&mut self) -> Result<()> {
         let cfg = Config::load(&self.path)?;
-        let backend_changed = cfg.backend != self.cfg.backend
-            || cfg.switch_hotkey != self.cfg.switch_hotkey
-            || cfg.hotkey_layouts != self.cfg.hotkey_layouts;
-        if backend_changed {
+        if backend::settings_changed(&self.cfg, &cfg) {
             self.engine.set_backend(backend::make(&cfg));
         }
         self.engine

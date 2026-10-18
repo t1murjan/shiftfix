@@ -40,6 +40,13 @@ pub fn make(cfg: &Config) -> Box<dyn Backend> {
     }
 }
 
+/// Нужен ли новый переключатель: в конфиге изменилось то, что читает `make`.
+pub fn settings_changed(old: &Config, new: &Config) -> bool {
+    old.backend != new.backend
+        || old.switch_hotkey != new.switch_hotkey
+        || old.hotkey_layouts != new.hotkey_layouts
+}
+
 /// Ответ внешней команды в JSON (`hyprctl -j`, `swaymsg -r`).
 fn run_json(cmd: &str, args: &[&str]) -> Result<Value> {
     let out = run_text(cmd, args)?;
@@ -58,6 +65,16 @@ fn is_ours(keyboard: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_changed_only_for_make_fields() {
+        let old = Config::default();
+        let mut new = old.clone();
+        new.double_tap = 0.5;
+        assert!(!settings_changed(&old, &new));
+        new.hotkey_layouts.push("de".into());
+        assert!(settings_changed(&old, &new));
+    }
 
     #[test]
     fn auto_falls_back_to_hotkey() {
