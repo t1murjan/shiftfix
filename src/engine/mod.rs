@@ -172,14 +172,9 @@ impl Engine {
     }
 
     pub fn button(&mut self, value: i32, _ts: f64) {
-        if value != 1 {
-            return;
-        }
-        self.taps.clear();
-        self.layout_dirty = true;
-        if self.enabled {
+        if value == 1 && self.enabled {
             self.selection_valid = false; // клик снимает выделение; новое придёт событием PRIMARY
-            self.reset("клик");
+            self.forget("клик");
         }
     }
 
@@ -210,17 +205,13 @@ impl Engine {
     /// После потери событий: зажатые клавиши берутся у ядра, буфер забывается.
     pub fn resync(&mut self, held: HashSet<KeyCode>) {
         self.down = held;
-        self.taps.clear();
-        self.layout_dirty = true;
-        self.reset("пересинхронизация");
+        self.forget("пересинхронизация");
     }
 
     pub fn set_enabled(&mut self, flag: bool) {
         self.enabled = flag;
         self.selection_valid = false;
-        self.taps.clear();
-        self.layout_dirty = true;
-        self.reset(if flag {
+        self.forget(if flag {
             "снова работаю"
         } else {
             "пауза"
@@ -314,11 +305,26 @@ impl Engine {
         });
     }
 
+    /// Набор шёл мимо или курсор ушёл: забыть начатый ⇧⇧, раскладку, в
+    /// которой набирали, и буфер.
+    fn forget(&mut self, why: &str) {
+        self.taps.clear();
+        self.layout_dirty = true;
+        self.reset(why);
+    }
+
     fn reset(&mut self, why: &str) {
         if !self.buf.is_empty() {
             debug!("буфер сброшен: {why}");
         }
         self.buf.clear();
+    }
+
+    /// Дальше набор идёт в раскладке `layout`; `None` — какая включена,
+    /// неизвестно: спросить у переключателя перед следующей буквой.
+    fn switched_to(&mut self, layout: Option<usize>) {
+        self.layout = layout;
+        self.layout_dirty = layout.is_none();
     }
 
     fn current_layout(&mut self) -> Option<usize> {
@@ -379,8 +385,7 @@ impl Engine {
         self.keys.backspace(count)?;
         self.keys.type_strokes(&self.buf.strokes()[start..])?;
         self.buf.retyped(start, target);
-        self.layout = target;
-        self.layout_dirty = target.is_none();
+        self.switched_to(target);
         let kind = if undo {
             ActionKind::Undo
         } else {
@@ -523,8 +528,7 @@ impl Engine {
             }
             _ => self.reset("выделение заменено"),
         }
-        self.layout = current.map(|_| tgt);
-        self.layout_dirty = current.is_none();
+        self.switched_to(current.map(|_| tgt));
         self.record(ActionKind::Selection, length, Some(src), Some(tgt));
         info!(
             "выделение: {length} символов, {} → {} ({how})",
