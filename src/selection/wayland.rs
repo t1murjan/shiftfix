@@ -9,10 +9,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use evdev::KeyCode;
-use log::{debug, warn};
 
-use super::clipboard::{Restore, TEXT_TYPES, UTF8, is_gnome, restore_plan, wait_until};
+use super::clipboard::{Clipboard, Paste, TEXT_TYPES, UTF8};
 use crate::config::Config;
 use crate::daemon::Msg;
 use crate::engine::{Keys, Selection};
@@ -20,9 +18,7 @@ use crate::sys::env;
 use crate::sys::proc::{TIMEOUT, feed, run};
 
 pub struct WlClipboard {
-    paste_keys: Vec<KeyCode>,
-    restore: bool,
-    restore_delay: Duration,
+    paste: Paste,
     wl_paste: String,
     wl_copy: String,
 }
@@ -30,15 +26,13 @@ pub struct WlClipboard {
 impl WlClipboard {
     pub fn new(cfg: &Config, wl_paste: &str, wl_copy: &str) -> Self {
         WlClipboard {
-            paste_keys: cfg.paste_keys.clone(),
-            restore: cfg.restore_clipboard,
-            restore_delay: cfg.paste_restore,
+            paste: Paste::new(cfg),
             wl_paste: wl_paste.into(),
             wl_copy: wl_copy.into(),
         }
     }
 
-    fn types(&self, primary: bool) -> Option<Vec<String>> {
+    fn list_types(&self, primary: bool) -> Option<Vec<String>> {
         let base: &[&str] = if primary { &["--primary"] } else { &[] };
         let list = run(
             &self.wl_paste,
@@ -55,7 +49,7 @@ impl WlClipboard {
         })
     }
 
-    fn read(&self, primary: bool, mime: &str) -> Option<Vec<u8>> {
+    fn read_from(&self, primary: bool, mime: &str) -> Option<Vec<u8>> {
         let base: &[&str] = if primary { &["--primary"] } else { &[] };
         let out = run(
             &self.wl_paste,
@@ -65,54 +59,41 @@ impl WlClipboard {
         .ok()?;
         out.ok.then_some(out.stdout)
     }
+}
+
+impl Clipboard for WlClipboard {
+    const TEXT: &str = UTF8;
+
+    fn types(&self) -> Option<Vec<String>> {
+        self.list_types(false)
+    }
+
+    fn read(&self, mime: &str) -> Option<Vec<u8>> {
+        self.read_from(false, mime)
+    }
 
     fn copy(&self, data: &[u8], mime: &str) -> Result<()> {
         feed(&self.wl_copy, &["--type", mime], data)
+    }
+
+    fn clear(&self) -> Result<()> {
+        let _ = run(&self.wl_copy, &["--clear"], TIMEOUT);
+        Ok(())
     }
 }
 
 impl Selection for WlClipboard {
     fn read_primary(&mut self) -> Option<String> {
-        let types = self.types(true)?;
+        let types = self.list_types(true)?;
         let mime = TEXT_TYPES
             .iter()
             .find_map(|m| types.iter().find(|t| t.eq_ignore_ascii_case(m)))?;
-        self.read(true, mime)
+        self.read_from(true, mime)
             .map(|data| String::from_utf8_lossy(&data).into_owned())
     }
 
     fn paste(&mut self, text: &str, keys: &mut dyn Keys) -> Result<()> {
-        let saved = if self.restore {
-            match self.types(false) {
-                None => Some(Restore::Clear),
-                Some(types) => Some(restore_plan(&types, is_gnome())),
-            }
-        } else {
-            None
-        };
-        let saved = saved.map(|plan| match plan {
-            Restore::Type(mime) => match self.read(false, &mime) {
-                Some(data) => (Restore::Type(mime), data),
-                None => (Restore::Clear, Vec::new()),
-            },
-            Restore::Clear => (Restore::Clear, Vec::new()),
-        });
-        self.copy(text.as_bytes(), UTF8)?;
-        if !wait_until(|| self.read(false, UTF8), text.as_bytes()) {
-            warn!("буфер обмена не обновился вовремя, вставляю всё равно");
-        }
-        keys.combo(&self.paste_keys)?;
-        // Приложение забирает данные асинхронно — не подменять буфер раньше времени.
-        thread::sleep(self.restore_delay);
-        match saved {
-            Some((Restore::Type(mime), data)) => self.copy(&data, &mime)?,
-            Some((Restore::Clear, _)) => {
-                debug!("буфер обмена очищен (был пуст или в нём был пароль)");
-                let _ = run(&self.wl_copy, &["--clear"], TIMEOUT);
-            }
-            None => {}
-        }
-        Ok(())
+        self.paste.run(self, text, keys)
     }
 }
 
