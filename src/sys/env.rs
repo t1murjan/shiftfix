@@ -92,7 +92,8 @@ fn names_in(dir: &Path) -> Vec<String> {
     names
 }
 
-fn wayland_path(display: &str) -> PathBuf {
+/// Путь к сокету Wayland по `WAYLAND_DISPLAY`.
+pub fn wayland_path(display: &str) -> PathBuf {
     if display.starts_with('/') {
         display.into()
     } else {
@@ -159,6 +160,11 @@ pub fn sway_socket() -> Option<String> {
     })
 }
 
+/// Сокет X-сервера с этим номером.
+pub fn x11_socket(number: u32) -> String {
+    format!("/tmp/.X11-unix/X{number}")
+}
+
 /// Номер дисплея из `:0`, `:1.0`, `unix/:0`.
 pub fn x11_number(display: &str) -> Option<u32> {
     let rest = display.rsplit_once(':')?.1;
@@ -173,7 +179,7 @@ fn x11_alive(number: u32) -> bool {
         .and_then(|s| s.trim().parse::<u32>().ok());
     match pid {
         Some(pid) => Path::new(&format!("/proc/{pid}")).exists(),
-        None => is_socket(Path::new(&format!("/tmp/.X11-unix/X{number}"))),
+        None => is_socket(Path::new(&x11_socket(number))),
     }
 }
 
@@ -181,8 +187,7 @@ fn x11_alive(number: u32) -> bool {
 pub fn x11_display() -> Option<String> {
     static SLOT: Slot<Option<String>> = Mutex::new(None);
     cached(&SLOT, || {
-        let own =
-            |n: &u32| fs::metadata(format!("/tmp/.X11-unix/X{n}")).is_ok_and(|m| m.uid() == uid());
+        let own = |n: &u32| fs::metadata(x11_socket(*n)).is_ok_and(|m| m.uid() == uid());
         let mut scanned: Vec<u32> = names_in(Path::new("/tmp/.X11-unix"))
             .iter()
             .filter_map(|n| n.strip_prefix('X')?.parse().ok())

@@ -1,6 +1,8 @@
 //! Строки для показа в окне: путь с «~», время, сравнение версий.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+use shiftfix::sys::paths;
 
 /// Служба другой версии, чем окно: после обновления её не перезапустили.
 /// Пустая версия службы (не сообщила) — не расхождение.
@@ -24,8 +26,7 @@ pub fn short_path(path: &Path, home: Option<&Path>) -> String {
 
 /// Путь для показа относительно `$HOME`.
 pub fn shown_path(path: &Path) -> String {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    short_path(path, home.as_deref())
+    short_path(path, paths::home().as_deref())
 }
 
 /// Unix-время → «ЧЧ:ММ:СС» по местному времени.

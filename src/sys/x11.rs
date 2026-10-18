@@ -81,8 +81,8 @@ fn auth_files() -> Vec<PathBuf> {
         .map(PathBuf::from)
         .into_iter()
         .collect();
-    if let Some(home) = std::env::var_os("HOME") {
-        files.push(PathBuf::from(home).join(".Xauthority"));
+    if let Some(home) = paths::home() {
+        files.push(home.join(".Xauthority"));
     }
     let run = paths::runtime_dir();
     files.extend(session_auth_files(&run));
@@ -136,7 +136,7 @@ fn attempts(files: &[(PathBuf, Vec<u8>)], number: u32) -> Vec<(Option<PathBuf>, 
 }
 
 fn stream(number: u32) -> std::io::Result<UnixStream> {
-    let path = format!("/tmp/.X11-unix/X{number}");
+    let path = env::x11_socket(number);
     // Как libxcb: сначала абстрактный сокет, потом файл.
     SocketAddr::from_abstract_name(path.as_bytes())
         .and_then(|addr| UnixStream::connect_addr(&addr))
