@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
-use std::time::{Instant, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use evdev::raw_stream::RawDevice;
 use evdev::{EventType, InputEvent, KeyCode, LedCode, SynchronizationCode};
@@ -214,6 +214,20 @@ impl Registry {
         if let Err(err) = spawned {
             warn!("поток чтения {} не запустился: {err}", path.display());
         }
+    }
+
+    /// Поток, который раз в 2 с ищет новые устройства и забывает отключённые.
+    pub fn spawn_hotplug(self: &Arc<Self>) -> std::io::Result<()> {
+        let registry = Arc::clone(self);
+        thread::Builder::new()
+            .name("hotplug".into())
+            .spawn(move || {
+                loop {
+                    thread::sleep(Duration::from_secs(2));
+                    registry.scan();
+                }
+            })?;
+        Ok(())
     }
 
     /// Новые правила из конфига: роли меняются на лету, «Другое» → роль открывается заново.
