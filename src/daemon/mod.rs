@@ -73,9 +73,8 @@ struct Daemon {
     /// Что сейчас в трее: работает ли служба и раскладки в подсказке.
     tray_shown: Option<(bool, String)>,
     tx: Sender<Msg>,
-    selection_note: Option<String>,
-    /// Через что сейчас следим за выделением.
-    selection_via: Option<&'static str>,
+    /// Слежение за выделением: `Ok(чем)` — работает, иначе причина, почему нет.
+    selection: Result<&'static str, String>,
     selection_active: Active,
     watching_primary: bool,
 }
@@ -87,35 +86,8 @@ pub fn run(path: PathBuf, cfg: Config) -> Result<()> {
 
     let input_tx = tx.clone();
     let registry = Registry::new(&cfg, move |event| input_tx.send(Msg::Input(event)).is_ok());
-    let mut stats = registry.scan();
-    if registry.keyboard_count() == 0 && stats.denied > 0 {
-        // Узел, который udev только что создал, бывает недоступен долю секунды.
-        thread::sleep(Duration::from_secs(1));
-        stats = registry.scan();
-    }
-    if registry.keyboard_count() == 0 {
-        // Часть устройств закрыта — клавиатуры, скорее всего, среди них. Открыться
-        // могут и чужие (джойстики systemd отдаёт пользователю сам), поэтому
-        // смотрим не на opened, а на denied.
-        if stats.denied > 0 {
-            bail!(
-                "нет доступа к {} устройствам в /dev/input — добавь себя в группу input \
-                 (sudo usermod -aG input $USER) и перезайди в систему",
-                stats.denied
-            );
-        }
-        // Bluetooth- и беспроводные клавиатуры подключаются и после входа.
-        warn!("клавиатур пока нет — жду подключения");
-    }
-    let scanner = Arc::clone(&registry);
-    thread::Builder::new()
-        .name("hotplug".into())
-        .spawn(move || {
-            loop {
-                thread::sleep(Duration::from_secs(2));
-                scanner.scan();
-            }
-        })?;
+    first_scan(&registry)?;
+    registry.spawn_hotplug()?;
     signals::spawn(tx.clone())?;
     let _socket = socket::serve(ipc::socket_path(), tx.clone())?;
     let keymap_tx = tx.clone();
@@ -137,19 +109,7 @@ pub fn run(path: PathBuf, cfg: Config) -> Result<()> {
             guard: Box::new(move || session::blocked(&mut logind)),
         },
     );
-    let mut daemon = Daemon {
-        path,
-        tray: None,
-        tray_shown: None,
-        engine,
-        registry,
-        tx,
-        selection_note: Some("запускается".into()),
-        selection_via: None,
-        selection_active,
-        watching_primary: false,
-        cfg,
-    };
+    let mut daemon = Daemon::new(path, cfg, engine, registry, tx, selection_active);
     daemon.apply_side_effects();
     let layouts = daemon.engine.layout_info();
     info!(
@@ -173,7 +133,55 @@ pub fn run(path: PathBuf, cfg: Config) -> Result<()> {
     Ok(())
 }
 
+/// Первый обход /dev/input. Ошибка — если клавиатуры, скорее всего, есть, но
+/// закрыты правами.
+fn first_scan(registry: &Arc<Registry>) -> Result<()> {
+    let mut stats = registry.scan();
+    if registry.keyboard_count() == 0 && stats.denied > 0 {
+        // Узел, который udev только что создал, бывает недоступен долю секунды.
+        thread::sleep(Duration::from_secs(1));
+        stats = registry.scan();
+    }
+    if registry.keyboard_count() == 0 {
+        // Часть устройств закрыта — клавиатуры, скорее всего, среди них. Открыться
+        // могут и чужие (джойстики systemd отдаёт пользователю сам), поэтому
+        // смотрим не на opened, а на denied.
+        if stats.denied > 0 {
+            bail!(
+                "нет доступа к {} устройствам в /dev/input — добавь себя в группу input \
+                 (sudo usermod -aG input $USER) и перезайди в систему",
+                stats.denied
+            );
+        }
+        // Bluetooth- и беспроводные клавиатуры подключаются и после входа.
+        warn!("клавиатур пока нет — жду подключения");
+    }
+    Ok(())
+}
+
 impl Daemon {
+    fn new(
+        path: PathBuf,
+        cfg: Config,
+        engine: Engine,
+        registry: Arc<Registry>,
+        tx: Sender<Msg>,
+        selection_active: Active,
+    ) -> Daemon {
+        Daemon {
+            path,
+            cfg,
+            engine,
+            registry,
+            tray: None,
+            tray_shown: None,
+            tx,
+            selection: Err("запускается".into()),
+            selection_active,
+            watching_primary: false,
+        }
+    }
+
     /// Трей и слежение за PRIMARY — по текущему конфигу.
     fn apply_side_effects(&mut self) {
         if self.cfg.tray && self.tray.is_none() {
@@ -225,6 +233,11 @@ impl Daemon {
         self.update_tray();
     }
 
+    fn toggle(&mut self) {
+        let enabled = !self.engine.enabled();
+        self.set_enabled(enabled);
+    }
+
     fn reload(&mut self) -> Result<()> {
         let cfg = Config::load(&self.path)?;
         let backend_changed = cfg.backend != self.cfg.backend
@@ -246,27 +259,50 @@ impl Daemon {
 
     fn status(&mut self) -> Status {
         let layouts = self.engine.layout_info();
+        let selection = if self.engine.selection_enabled() {
+            self.selection.clone()
+        } else {
+            Err("выключено в настройках".into())
+        };
         Status {
             version: env!("CARGO_PKG_VERSION").into(),
             pid: std::process::id(),
             enabled: self.engine.enabled(),
             layouts,
-            selection: self.engine.selection_enabled() && self.selection_note.is_none(),
-            selection_note: if self.engine.selection_enabled() {
-                self.selection_note.clone()
-            } else {
-                Some("выключено в настройках".into())
-            },
-            selection_via: self
-                .selection_via
-                .filter(|_| self.engine.selection_enabled())
-                .map(Into::into),
+            selection: selection.is_ok(),
+            selection_via: selection.clone().ok().map(Into::into),
+            selection_note: selection.err(),
             tray: self.tray.as_ref().is_some_and(TrayIcon::visible),
             tray_waiting: self.tray.as_ref().is_some_and(|tray| !tray.visible()),
             devices: self.registry.snapshot(),
             actions: self.engine.actions(),
             log: logbuf::recent(),
             config_path: self.path.display().to_string(),
+        }
+    }
+
+    /// Ответ на запрос из сокета.
+    fn answer(&mut self, req: Request) -> Response {
+        match req {
+            Request::Status => Response {
+                status: Some(Box::new(self.status())),
+                ..Response::ok()
+            },
+            Request::SetEnabled { enabled } => {
+                self.set_enabled(enabled);
+                Response::ok()
+            }
+            Request::Toggle => {
+                self.toggle();
+                Response::ok()
+            }
+            Request::Reload => match self.reload() {
+                Ok(()) => Response::ok(),
+                Err(err) => Response::error(format!("{err:#}")),
+            },
+            // Выход — по Msg::Quit: сокет шлёт его, когда ответ уже
+            // записан (daemon/socket.rs).
+            Request::Quit => Response::ok(),
         }
     }
 
@@ -285,28 +321,19 @@ impl Daemon {
             }
             Msg::Primary(size) => self.engine.primary_changed(size),
             Msg::Selection(state) => {
-                let (via, note) = match state {
-                    Ok(via) => (Some(via), None),
-                    Err(reason) => (None, Some(reason)),
-                };
-                if via != self.selection_via || note != self.selection_note {
-                    match (&via, &note) {
-                        (Some(via), _) => info!("слежу за выделением (PRIMARY) через {via}"),
-                        (None, Some(reason)) => warn!("выделение не отслеживается: {reason}"),
-                        (None, None) => {}
+                if state != self.selection {
+                    match &state {
+                        Ok(via) => info!("слежу за выделением (PRIMARY) через {via}"),
+                        Err(reason) => warn!("выделение не отслеживается: {reason}"),
                     }
-                    self.selection_via = via;
-                    self.selection_note = note;
+                    self.selection = state;
                 }
             }
             Msg::Keymap(keymap) => {
                 self.engine.set_keymap(keymap);
                 self.update_tray();
             }
-            Msg::TogglePause => {
-                let enabled = !self.engine.enabled();
-                self.set_enabled(enabled);
-            }
+            Msg::TogglePause => self.toggle(),
             Msg::Reload => {
                 if let Err(err) = self.reload() {
                     error!("конфиг не перечитан: {err:#}");
@@ -320,31 +347,9 @@ impl Daemon {
             } => {
                 if Instant::now() > deadline {
                     debug!("IPC: {req:?} не дождался очереди — пропущен");
-                    return true;
+                } else {
+                    let _ = reply.send(self.answer(req));
                 }
-                let response = match req {
-                    Request::Status => Response {
-                        status: Some(Box::new(self.status())),
-                        ..Response::ok()
-                    },
-                    Request::SetEnabled { enabled } => {
-                        self.set_enabled(enabled);
-                        Response::ok()
-                    }
-                    Request::Toggle => {
-                        let enabled = !self.engine.enabled();
-                        self.set_enabled(enabled);
-                        Response::ok()
-                    }
-                    Request::Reload => match self.reload() {
-                        Ok(()) => Response::ok(),
-                        Err(err) => Response::error(format!("{err:#}")),
-                    },
-                    // Выход — по Msg::Quit: сокет шлёт его, когда ответ уже
-                    // записан (daemon/socket.rs).
-                    Request::Quit => Response::ok(),
-                };
-                let _ = reply.send(response);
             }
         }
         true
@@ -404,19 +409,7 @@ mod tests {
                 guard: Box::new(|| None),
             },
         );
-        Daemon {
-            path,
-            cfg,
-            engine,
-            registry,
-            tray: None,
-            tray_shown: None,
-            tx,
-            selection_note: None,
-            selection_via: None,
-            selection_active: Active::default(),
-            watching_primary: false,
-        }
+        Daemon::new(path, cfg, engine, registry, tx, Active::default())
     }
 
     fn ask(d: &mut Daemon, req: Request) -> (bool, Response) {
