@@ -38,6 +38,12 @@ fn default_text_matches_defaults() {
         .parse()
         .unwrap();
     assert_eq!(keys(text["theme"].as_table().unwrap()), keys(&fields));
+    // Комментарий к backend перечисляет все значения.
+    let backends = BackendKind::ALL.map(BackendKind::as_str).join(" | ");
+    assert!(
+        DEFAULT_CONFIG.contains(&format!("\n# {backends}\nbackend = ")),
+        "{backends}"
+    );
     let pos = |s: &str| DEFAULT_CONFIG.find(s).unwrap();
     assert!(pos("\n[theme]\n") < pos("# Роли устройств"));
     assert!(DEFAULT_CONFIG.ends_with("[devices]\n"));
@@ -60,12 +66,41 @@ fn partial_config_and_errors() {
     assert_eq!(cfg.double_tap, 0.25);
     assert_eq!(cfg.backend, BackendKind::Kde);
     assert_eq!(cfg.max_word_len, 50);
-    let bad: Settings = toml::from_str("selection_method = \"clipboard\"").unwrap();
-    assert!(Config::from_settings(bad).is_err());
-    let bad: Settings = toml::from_str("paste_keys = \"ctrl+v\"").unwrap();
-    assert!(Config::from_settings(bad).is_err());
-    let bad: Settings = toml::from_str("[devices]\n\"1:2 x\" = \"screen\"").unwrap();
-    assert!(Config::from_settings(bad).is_err());
+
+    let err = |text: &str| {
+        let bad: Settings = toml::from_str(text).unwrap();
+        format!("{:#}", Config::from_settings(bad).unwrap_err())
+    };
+    assert_eq!(
+        err("selection_method = \"clipboard\""),
+        "selection_method = \"clipboard\": допустимо paste или type"
+    );
+    assert_eq!(
+        err("backend = \"windows\""),
+        "backend = \"windows\": допустимо auto, kde, gnome, hyprland, sway, x11 или hotkey"
+    );
+    assert_eq!(
+        err("[devices]\n\"1:2 x\" = \"screen\""),
+        "devices.\"1:2 x\" = \"screen\": допустимо keyboard, mouse, touchpad, touchscreen, tablet или ignore"
+    );
+    assert_eq!(
+        err("paste_keys = \"ctrl+v\""),
+        "paste_keys: неизвестная клавиша: ctrl"
+    );
+    assert_eq!(
+        err("switch_hotkey = \"Super+Space\""),
+        "switch_hotkey: неизвестная клавиша: Super"
+    );
+}
+
+#[test]
+fn hotkey_layouts_are_normalized() {
+    // Как коды раскладок из keymap сеанса: строчными, без варианта, en → us.
+    let raw: Settings =
+        toml::from_str("hotkey_layouts = [\"US\", \" ru(phonetic) \", \"eng\", \"rus\", \"de\"]")
+            .unwrap();
+    let cfg = Config::from_settings(raw).unwrap();
+    assert_eq!(cfg.hotkey_layouts, ["us", "ru", "us", "ru", "de"]);
 }
 
 #[test]

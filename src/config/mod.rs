@@ -222,6 +222,15 @@ impl BackendKind {
     }
 }
 
+/// «a, b или c» — допустимые значения для сообщения об ошибке.
+fn one_of(names: impl IntoIterator<Item = &'static str>) -> String {
+    let names: Vec<&str> = names.into_iter().collect();
+    match names.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} или {last}", rest.join(", ")),
+        _ => names.concat(),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Секунды: события evdev приходят с меткой времени в секундах.
@@ -265,20 +274,23 @@ impl Config {
     pub fn from_settings(raw: Settings) -> Result<Config> {
         let Some(selection_method) = SelectionMethod::parse(&raw.selection_method) else {
             bail!(
-                "selection_method = {:?}: допустимо paste или type",
-                raw.selection_method
+                "selection_method = {:?}: допустимо {}",
+                raw.selection_method,
+                one_of(SelectionMethod::ALL.map(SelectionMethod::as_str))
             );
         };
         let Some(backend) = BackendKind::parse(&raw.backend) else {
             bail!(
-                "backend = {:?}: допустимо auto, kde, gnome, hyprland, sway, x11 или hotkey",
-                raw.backend
+                "backend = {:?}: допустимо {}",
+                raw.backend,
+                one_of(BackendKind::ALL.map(BackendKind::as_str))
             );
         };
         for (device, role) in &raw.devices {
             if Role::parse(role).is_none() {
                 bail!(
-                    "devices.{device:?} = {role:?}: допустимо keyboard, mouse, touchpad, touchscreen, tablet или ignore"
+                    "devices.{device:?} = {role:?}: допустимо {}",
+                    one_of(Role::CHOICES.map(Role::as_str))
                 );
             }
         }
