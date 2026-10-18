@@ -12,7 +12,7 @@ use shiftfix::backend::XkbLayout;
 use shiftfix::daemon::Msg;
 use shiftfix::engine::{Backend, Keys};
 use shiftfix::keys::Stroke;
-use shiftfix::sys::env;
+use shiftfix::sys::{env, paths};
 use shiftfix::{keymap, selection};
 
 /// Пропуск теста, которому не хватает программы или библиотеки; с
@@ -180,7 +180,7 @@ fn reports_primary(display: &str) {
 fn xkb_and_primary_on_xvfb() {
     if !["Xvfb", "setxkbmap", "xclip"]
         .iter()
-        .all(|t| env::in_path(t))
+        .all(|t| paths::in_path(t))
     {
         return skip("нет Xvfb, setxkbmap или xclip");
     }

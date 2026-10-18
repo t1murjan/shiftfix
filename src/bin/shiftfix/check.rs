@@ -9,7 +9,7 @@ use shiftfix::devices::{self, Role};
 use shiftfix::selection::{self, Choice};
 use shiftfix::sys::session::Logind;
 use shiftfix::sys::x11;
-use shiftfix::sys::{env, proc};
+use shiftfix::sys::{env, paths, proc};
 use shiftfix::{backend, keymap};
 
 /// Строки отчёта и счётчик проблем.
@@ -167,12 +167,12 @@ fn session(report: &mut Report) {
 
 fn selection(report: &mut Report, cfg: &Config) {
     report.section("Выделение");
-    let xclip = if env::in_path("xclip") {
+    let xclip = if paths::in_path("xclip") {
         "xclip есть"
     } else {
         "xclip нет"
     };
-    let wl_clipboard = if env::in_path("wl-paste") && env::in_path("wl-copy") {
+    let wl_clipboard = if paths::in_path("wl-paste") && paths::in_path("wl-copy") {
         "wl-clipboard есть"
     } else {
         "wl-clipboard нет"

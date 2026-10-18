@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::devices::Role;
 use crate::keymap::norm_layout;
 use crate::keys::parse_keys;
-use crate::sys::env;
+use crate::sys::paths;
 use file::{merge_table, write_atomic};
 pub use theme::{ThemeMode, ThemeSettings};
 
@@ -259,7 +259,7 @@ impl Default for Config {
 impl Config {
     /// `~/.config/shiftfix/config.toml`.
     pub fn default_path() -> PathBuf {
-        env::config_home().join("shiftfix").join("config.toml")
+        paths::config_home().join("shiftfix").join("config.toml")
     }
 
     pub fn load(path: &Path) -> Result<Config> {

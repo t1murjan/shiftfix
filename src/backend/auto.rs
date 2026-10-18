@@ -10,7 +10,7 @@ use log::info;
 use super::{Gnome, Hotkey, Hyprland, Kde, Sway, XkbLayout};
 use crate::engine::{Backend, Keys};
 use crate::sys::dbus::{Bus, Client};
-use crate::sys::env;
+use crate::sys::{env, paths};
 
 /// Определяет окружение лениво и переопределяет, если оно перестало отвечать.
 pub struct Auto {
@@ -38,7 +38,7 @@ impl Auto {
             candidates.push(Box::new(Sway::default()));
         }
         candidates.push(Box::new(Kde::default()));
-        if env::in_path("gsettings") && Client::new(Bus::Session).has_owner("org.gnome.Shell") {
+        if paths::in_path("gsettings") && Client::new(Bus::Session).has_owner("org.gnome.Shell") {
             candidates.push(Box::new(Gnome::new(hotkey.to_vec())));
         }
         // Группа XKB у XWayland — не раскладка сеанса Wayland: только чистый X11.

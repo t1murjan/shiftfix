@@ -15,8 +15,7 @@ use super::clipboard::{Clipboard, Paste, TEXT_TYPES, UTF8};
 use crate::config::Config;
 use crate::daemon::Msg;
 use crate::engine::{Keys, Selection};
-use crate::sys::env;
-use crate::sys::proc::{TIMEOUT, feed, run};
+use crate::sys::proc::{TIMEOUT, feed, run, session_command};
 
 pub struct WlClipboard {
     paste: Paste,
@@ -103,7 +102,7 @@ impl Selection for WlClipboard {
 /// остановлено (`stop`).
 pub fn watch(tx: &Sender<Msg>, stop: &AtomicBool, wl_paste: &str) -> Option<String> {
     let started = Instant::now();
-    let mut cmd = env::session_command(wl_paste);
+    let mut cmd = session_command(wl_paste);
     cmd.args(["--primary", "--watch", "sh", "-c", "wc -c"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

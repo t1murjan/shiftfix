@@ -21,7 +21,7 @@ use std::thread;
 use std::time::Duration;
 
 use eframe::egui;
-use shiftfix::sys::{env, lock, proc};
+use shiftfix::sys::{lock, paths, proc};
 
 const USAGE: &str = "\
 shiftfix-gui — настройки и состояние shiftfix
@@ -47,7 +47,7 @@ fn report(text: &str, critical: bool) {
 
 /// Сокет, через который второй запуск просит открытое окно показаться.
 fn raise_socket() -> PathBuf {
-    env::runtime_dir().join("shiftfix-gui.sock")
+    paths::runtime_dir().join("shiftfix-gui.sock")
 }
 
 /// Попросить уже открытое окно показаться; `false` — оно не ответило.
@@ -134,7 +134,7 @@ fn main() -> eframe::Result {
     }));
 
     // Второе окно рядом с первым только путает: настройки сохранялись бы наперегонки.
-    let _lock = match lock::try_lock(&env::runtime_dir().join("shiftfix-gui.lock")) {
+    let _lock = match lock::try_lock(&paths::runtime_dir().join("shiftfix-gui.lock")) {
         Ok(Some(file)) => Some(file),
         Ok(None) => {
             if !raise_existing() {

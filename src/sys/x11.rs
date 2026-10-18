@@ -9,6 +9,7 @@ use std::fs;
 use std::os::linux::net::SocketAddrExt;
 use std::os::unix::net::{SocketAddr, UnixStream};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::SystemTime;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -16,11 +17,26 @@ use x11rb::connection::Connection as _;
 use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _};
 use x11rb::rust_connection::{DefaultStream, RustConnection};
 
-use crate::sys::env;
+use crate::sys::{env, paths};
 
 pub struct XConn {
     pub conn: RustConnection,
     pub root: u32,
+}
+
+static X_AUTHORITY: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// Файл Xauthority, с которым удалось подключиться (его же получат xclip и GUI).
+fn set_x_authority(path: Option<PathBuf>) {
+    *X_AUTHORITY.lock().unwrap_or_else(|e| e.into_inner()) = path;
+}
+
+pub fn x_authority() -> Option<PathBuf> {
+    X_AUTHORITY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .or_else(|| env::session_var("XAUTHORITY").map(PathBuf::from))
 }
 
 /// Куки MIT-MAGIC-COOKIE-1 для дисплея из файла Xauthority.
@@ -68,7 +84,7 @@ fn auth_files() -> Vec<PathBuf> {
     if let Some(home) = std::env::var_os("HOME") {
         files.push(PathBuf::from(home).join(".Xauthority"));
     }
-    let run = env::runtime_dir();
+    let run = paths::runtime_dir();
     files.extend(session_auth_files(&run));
     files.push(run.join("gdm").join("Xauthority"));
     let mut unique = Vec::new();
@@ -153,7 +169,7 @@ pub fn connect() -> Result<XConn> {
         match open(number, cookie) {
             Ok(conn) => {
                 if file.is_some() {
-                    env::set_x_authority(file);
+                    set_x_authority(file);
                 }
                 let root = conn
                     .setup()

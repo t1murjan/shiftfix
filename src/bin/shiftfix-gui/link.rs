@@ -11,7 +11,7 @@ use anyhow::{Context, Result, bail};
 use eframe::egui;
 use shiftfix::ipc::{self, Request, Status};
 use shiftfix::service;
-use shiftfix::sys::env;
+use shiftfix::sys::paths;
 use shiftfix::sys::proc;
 
 use crate::toast::{Toast, ToastKind};
@@ -145,7 +145,7 @@ fn systemctl(args: &[&str]) -> Result<proc::Output> {
 }
 
 fn query_service() -> Service {
-    if env::in_path("systemctl")
+    if paths::in_path("systemctl")
         && let Ok(out) = systemctl(&[
             "show",
             UNIT,
@@ -188,13 +188,13 @@ fn journal() -> Vec<String> {
 }
 
 fn autostart_file() -> PathBuf {
-    env::config_home()
+    paths::config_home()
         .join("autostart")
         .join("shiftfix.desktop")
 }
 
 fn daemon_binary() -> PathBuf {
-    let path = env::sibling_binary("shiftfix");
+    let path = paths::sibling_binary("shiftfix");
     fs::canonicalize(&path).unwrap_or(path)
 }
 
@@ -217,7 +217,8 @@ fn checked(out: proc::Output, what: &str) -> Result<()> {
 }
 
 fn run_service_action(action: ServiceAction) -> Result<String> {
-    let systemd = env::in_path("systemctl") && systemctl(&["show-environment"]).is_ok_and(|o| o.ok);
+    let systemd =
+        paths::in_path("systemctl") && systemctl(&["show-environment"]).is_ok_and(|o| o.ok);
     if !systemd {
         return run_without_systemd(action);
     }
@@ -235,7 +236,7 @@ fn run_service_action(action: ServiceAction) -> Result<String> {
         ServiceAction::Autostart(false) => checked(systemctl(&["disable", UNIT])?, "автозапуск")
             .map(|()| "Автозапуск выключен".into()),
         ServiceAction::Install => {
-            let path = env::config_home().join("systemd/user").join(UNIT);
+            let path = paths::config_home().join("systemd/user").join(UNIT);
             fs::create_dir_all(path.parent().expect("parent")).context("каталог юнитов systemd")?;
             fs::write(&path, unit_text())
                 .with_context(|| format!("не записывается {}", path.display()))?;

@@ -32,7 +32,7 @@ const _: () = assert!(
 pub(crate) const MAX_REQUEST: u64 = 64 * 1024;
 
 pub fn socket_path() -> PathBuf {
-    crate::sys::env::runtime_dir().join("shiftfix.sock")
+    crate::sys::paths::runtime_dir().join("shiftfix.sock")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
