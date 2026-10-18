@@ -12,7 +12,7 @@ use log::{info, warn};
 
 use super::Msg;
 use crate::icon;
-use crate::sys::env;
+use crate::sys::{env, proc};
 
 struct ShiftTray {
     tx: Sender<Msg>,
@@ -24,20 +24,20 @@ struct ShiftTray {
 
 fn open_gui(page: Option<&str>) {
     let gui = env::sibling_binary("shiftfix-gui");
-    let gui_path = gui.to_string_lossy().into_owned();
-    let mut args: Vec<&str> = vec![&gui_path];
-    if let Some(page) = page {
-        args.extend(["--page", page]);
-    }
+    let page_args = match page {
+        Some(page) => vec!["--page", page],
+        None => Vec::new(),
+    };
     // Под systemd окно запускается в отдельном scope: иначе перезапуск службы
     // (например, кнопкой из этого же окна) закрыл бы и его.
     let in_service = std::env::var_os("INVOCATION_ID").is_some() && env::in_path("systemd-run");
     let result = if in_service {
-        let mut scoped = vec!["--user", "--scope", "--quiet", "--collect"];
-        scoped.extend(args);
-        crate::sys::proc::spawn_detached("systemd-run", &scoped)
+        let gui_path = gui.to_string_lossy();
+        let mut args = vec!["--user", "--scope", "--quiet", "--collect", &gui_path];
+        args.extend(&page_args);
+        proc::spawn_detached("systemd-run", &args)
     } else {
-        crate::sys::proc::spawn_detached(&gui, &args[1..])
+        proc::spawn_detached(&gui, &page_args)
     };
     if let Err(err) = result {
         warn!("не удалось открыть {}: {err:#}", gui.display());
