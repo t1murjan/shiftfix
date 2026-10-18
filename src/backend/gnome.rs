@@ -303,6 +303,30 @@ fi"#,
     }
 
     #[test]
+    fn gnome_hotkey_falls_back_to_config() {
+        // В GNOME сочетание не задано — берётся из конфига, а без него ошибка.
+        let (_dir, gsettings) = fake_command(
+            "gsettings",
+            r#"if [ "$1" = list-recursively ]; then
+  echo "org.gnome.desktop.input-sources mru-sources [('xkb', 'ru'), ('xkb', 'us')]"
+  echo "org.gnome.desktop.input-sources sources [('xkb', 'us'), ('xkb', 'ru')]"
+elif [ "$3" = mru-sources ]; then echo "[('xkb', 'ru'), ('xkb', 'us')]"
+else echo "@as []"
+fi"#,
+        );
+        let mut gnome = Gnome {
+            gsettings,
+            fallback: Vec::new(),
+        };
+        let err = gnome.set(0, &mut NoKeys).unwrap_err().to_string();
+        assert!(err.contains("неизвестно сочетание"), "{err}");
+        // С сочетанием из конфига нажимает его и ждёт, но GNOME тут не настоящий.
+        gnome.fallback = vec![KeyCode::KEY_LEFTCTRL, KeyCode::KEY_SPACE];
+        let err = gnome.set(0, &mut NoKeys).unwrap_err().to_string();
+        assert!(err.contains("не переключил"), "{err}");
+    }
+
+    #[test]
     fn gnome_over_gsettings() {
         let (dir, gsettings) = fake_command(
             "gsettings",
