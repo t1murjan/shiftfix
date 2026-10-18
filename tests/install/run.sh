@@ -291,6 +291,13 @@ as_user 'touch ~/.fakesd/no-graphical && ~/.local/bin/shiftfix --print-unit >~/.
     touch ~/.local/state/shiftfix-install-incomplete && rm ~/log/*.log'
 scenario 30-resumed-wanted-changed 0 './install.sh'
 
+# Обновление вне графического сеанса (ssh): новый юнит хотел бы WantedBy и с
+# default.target, но прежние цели вернее — юнит и ссылки остаются как были.
+as_user 'touch ~/.fakesd/no-graphical'
+fake_installed_version 0.3.0
+scenario 31-update-no-graphical 0 './install.sh'
+as_user 'rm ~/.fakesd/no-graphical'
+
 if ((${#unexpected[@]})); then
     echo "Код выхода не тот, что ожидался: ${unexpected[*]}" >&2
     exit 1
