@@ -75,13 +75,13 @@ fn library() -> Option<&'static Xkb> {
 }
 
 /// Скомпилированная keymap; освобождается вместе с контекстом.
-struct Compiled<'a> {
-    xkb: &'a Xkb,
+struct Compiled {
+    xkb: &'static Xkb,
     ctx: Ctx,
     map: Map,
 }
 
-impl Drop for Compiled<'_> {
+impl Drop for Compiled {
     fn drop(&mut self) {
         // SAFETY: указатели получены от этой же библиотеки и освобождаются один раз.
         unsafe {
@@ -93,8 +93,8 @@ impl Drop for Compiled<'_> {
     }
 }
 
-impl Compiled<'_> {
-    fn new(build: impl FnOnce(&Xkb, Ctx) -> Map) -> Option<Compiled<'static>> {
+impl Compiled {
+    fn new(build: impl FnOnce(&Xkb, Ctx) -> Map) -> Option<Compiled> {
         let xkb = library()?;
         // SAFETY: 0 — XKB_CONTEXT_NO_FLAGS.
         let ctx = unsafe { (xkb.context_new)(0) };
