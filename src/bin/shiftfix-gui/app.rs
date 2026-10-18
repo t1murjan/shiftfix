@@ -240,8 +240,8 @@ impl App {
     }
 
     pub fn service(&mut self, action: ServiceAction) {
-        self.toast(ToastKind::Info, "Выполняю…");
-        self.link.service(action);
+        let id = self.toasts.start_action();
+        self.link.service(action, id);
     }
 
     // ─── отрисовка ───

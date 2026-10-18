@@ -136,13 +136,16 @@ impl Link {
         });
     }
 
-    pub fn service(&self, action: ServiceAction) {
+    /// Действие со службой в фоне; итог — сообщением вместо «Выполняю…» с
+    /// номером `id`.
+    pub fn service(&self, action: ServiceAction, id: u64) {
         let (toasts, wake) = (self.toasts.clone(), self.wake.clone());
         thread::spawn(move || {
             let toast = match run_service_action(action) {
                 Ok(text) => Toast::new(ToastKind::Success, text),
                 Err(err) => Toast::new(ToastKind::Error, format!("{err:#}")),
             };
+            let toast = toast.result_of(id);
             let _ = toasts.send(toast);
             thread::sleep(Duration::from_millis(600)); // дать службе подняться
             let _ = wake.send(true);
