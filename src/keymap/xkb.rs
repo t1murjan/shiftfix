@@ -268,12 +268,46 @@ mod tests {
         assert!(!ru.is_dead(KeyCode::KEY_APOSTROPHE, false));
     }
 
+    /// Keymap в тексте, как её присылает композитор, даёт те же таблицы, что
+    /// и по именам. Текст делает сама libxkbcommon (xkb_keymap_get_as_string).
     #[test]
     fn keymap_text_round_trip() {
-        let Some(from_names) = from_names("us,ru", ",", "") else {
+        let Some(by_names) = from_names("us,ru", ",phonetic", "grp:caps_toggle") else {
             return skip("libxkbcommon недоступна");
         };
         assert!(from_text("не keymap").is_none());
-        assert_eq!(from_names.layouts.len(), 2);
+        let xkb = library().unwrap();
+        let (layout, variant, option) = (c"us,ru", c",phonetic", c"grp:caps_toggle");
+        let compiled = Compiled::new(|xkb, ctx| {
+            let names = RuleNames {
+                rules: ptr::null(),
+                model: ptr::null(),
+                layout: layout.as_ptr(),
+                variant: variant.as_ptr(),
+                options: option.as_ptr(),
+            };
+            // SAFETY: как в from_names.
+            unsafe { (xkb.keymap_new_from_names)(ctx, &names, 0) }
+        })
+        .unwrap();
+        // SAFETY: сигнатура из xkbcommon.h; строка в тесте не освобождается.
+        let text = unsafe {
+            let as_string: libloading::Symbol<unsafe extern "C" fn(Map, c_int) -> *mut c_char> =
+                xkb._lib.get(b"xkb_keymap_get_as_string\0").unwrap();
+            CStr::from_ptr(as_string(compiled.map, KEYMAP_FORMAT_TEXT_V1))
+                .to_string_lossy()
+                .into_owned()
+        };
+        let by_text = from_text(&text).unwrap();
+        assert_eq!(by_text.names(), by_names.names());
+        assert!(by_text.caps_switches_group);
+        for (a, b) in by_text.layouts.iter().zip(&by_names.layouts) {
+            for key in ROW_KEYS {
+                for shift in [false, true] {
+                    assert_eq!(a.char_at(key, shift), b.char_at(key, shift), "{key:?}");
+                }
+            }
+        }
+        assert_eq!(by_text.layouts[1].char_at(KeyCode::KEY_A, false), Some('а'));
     }
 }
