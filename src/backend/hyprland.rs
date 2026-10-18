@@ -51,19 +51,26 @@ impl Hyprland {
         // каждой клавиатуры своя раскладка, и виртуальную надо переключить тоже:
         // это через неё перенабирается слово.
         if run_text(&self.hyprctl, &["switchxkblayout", "all", arg])
-            .is_ok_and(|out| out.to_lowercase().contains("ok"))
+            .is_ok_and(|out| succeeded(&out))
         {
             return Ok(());
         }
         for kb in self.keyboards(true)? {
             let name = kb["name"].as_str().unwrap_or_default();
             let out = run_text(&self.hyprctl, &["switchxkblayout", name, arg])?;
-            if !out.to_lowercase().contains("ok") {
+            if !succeeded(&out) {
                 bail!("hyprctl switchxkblayout {name}: {}", out.trim());
             }
         }
         Ok(())
     }
+}
+
+/// Удача — ответ «ok» (по строке на клавиатуру, если `all` отвечает за
+/// каждую). Искать «ok» внутри ответа нельзя: оно бывает в тексте ошибки.
+fn succeeded(out: &str) -> bool {
+    let mut lines = out.lines().map(str::trim).filter(|l| !l.is_empty());
+    !out.trim().is_empty() && lines.all(|l| l.eq_ignore_ascii_case("ok"))
 }
 
 fn split_layouts(list: &str) -> Vec<String> {
@@ -133,6 +140,21 @@ fi"#,
         );
         // А раскладку определяет настоящая клавиатура, не виртуальная.
         assert_eq!(hypr.current().unwrap(), Some(1));
+    }
+
+    #[test]
+    fn hyprland_error_with_ok_inside_is_error() {
+        // Удача — ровно «ok», а не любой ответ, где встречается «ok».
+        let (_dir, hyprctl) = fake_command(
+            "hyprctl",
+            r#"if [ "$1 $2" = "-j devices" ]; then
+  echo '{"keyboards":[{"name":"kb","layout":"us,ru","main":true}]}'
+else
+  echo "error: keyboard lookup failed"
+fi"#,
+        );
+        let mut hypr = Hyprland { hyprctl };
+        assert!(hypr.set(1, &mut NoKeys).is_err());
     }
 
     #[test]
