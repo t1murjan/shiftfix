@@ -134,4 +134,26 @@ fi"#,
         // А раскладку определяет настоящая клавиатура, не виртуальная.
         assert_eq!(hypr.current().unwrap(), Some(1));
     }
+
+    #[test]
+    fn hyprland_switches_all_keyboards_at_once() {
+        // Современный Hyprland: номер активной раскладки в ответе и `all`.
+        let (dir, hyprctl) = fake_command(
+            "hyprctl",
+            r#"if [ "$1 $2" = "-j devices" ]; then
+  echo '{"keyboards":[
+    {"name":"at-translated-set-2-keyboard","layout":"us,ru","active_keymap":"English (US)","active_layout_index":1,"main":true}]}'
+elif [ "$1" = "switchxkblayout" ]; then
+  echo "$2 $3" >> "$(dirname "$0")/switched"; echo ok
+fi"#,
+        );
+        let mut hypr = Hyprland { hyprctl };
+        assert_eq!(hypr.current().unwrap(), Some(1));
+        hypr.set(0, &mut NoKeys).unwrap();
+        hypr.toggle(&mut NoKeys).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("switched")).unwrap(),
+            "all 0\nall next\n"
+        );
+    }
 }
