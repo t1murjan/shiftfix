@@ -1,6 +1,7 @@
 //! X11 и Wayland без data-control (GNOME): выделение видно через X-сервер
 //! или XWayland — слежение через XFixes, чтение и вставка через xclip.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
@@ -88,8 +89,9 @@ impl Selection for XClipboard {
     }
 }
 
-/// Следить за PRIMARY, пока жив X-сервер. `Ok(())` — служба завершается.
-pub fn watch(tx: &Sender<Msg>) -> Result<()> {
+/// Следить за PRIMARY, пока жив X-сервер. `Ok(())` — служба завершается
+/// или слежение остановлено (`stop`).
+pub fn watch(tx: &Sender<Msg>, stop: &AtomicBool) -> Result<()> {
     let x = connect()?;
     let conn = &x.conn;
     conn.xfixes_query_version(5, 0)?.reply()?;
@@ -120,7 +122,11 @@ pub fn watch(tx: &Sender<Msg>) -> Result<()> {
         return Ok(());
     }
     loop {
-        if let Event::XfixesSelectionNotify(ev) = conn.wait_for_event()?
+        let event = conn.wait_for_event()?;
+        if stop.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        if let Event::XfixesSelectionNotify(ev) = event
             && ev.selection == primary
             && tx
                 .send(Msg::Primary(usize::from(ev.owner != x11rb::NONE)))

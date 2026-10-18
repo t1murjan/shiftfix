@@ -14,7 +14,7 @@ pub mod wayland;
 pub mod x11;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -165,24 +165,52 @@ fn choose(f: &Facts) -> Choice {
     }
 }
 
-pub fn spawn_watcher(tx: Sender<Msg>, active: Active) {
-    let spawned = thread::Builder::new()
-        .name("selection".into())
-        .spawn(move || run(&tx, &active));
-    if let Err(err) = spawned {
-        log::warn!("поток слежения за выделением не запустился: {err}");
+/// Поток слежения за выделением. Когда значение выброшено (исправление
+/// выделения выключили), поток останавливается — при следующем изменении
+/// выделения или следующей проверке сеанса.
+pub struct Watcher {
+    stop: Arc<AtomicBool>,
+    active: Active,
+}
+
+impl Drop for Watcher {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        self.active.set(Source::None);
     }
 }
 
-fn run(tx: &Sender<Msg>, active: &Active) {
+pub fn spawn_watcher(tx: Sender<Msg>, active: Active) -> Option<Watcher> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let watcher = Watcher {
+        stop: Arc::clone(&stop),
+        active: active.clone(),
+    };
+    let spawned = thread::Builder::new()
+        .name("selection".into())
+        .spawn(move || run(&tx, &active, &stop));
+    match spawned {
+        Ok(_) => Some(watcher),
+        Err(err) => {
+            log::warn!("поток слежения за выделением не запустился: {err}");
+            None
+        }
+    }
+}
+
+fn run(tx: &Sender<Msg>, active: &Active, stop: &AtomicBool) {
+    let stopped = || stop.load(Ordering::Relaxed);
     let mut failures = 0u32;
-    loop {
+    while !stopped() {
         let started = Instant::now();
         let (reason, wait) = match decide() {
             Choice::Wait(reason, secs) => (reason, Some(secs)),
             Choice::Wayland => {
                 active.set(Source::Wayland);
-                let result = wayland::watch(tx);
+                let result = wayland::watch(tx, stop, "wl-paste");
+                if stopped() {
+                    return; // источник уже сброшен, а новый поток мог выставить свой
+                }
                 active.set(Source::None);
                 match result {
                     Some(reason) => (reason, None),
@@ -191,7 +219,10 @@ fn run(tx: &Sender<Msg>, active: &Active) {
             }
             Choice::X11 => {
                 active.set(Source::X11);
-                let result = x11::watch(tx);
+                let result = x11::watch(tx, stop);
+                if stopped() {
+                    return;
+                }
                 active.set(Source::None);
                 match result {
                     Ok(()) => return,
@@ -199,7 +230,7 @@ fn run(tx: &Sender<Msg>, active: &Active) {
                 }
             }
         };
-        if tx.send(Msg::Selection(Err(reason))).is_err() {
+        if stopped() || tx.send(Msg::Selection(Err(reason))).is_err() {
             return;
         }
         let secs = wait.unwrap_or_else(|| {
