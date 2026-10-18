@@ -435,6 +435,43 @@ fn save_refuses_broken_file() {
 }
 
 #[test]
+fn save_changes_writes_only_changed_keys() {
+    let text = "# мой конфиг\ndouble_tap_ms = 350\nbackend = 'gnome'\nhotkey_layouts = [\"us\",\"ru\"]\n\n[devices]\n\"046d:c52b Mouse\" = \"mouse\"\n";
+    let (_dir, path) = write("changes", text);
+    let base = Settings::load(&path).unwrap();
+    // После чтения файл поправили руками: правка остаётся, а пишется только
+    // то, что изменили в окне.
+    let by_hand = text.replace("double_tap_ms = 350", "double_tap_ms = 360");
+    fs::write(&path, &by_hand).unwrap();
+    let mut ours = base.clone();
+    ours.key_delay_ms = 7;
+    ours.save_changes(&base, &path).unwrap();
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        by_hand.replace("\n\n[devices]", "\nkey_delay_ms = 7\n\n[devices]")
+    );
+
+    // Только роль устройства — меняется только [devices].
+    let before = fs::read_to_string(&path).unwrap();
+    let on_disk = Settings::load(&path).unwrap();
+    let mut roles = on_disk.clone();
+    roles
+        .devices
+        .insert("1234:5678 Pad".into(), "touchpad".into());
+    roles.save_changes(&on_disk, &path).unwrap();
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        format!("{before}\"1234:5678 Pad\" = \"touchpad\"\n")
+    );
+
+    // Ничего не изменилось — файл не пишется.
+    let on_disk = Settings::load(&path).unwrap();
+    fs::write(&path, "double_tap_ms = 1\n").unwrap();
+    on_disk.save_changes(&on_disk, &path).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "double_tap_ms = 1\n");
+}
+
+#[test]
 fn settings_save_merges_theme() {
     let text = DEFAULT_CONFIG
         .replace(

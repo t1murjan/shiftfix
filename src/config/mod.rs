@@ -122,11 +122,25 @@ impl Settings {
     /// Записать, сохранив комментарии и порядок строк файла (см. `file::edit`:
     /// битый файл не перезаписывается).
     pub fn save(&self, path: &Path) -> Result<()> {
+        self.write(path, |_| true)
+    }
+
+    /// Записать только параметры, которые отличаются от `base` — значений,
+    /// прочитанных из файла раньше. Остальные строки файла, в том числе
+    /// поправленные с тех пор руками, остаются как есть.
+    pub fn save_changes(&self, base: &Settings, path: &Path) -> Result<()> {
+        let ours = toml::Table::try_from(self)?;
+        let base = toml::Table::try_from(base)?;
+        self.write(path, |key| ours.get(key) != base.get(key))
+    }
+
+    /// Записать параметры, для которых `include(ключ)` — `true`.
+    fn write(&self, path: &Path, include: impl Fn(&str) -> bool) -> Result<()> {
         let fresh: toml_edit::DocumentMut = toml::to_string(self)?
             .parse()
             .context("сериализация конфига")?;
         file::edit(path, |doc| {
-            for (key, item) in fresh.iter() {
+            for (key, item) in fresh.iter().filter(|(key, _)| include(key)) {
                 if key == "devices" {
                     continue;
                 }
@@ -141,6 +155,9 @@ impl Settings {
                         doc.insert(key, item.clone());
                     }
                 }
+            }
+            if !include("devices") {
+                return;
             }
             // [devices] заменяется целиком: удалённая роль устройства должна исчезнуть.
             let mut devices = toml_edit::Table::new();
