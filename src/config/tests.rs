@@ -369,11 +369,12 @@ fn accent_reset_reaches_file() {
 #[test]
 fn theme_save_refuses_broken_toml() {
     let broken = "double_tap_ms = = 1\n[theme\nmode = \"dark\"\n";
-    let (_dir, path) = write("broken", broken);
+    let (dir, path) = write("broken", broken);
+    assert_eq!(file::tmp_path(&path), dir.join("config.toml.tmp"));
     let err = ThemeSettings::default().save(&path).unwrap_err();
     assert!(format!("{err:#}").contains("ошибка TOML"), "{err:#}");
     assert_eq!(fs::read(&path).unwrap(), broken.as_bytes());
-    assert!(!path.with_extension("toml.tmp").exists());
+    assert!(!file::tmp_path(&path).exists());
     assert!(ThemeSettings::load(&path).is_err());
 }
 

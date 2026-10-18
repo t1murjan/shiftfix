@@ -69,7 +69,16 @@ fn real_path(path: &Path) -> PathBuf {
     path
 }
 
+/// Временный файл для записи `path`: рядом с ним, к имени дописано «.tmp».
+pub(super) fn tmp_path(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".tmp");
+    path.with_file_name(name)
+}
+
 /// Атомарная запись: временный файл рядом с настоящим и с его правами, затем rename.
+/// Перед rename данные сбрасываются на диск: иначе после сбоя питания на месте
+/// конфига мог бы остаться пустой файл.
 pub(super) fn write_atomic(path: &Path, text: &str) -> Result<()> {
     use std::io::Write;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -79,7 +88,7 @@ pub(super) fn write_atomic(path: &Path, text: &str) -> Result<()> {
         fs::create_dir_all(dir).with_context(|| format!("не создаётся {}", dir.display()))?;
     }
     let perms = fs::metadata(&path).ok().map(|m| m.permissions());
-    let tmp = path.with_extension("toml.tmp");
+    let tmp = tmp_path(&path);
     let _ = fs::remove_file(&tmp);
     let written = (|| -> std::io::Result<()> {
         let mut options = fs::OpenOptions::new();
@@ -93,7 +102,7 @@ pub(super) fn write_atomic(path: &Path, text: &str) -> Result<()> {
             // Права при создании урезаются umask.
             file.set_permissions(perms)?;
         }
-        Ok(())
+        file.sync_all()
     })();
     if let Err(err) = written {
         let _ = fs::remove_file(&tmp);
