@@ -77,7 +77,7 @@ impl Response {
 /// Состояние службы для GUI. Окно и служба обновляются вместе, но между
 /// установкой и перезапуском службы окно бывает новее: полей, которых
 /// служба ещё не знает, в ответе нет — они берутся по умолчанию. Так же
-/// в записях `devices` и `log`; у `LayoutInfo` и `Action` умолчаний пока нет.
+/// в записях `devices` и `log`, в `layouts` и `actions`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Status {
@@ -137,6 +137,7 @@ mod tests {
 
     use super::*;
     use crate::devices::Role;
+    use crate::engine::ActionKind;
     use crate::testutil::TempDir;
 
     #[test]
@@ -175,6 +176,20 @@ mod tests {
             (status.log[0].text.as_str(), status.log[0].time),
             ("готов", 0)
         );
+        // И в раскладках и исправлениях.
+        let status: Status = serde_json::from_str(
+            r#"{"layouts":{"backend":"KDE"},"actions":[{"kind":"undo","chars":3}]}"#,
+        )
+        .unwrap();
+        let layouts = &status.layouts;
+        assert_eq!((layouts.backend.as_str(), layouts.current), ("KDE", None));
+        assert!(layouts.codes.is_empty() && !layouts.from_keymap && layouts.error.is_none());
+        let action = &status.actions[0];
+        assert_eq!(
+            (action.kind, action.chars, action.time),
+            (ActionKind::Undo, 3, 0)
+        );
+        assert!(action.from.is_empty() && action.to.is_empty());
         // Незнакомые поля пропускаются: служба новее окна или прежняя,
         // с uptime_secs.
         let status: Status =

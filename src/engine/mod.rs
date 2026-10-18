@@ -62,9 +62,10 @@ pub trait Selection {
     fn paste(&mut self, text: &str, keys: &mut dyn Keys) -> Result<()>;
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionKind {
+    #[default]
     Word,
     Selection,
     /// Повторный ⇧⇧ сразу после исправления выделения.
@@ -72,7 +73,9 @@ pub enum ActionKind {
 }
 
 /// Одно исправление — для списка в GUI. Текста здесь нет, только длина.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Полей, которых служба не прислала, — по умолчанию, как в `ipc::Status`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Action {
     /// Unix-время, секунды.
     pub time: u64,
@@ -82,8 +85,10 @@ pub struct Action {
     pub to: String,
 }
 
-/// Сведения о раскладках для GUI.
+/// Сведения о раскладках для GUI; полей, которых служба не прислала, — по
+/// умолчанию, как в `ipc::Status`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LayoutInfo {
     pub backend: String,
     pub codes: Vec<String>,
