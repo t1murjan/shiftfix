@@ -101,13 +101,42 @@ pub enum Choice {
     Wait(String, u64),
 }
 
+/// Что известно о сеансе для выбора.
+struct Facts {
+    wayland: bool,
+    /// Есть ли у композитора Wayland data-control; `None` — он не отвечает.
+    data_control: Option<bool>,
+    wl_clipboard: bool,
+    x11: bool,
+    xclip: bool,
+}
+
+impl Facts {
+    fn gather() -> Facts {
+        let wayland = env::wayland_display().is_some();
+        Facts {
+            wayland,
+            data_control: if wayland {
+                compositor::data_control()
+            } else {
+                None
+            },
+            wl_clipboard: env::in_path("wl-paste") && env::in_path("wl-copy"),
+            x11: env::x11_display().is_some(),
+            xclip: env::in_path("xclip"),
+        }
+    }
+}
+
 pub fn decide() -> Choice {
-    let x11 = env::x11_display().is_some();
-    let xclip = env::in_path("xclip");
-    if env::wayland_display().is_some() {
-        let wl_clipboard = env::in_path("wl-paste") && env::in_path("wl-copy");
-        match compositor::data_control() {
-            Some(true) if wl_clipboard => return Choice::Wayland,
+    choose(&Facts::gather())
+}
+
+fn choose(f: &Facts) -> Choice {
+    let (x11, xclip) = (f.x11, f.xclip);
+    if f.wayland {
+        match f.data_control {
+            Some(true) if f.wl_clipboard => return Choice::Wayland,
             Some(true) if x11 && xclip => return Choice::X11,
             Some(true) => return Choice::Wait("не установлен wl-clipboard".into(), 30),
             None => return Choice::Wait("нет связи с композитором Wayland".into(), 5),
@@ -183,5 +212,75 @@ fn run(tx: &Sender<Msg>, active: &Active) {
             2u64.saturating_pow(failures.min(6)).min(60)
         });
         thread::sleep(Duration::from_secs(secs));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chooses_source() {
+        let kde = Facts {
+            wayland: true,
+            data_control: Some(true),
+            wl_clipboard: true,
+            x11: true,
+            xclip: true,
+        };
+        let pick = |change: &dyn Fn(&mut Facts)| {
+            let mut f = Facts { ..kde };
+            change(&mut f);
+            match choose(&f) {
+                Choice::Wait(_, secs) => format!("ждать {secs}"),
+                choice => format!("{choice:?}"),
+            }
+        };
+        assert_eq!(pick(&|_| {}), "Wayland");
+        assert_eq!(pick(&|f| f.wl_clipboard = false), "X11");
+        assert_eq!(
+            pick(&|f| {
+                f.wl_clipboard = false;
+                f.xclip = false;
+            }),
+            "ждать 30"
+        );
+        assert_eq!(pick(&|f| f.data_control = None), "ждать 5");
+        // GNOME: без data-control — через XWayland, если есть xclip.
+        assert_eq!(pick(&|f| f.data_control = Some(false)), "X11");
+        assert_eq!(
+            pick(&|f| {
+                f.data_control = Some(false);
+                f.xclip = false;
+            }),
+            "ждать 30"
+        );
+        assert_eq!(
+            pick(&|f| {
+                f.data_control = Some(false);
+                f.x11 = false;
+            }),
+            "ждать 30"
+        );
+        // X11 без Wayland.
+        let x11 = |f: &mut Facts| {
+            f.wayland = false;
+            f.data_control = None;
+        };
+        assert_eq!(pick(&x11), "X11");
+        assert_eq!(
+            pick(&|f| {
+                x11(f);
+                f.xclip = false;
+            }),
+            "ждать 30"
+        );
+        assert_eq!(
+            pick(&|f| {
+                x11(f);
+                f.x11 = false;
+            }),
+            "ждать 5"
+        );
     }
 }
