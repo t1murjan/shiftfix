@@ -56,7 +56,7 @@ chmod 440 /etc/sudoers.d/sftest
 
 mkdir -p "$WORK"/{real,py,build}
 cp -r "$HERE/fakes" "$WORK/fakes"
-cp "$HERE/fake_daemon.py" "$WORK/"
+cp "$HERE/fake_daemon.py" "$HERE/fake_status.json" "$WORK/"
 cp "$BINS/shiftfix" "$BINS/shiftfix-gui" "$WORK/real/"
 # Копия python с именем shiftfix: так pgrep -x shiftfix находит поддельную службу.
 cp "$(readlink -f "$(command -v python3)")" "$WORK/py/shiftfix"
