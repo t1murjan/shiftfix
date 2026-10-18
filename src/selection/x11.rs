@@ -152,3 +152,79 @@ pub fn watch(tx: &Sender<Msg>) -> Result<()> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::Path;
+
+    use super::super::clipboard::testing::App;
+    use super::*;
+    use crate::testutil::{TempDir, write_script};
+
+    /// Фальшивый xclip: выделения — файлы `clip`/`primary` и их цели.
+    fn clipboard(dir: &Path) -> XClipboard {
+        let xclip = r#"d="$(dirname "$0")"
+[ "$2" = "-selection" ] && [ "$4" = "-t" ] || exit 2
+sel=$3; [ "$sel" = clipboard ] && sel=clip
+if [ "$1" = "-i" ]; then cat > "$d/$sel"; printf '%s\n' "$5" > "$d/$sel.types"; exit 0; fi
+[ -f "$d/$sel" ] || { echo "Error: target $5 not available" >&2; exit 1; }
+if [ "$5" = TARGETS ]; then printf 'TARGETS\n'; cat "$d/$sel.types"; exit 0; fi
+grep -qx "$5" "$d/$sel.types" || { echo "Error: target $5 not available" >&2; exit 1; }
+cat "$d/$sel""#;
+        let cfg = Config {
+            paste_restore: Duration::ZERO,
+            ..Config::default()
+        };
+        XClipboard::new(&cfg, &write_script(dir, "xclip", xclip))
+    }
+
+    #[test]
+    fn reads_primary() {
+        let dir = TempDir::new("xclip-primary");
+        let mut clip = clipboard(&dir);
+        assert_eq!(clip.read_primary(), None);
+        fs::write(dir.join("primary"), "Ghbdtn").unwrap();
+        fs::write(dir.join("primary.types"), "STRING\n").unwrap();
+        assert_eq!(clip.read_primary().as_deref(), Some("Ghbdtn"));
+    }
+
+    #[test]
+    fn pastes_and_restores_previous_clipboard() {
+        let dir = TempDir::new("xclip-paste");
+        let mut clip = clipboard(&dir);
+        fs::write(dir.join("clip"), [0x89, b'P', b'N', b'G']).unwrap();
+        fs::write(dir.join("clip.types"), "image/png\n").unwrap();
+        let mut app = App {
+            dir: dir.to_path_buf(),
+            pasted: Vec::new(),
+        };
+        clip.paste("Привет мир", &mut app).unwrap();
+        assert_eq!(app.pasted, ["Привет мир"]);
+        assert_eq!(
+            fs::read(dir.join("clip")).unwrap(),
+            [0x89, b'P', b'N', b'G']
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("clip.types")).unwrap(),
+            "image/png\n"
+        );
+
+        // Пустой буфер обмена очистить в X11 нельзя — после вставки в нём пустая строка.
+        fs::remove_file(dir.join("clip")).unwrap();
+        clip.paste("ещё", &mut app).unwrap();
+        assert_eq!(app.pasted.last().unwrap(), "ещё");
+        assert_eq!(fs::read_to_string(dir.join("clip")).unwrap(), "");
+
+        // Пароль из менеджера паролей обратно не кладётся.
+        fs::write(dir.join("clip"), "s3cret").unwrap();
+        fs::write(
+            dir.join("clip.types"),
+            "UTF8_STRING\nx-kde-passwordManagerHint\n",
+        )
+        .unwrap();
+        clip.paste("и ещё", &mut app).unwrap();
+        assert_eq!(app.pasted.last().unwrap(), "и ещё");
+        assert_eq!(fs::read_to_string(dir.join("clip")).unwrap(), "");
+    }
+}
