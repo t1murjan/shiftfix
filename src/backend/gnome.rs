@@ -244,6 +244,43 @@ mod tests {
     use crate::testutil::fake_command;
 
     #[test]
+    fn gvariant_and_accel() {
+        assert_eq!(
+            gvariant_strings(r"['<Super>space', 'it\'s']"),
+            ["<Super>space", "it's"]
+        );
+        assert!(gvariant_strings("@as []").is_empty());
+        assert_eq!(
+            parse_accel("<Primary><Shift>F12"),
+            Some((
+                vec![KeyCode::KEY_LEFTCTRL, KeyCode::KEY_LEFTSHIFT],
+                KeyCode::KEY_F12
+            ))
+        );
+        assert_eq!(
+            parse_accel("<Alt>Shift_L"),
+            Some((vec![KeyCode::KEY_LEFTALT], KeyCode::KEY_LEFTSHIFT))
+        );
+        assert_eq!(parse_accel("z"), Some((vec![], KeyCode::KEY_Z)));
+        assert_eq!(parse_accel("XF86Keyboard"), None);
+        assert_eq!(parse_accel("<Fancy>space"), None);
+        assert_eq!(parse_accel("F13"), None);
+    }
+
+    #[test]
+    fn mru_order_puts_recent_first() {
+        let src = |id: &str| ("xkb".to_owned(), id.to_owned());
+        let sources = [src("us"), src("ru"), src("ua")];
+        assert_eq!(mru_order(&sources, &[src("ua"), src("us")]), [2, 0, 1]);
+        // Чужие и повторные записи mru не мешают, пустой mru — порядок как есть.
+        assert_eq!(
+            mru_order(&sources, &[src("de"), src("ru"), src("ru")]),
+            [1, 0, 2]
+        );
+        assert_eq!(mru_order(&sources, &[]), [0, 1, 2]);
+    }
+
+    #[test]
     fn gnome_over_gsettings() {
         let (dir, gsettings) = fake_command(
             "gsettings",
