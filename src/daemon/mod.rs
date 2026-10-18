@@ -21,7 +21,7 @@ use log::{debug, error, info, warn};
 
 use crate::config::Config;
 use crate::devices::Registry;
-use crate::engine::Engine;
+use crate::engine::{Engine, Hooks};
 use crate::ipc::{Request, Response, Status};
 use crate::keymap::{self, Keymap};
 use crate::selection::{self, Active};
@@ -146,9 +146,11 @@ pub fn run(path: PathBuf, cfg: Config) -> Result<()> {
         backend::make(&cfg),
         Box::new(injector),
         selection::make(&cfg, &selection_active),
-        Box::new(move || leds.caps_led()),
-        Box::new(monotonic),
-        Box::new(move || session::blocked(&mut logind)),
+        Hooks {
+            caps_on: Box::new(move || leds.caps_led()),
+            clock: Box::new(monotonic),
+            guard: Box::new(move || session::blocked(&mut logind)),
+        },
     );
     let mut daemon = Daemon {
         path,
@@ -387,9 +389,11 @@ mod tests {
             Box::new(TwoLayouts(0)),
             Box::new(NoKeys),
             None,
-            Box::new(|| false),
-            Box::new(monotonic),
-            Box::new(|| None),
+            Hooks {
+                caps_on: Box::new(|| false),
+                clock: Box::new(monotonic),
+                guard: Box::new(|| None),
+            },
         );
         Daemon {
             path,

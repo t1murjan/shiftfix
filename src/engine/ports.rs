@@ -1,6 +1,7 @@
 //! Что движок получает от службы: эмуляцию нажатий, переключение раскладки,
-//! выделение. Здесь только интерфейсы; реализации — `daemon/uinput.rs`,
-//! `backend/` и `selection/`.
+//! выделение и хуки (CapsLock, часы, можно ли исправлять). Здесь только
+//! интерфейсы; реализации — `daemon/uinput.rs`, `backend/`, `selection/` и
+//! `daemon/mod.rs`.
 
 use anyhow::Result;
 use evdev::KeyCode;
@@ -35,5 +36,12 @@ pub trait Selection {
     fn paste(&mut self, text: &str, keys: &mut dyn Keys) -> Result<()>;
 }
 
-/// Почему исправлять сейчас нельзя (`None` — можно): неактивный сеанс и т.п.
-pub type Guard = Box<dyn FnMut() -> Option<String>>;
+/// О чём ещё движок спрашивает службу.
+pub struct Hooks {
+    /// Горит ли CapsLock.
+    pub caps_on: Box<dyn FnMut() -> bool>,
+    /// Монотонное время, секунды.
+    pub clock: Box<dyn Fn() -> f64>,
+    /// Почему исправлять сейчас нельзя (`None` — можно): неактивный сеанс и т.п.
+    pub guard: Box<dyn FnMut() -> Option<String>>,
+}

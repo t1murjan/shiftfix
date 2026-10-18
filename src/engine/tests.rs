@@ -205,9 +205,11 @@ impl Rig {
             Box::new(FakeBackend(w.clone())),
             Box::new(FakeKeys(w.clone())),
             Some(Box::new(FakeClip(w.clone(), clock.clone()))),
-            Box::new(move || cw.borrow().caps),
-            Box::new(move || ck.get()),
-            Box::new(move || gw.borrow().inactive.then(|| "сеанс неактивен".into())),
+            Hooks {
+                caps_on: Box::new(move || cw.borrow().caps),
+                clock: Box::new(move || ck.get()),
+                guard: Box::new(move || gw.borrow().inactive.then(|| "сеанс неактивен".into())),
+            },
         );
         let mut r = Rig {
             w,
