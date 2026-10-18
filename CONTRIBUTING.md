@@ -14,7 +14,7 @@ cargo test
 shellcheck -x install.sh uninstall.sh scripts/common.sh tests/install/run.sh tests/install/fakes/*
 ```
 
-То же самое запускает CI на GitHub при каждом push (`.github/workflows/ci.yml`).
+То же самое запускает CI на GitHub при каждом push (`.github/workflows/ci.yml`), и ещё две задачи: `cargo check --all-targets` на Rust 1.95 (`rust-version` из `Cargo.toml`) и стенд для `install.sh` и `uninstall.sh` (ниже).
 
 Для части тестов нужны внешние программы; без них такие тесты пропускаются и пишут «— пропуск: …» (видно с `cargo test -- --nocapture`):
 
@@ -66,6 +66,8 @@ diff -r /tmp/journal-before /tmp/journal-after
 Если правка не должна менять поведение, журналы совпадают байт в байт.
 
 У каждого сценария в `run.sh` записан ожидаемый код выхода. Если код какого-то сценария другой, `run.sh` в конце перечисляет такие сценарии и выходит с кодом 1.
+
+В CI стенд — задача `install-scripts`: собирает `target/debug` и прогоняет `run.sh`; неожиданный код выхода валит задачу. Журналы сценариев — в артефакте `install-journal` прогона, и при падении тоже.
 
 ## Что проверять на настоящей машине
 
