@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use shiftfix::config::{Settings, ThemeSettings};
 use shiftfix::devices::Role;
 
@@ -14,7 +14,10 @@ pub struct SettingsEdit {
     pub current: Settings,
     /// Значения в файле: прочитанные или записанные окном последними.
     saved: Settings,
-    /// Файл не прочитался: на экране умолчания, а не значения из файла.
+    /// Файл не читается или в нём неверное значение: на экране умолчания, а
+    /// не значения из файла. Пока ошибку не исправят и файл не перечитают
+    /// (`reload`), окно его не пишет — иначе значения пользователя
+    /// заменились бы умолчаниями.
     error: Option<String>,
 }
 
@@ -39,6 +42,14 @@ impl SettingsEdit {
             current: settings,
             error,
         }
+    }
+
+    /// Перечитать файл, например после правки руками. Несохранённые правки
+    /// пропадают, тема остаётся: её окно пишет само.
+    pub fn reload(&mut self) {
+        let theme = std::mem::take(&mut self.current.theme);
+        *self = SettingsEdit::load(std::mem::take(&mut self.path));
+        self.set_theme(theme);
     }
 
     pub fn path(&self) -> &Path {
@@ -80,31 +91,35 @@ impl SettingsEdit {
         self.current.theme = theme;
     }
 
-    /// Записать значения с экрана.
+    /// Записать правки с экрана — только изменённые параметры: правки файла
+    /// руками в остальных остаются.
     pub fn save(&mut self) -> Result<()> {
-        match self.current.save(&self.path) {
-            Ok(()) => {
-                self.saved = self.current.clone();
-                self.error = None;
-                Ok(())
-            }
-            Err(err) => {
-                self.error = Some(format!("{err:#}"));
-                Err(err)
-            }
-        }
+        self.read()?;
+        self.current.save_changes(&self.saved, &self.path)?;
+        self.saved = self.current.clone();
+        Ok(())
     }
 
-    /// Роль устройства вручную (`None` — снова автоматически). Остальные
-    /// несохранённые правки остаются на экране и в файл не попадают.
+    /// Роль устройства вручную (`None` — снова автоматически). Файл
+    /// перечитывается, и меняется в нём только `[devices]`; несохранённые
+    /// правки остаются на экране.
     pub fn set_role(&mut self, key: &str, role: Option<Role>) -> Result<()> {
-        let mut on_disk = self.saved.clone();
-        put_role(&mut on_disk.devices, key, role);
-        put_role(&mut self.current.devices, key, role);
-        let edited = std::mem::replace(&mut self.current, on_disk);
-        let saved = self.save();
-        self.current = edited;
-        saved
+        let on_disk = self.read()?;
+        let mut changed = on_disk.clone();
+        put_role(&mut changed.devices, key, role);
+        changed.save_changes(&on_disk, &self.path)?;
+        self.saved.devices = changed.devices.clone();
+        self.current.devices = changed.devices;
+        Ok(())
+    }
+
+    /// Файл как он есть сейчас. Ошибка в нём запоминается: пока файл не
+    /// перечитают (`reload`), окно его не пишет.
+    fn read(&mut self) -> Result<Settings> {
+        if let Some(err) = &self.error {
+            bail!("{err}");
+        }
+        Settings::load(&self.path).inspect_err(|err| self.error = Some(format!("{err:#}")))
     }
 }
 
@@ -189,6 +204,64 @@ mod tests {
 
         edit.set_role("1:2 Pad", None).unwrap();
         assert!(Settings::load(&path).unwrap().devices.is_empty());
+        cleanup(&path);
+    }
+
+    #[test]
+    fn broken_value_is_not_replaced_by_defaults() {
+        // Неверное значение в файле: на экране умолчания, и ни «Сохранить»,
+        // ни роль устройства не должны записать их поверх значений пользователя.
+        let text = "double_tap_ms = 350\nkey_delay_ms = \"x\"\n";
+        let path = config("broken", text);
+        let mut edit = SettingsEdit::load(path.clone());
+        assert!(edit.error().is_some());
+        edit.current.max_word_len = 10;
+        assert!(edit.save().is_err());
+        assert!(edit.set_role("1:2 Pad", Some(Role::Mouse)).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
+
+        // Исправили руками и перечитали — запись снова работает.
+        fs::write(&path, "double_tap_ms = 350\nkey_delay_ms = 7\n").unwrap();
+        edit.reload();
+        assert_eq!(edit.error(), None);
+        assert_eq!(edit.current.double_tap_ms, 350);
+        edit.set_role("1:2 Pad", Some(Role::Mouse)).unwrap();
+        let on_disk = Settings::load(&path).unwrap();
+        assert_eq!((on_disk.double_tap_ms, on_disk.key_delay_ms), (350, 7));
+
+        // Сломали, пока окно открыто: запись отказывается и запоминает ошибку.
+        fs::write(&path, text).unwrap();
+        edit.current.max_word_len = 10;
+        assert!(edit.save().is_err());
+        assert!(edit.error().is_some());
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn writes_keep_edits_by_hand() {
+        // Файл поправили руками, пока окно открыто: роль меняет только
+        // [devices], «Сохранить» — только то, что изменили в окне.
+        let path = config("by-hand", "double_tap_ms = 350\n");
+        let mut edit = SettingsEdit::load(path.clone());
+        let by_hand = "double_tap_ms = 360\nmax_word_len = 20\n";
+        fs::write(&path, by_hand).unwrap();
+        edit.set_role("1:2 Pad", Some(Role::Mouse)).unwrap();
+        assert!(fs::read_to_string(&path).unwrap().starts_with(by_hand));
+
+        edit.current.key_delay_ms = 9;
+        edit.save().unwrap();
+        assert!(!edit.dirty());
+        let on_disk = Settings::load(&path).unwrap();
+        assert_eq!(
+            (
+                on_disk.double_tap_ms,
+                on_disk.max_word_len,
+                on_disk.key_delay_ms
+            ),
+            (360, 20, 9)
+        );
+        assert_eq!(on_disk.devices["1:2 Pad"], "mouse");
         cleanup(&path);
     }
 }

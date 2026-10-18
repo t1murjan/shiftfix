@@ -52,7 +52,17 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
         });
     ui.add_space(14.0);
 
-    if app.status().is_none() {
+    let locked = app.settings.error().is_some();
+    if locked {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(widgets::icon(icons::WARNING, 16.0).color(p.negative));
+            ui.label(
+                RichText::new("В config.toml ошибка: пока её не исправят, роли не меняются. Подробности — на странице «Настройки».")
+                    .color(p.negative),
+            );
+        });
+        ui.add_space(8.0);
+    } else if app.status().is_none() {
         ui.horizontal_wrapped(|ui| {
             ui.label(widgets::icon(icons::INFO, 16.0).color(p.warning));
             ui.label(
@@ -107,7 +117,7 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
                 if i > 0 {
                     ui.separator();
                 }
-                if let Some(choice) = device_row(ui, p, dev) {
+                if let Some(choice) = device_row(ui, p, dev, !locked) {
                     change = Some((dev.key.clone(), choice));
                 }
             }
@@ -120,7 +130,8 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
 }
 
 /// Строка устройства; возвращает выбранную роль (`Some(None)` — «авто»).
-fn device_row(ui: &mut Ui, p: &Palette, dev: &DeviceInfo) -> Option<Option<Role>> {
+/// `editable == false` — выбор роли неактивен.
+fn device_row(ui: &mut Ui, p: &Palette, dev: &DeviceInfo, editable: bool) -> Option<Option<Role>> {
     let mut picked = None;
     ui.horizontal(|ui| {
         widgets::activity_dot(ui, p, dev.idle_ms);
@@ -141,22 +152,24 @@ fn device_row(ui: &mut Ui, p: &Palette, dev: &DeviceInfo) -> Option<Option<Role>
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let auto_label = format!("Авто: {}", dev.detected.title().to_lowercase());
             let selected = if dev.overridden { dev.role.title().to_owned() } else { auto_label.clone() };
-            egui::ComboBox::from_id_salt(("role", &dev.key, &dev.path))
-                .selected_text(selected)
-                .width(210.0)
-                .show_ui(ui, |ui| {
-                    if ui.selectable_label(!dev.overridden, auto_label).clicked() && dev.overridden {
-                        picked = Some(None);
-                    }
-                    ui.separator();
-                    for role in Role::CHOICES {
-                        let label = widgets::icon_job(role_icon(role), role.title(), 14.5, p.text);
-                        let current = dev.overridden && dev.role == role;
-                        if ui.selectable_label(current, label).clicked() && !current {
-                            picked = Some(Some(role));
+            ui.add_enabled_ui(editable, |ui| {
+                egui::ComboBox::from_id_salt(("role", &dev.key, &dev.path))
+                    .selected_text(selected)
+                    .width(210.0)
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(!dev.overridden, auto_label).clicked() && dev.overridden {
+                            picked = Some(None);
                         }
-                    }
-                });
+                        ui.separator();
+                        for role in Role::CHOICES {
+                            let label = widgets::icon_job(role_icon(role), role.title(), 14.5, p.text);
+                            let current = dev.overridden && dev.role == role;
+                            if ui.selectable_label(current, label).clicked() && !current {
+                                picked = Some(Some(role));
+                            }
+                        }
+                    });
+            });
             if dev.role == Role::Keyboard && !dev.overridden && dev.virtual_device {
                 ui.label(widgets::icon(icons::ROBOT, 17.0).color(Color32::GRAY)).on_hover_text(
                     "Виртуальная клавиатура (keyd, kanata, remapper…). Если она дублирует настоящую — выберите «Не слушать».",
