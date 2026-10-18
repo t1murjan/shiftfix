@@ -3,15 +3,14 @@
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
 use eframe::egui::{
     self, Align, Align2, Color32, CornerRadius, Frame, Image, Layout, Margin, RichText, ScrollArea,
     Sense, Stroke, TextureHandle, TextureOptions, Ui, load::SizedTexture, vec2,
 };
 use egui_phosphor::regular as icons;
-use shiftfix::config::{self, Config, ThemeMode, ThemeSettings};
-use shiftfix::devices::{self, DeviceInfo, Role};
+use shiftfix::config::{self, ThemeMode, ThemeSettings};
+use shiftfix::devices::{DeviceInfo, Role};
 use shiftfix::ipc::{Request, Status};
 
 use crate::edit::SettingsEdit;
@@ -94,7 +93,6 @@ pub struct App {
     pub try_text: String,
     pub check_output: Arc<Mutex<Option<String>>>,
     pub checking: bool,
-    local_devices: Option<(Instant, Vec<DeviceInfo>)>,
     logo: TextureHandle,
     /// Тема окна: портал, применённая палитра, отложенная запись.
     pub theme: theme::ThemeState,
@@ -111,11 +109,11 @@ impl App {
     ) -> App {
         let ctx = &cc.egui_ctx;
         let (toasts, toast_tx) = Toasts::new();
-        let link = Link::start(ctx, toast_tx);
         let logo_image =
             egui::ColorImage::from_rgba_unmultiplied([96, 96], &shiftfix::icon::rgba(96, true));
         let logo = ctx.load_texture("logo", logo_image, TextureOptions::LINEAR);
         let mut settings = SettingsEdit::load(config::default_path());
+        let link = Link::start(ctx, toast_tx, settings.path().to_owned());
         let mut theme = settings.current.theme.clone();
         theme::migrate_legacy(settings.path(), &mut theme);
         settings.set_theme(theme);
@@ -129,7 +127,6 @@ impl App {
             try_text: String::new(),
             check_output: Arc::default(),
             checking: false,
-            local_devices: None,
             logo,
             about_focus: false,
         }
@@ -203,27 +200,13 @@ impl App {
         self.toasts.push(Toast::new(kind, text));
     }
 
-    /// Устройства: от службы (с активностью) или собственный опрос, если служба не запущена.
-    pub fn devices(&mut self) -> Vec<DeviceInfo> {
-        if let Some(status) = self.status() {
-            return status.devices.clone();
+    /// Устройства: от службы (с активностью) или найденные окном, пока служба
+    /// не запущена. `None` — окно их ещё не нашло.
+    pub fn devices(&self) -> Option<&[DeviceInfo]> {
+        match self.status() {
+            Some(status) => Some(&status.devices),
+            None => self.snap.local_devices.as_deref(),
         }
-        let stale = self
-            .local_devices
-            .as_ref()
-            .is_none_or(|(at, _)| at.elapsed() > Duration::from_secs(3));
-        if stale {
-            let cfg = Config::from_settings(self.settings.saved()).unwrap_or_default();
-            let list = devices::event_nodes()
-                .iter()
-                .filter_map(|p| devices::describe(p, &cfg))
-                .collect();
-            self.local_devices = Some((Instant::now(), list));
-        }
-        self.local_devices
-            .as_ref()
-            .map(|(_, l)| l.clone())
-            .unwrap_or_default()
     }
 
     /// Сохранить настройки в файл и попросить службу перечитать их.
@@ -242,10 +225,10 @@ impl App {
     fn after_save(&mut self, result: anyhow::Result<()>, success: &'static str) {
         match result {
             Ok(()) => {
-                self.local_devices = None;
                 if self.status().is_some() {
                     self.link.send(Request::Reload, Some(success));
                 } else {
+                    self.link.poll_now(); // роли устройств — по новому файлу
                     self.toast(
                         ToastKind::Success,
                         format!("{success}. Применится при запуске службы"),
@@ -391,6 +374,7 @@ fn nav_item(ui: &mut Ui, p: &Palette, icon: &str, title: &str, selected: bool) -
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.snap = self.link.snapshot();
+        self.link.show_devices(self.page == Page::Devices);
         self.toasts.receive();
         let p = self.palette(ui.ctx());
         egui::Panel::left("nav")

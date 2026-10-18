@@ -1,7 +1,8 @@
 //! Связь со службой: опрос состояния в фоне, команды, управление systemd.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -9,6 +10,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use eframe::egui;
+use shiftfix::config::Config;
+use shiftfix::devices::{self, DeviceInfo};
 use shiftfix::ipc::{self, Request, Status};
 use shiftfix::service;
 use shiftfix::sys::env;
@@ -34,6 +37,9 @@ pub struct Snapshot {
     pub service: Service,
     /// Последние строки журнала службы, когда она не отвечает.
     pub journal: Vec<String>,
+    /// Устройства, которые окно нашло само, пока служба не отвечает
+    /// (`None` — ещё не искало).
+    pub local_devices: Option<Vec<DeviceInfo>>,
     pub updated: Option<Instant>,
 }
 
@@ -51,16 +57,21 @@ pub struct Link {
     toasts: Sender<Toast>,
     /// Разбудить поток опроса раньше срока; `true` — заодно спросить systemd.
     wake: Sender<bool>,
+    /// Открыта страница «Устройства».
+    devices_shown: Arc<AtomicBool>,
 }
 
 impl Link {
-    pub fn start(ctx: &egui::Context, toasts: Sender<Toast>) -> Link {
+    /// `config` — файл окна: по нему роли устройств, найденных без службы.
+    pub fn start(ctx: &egui::Context, toasts: Sender<Toast>, config: PathBuf) -> Link {
         let shared = Arc::new(Mutex::new(Snapshot::default()));
         let (wake, woken) = mpsc::channel();
+        let devices_shown = Arc::new(AtomicBool::new(false));
         let link = Link {
             shared: shared.clone(),
             toasts,
             wake,
+            devices_shown: devices_shown.clone(),
         };
         let ctx = ctx.clone();
         // Снимок пишет только этот поток: иначе ответ, полученный до команды,
@@ -71,7 +82,10 @@ impl Link {
                 let mut round = 0u32;
                 let mut with_service = true;
                 loop {
-                    refresh(&shared, with_service);
+                    // Без службы устройства ищем сами, но только для открытой
+                    // страницы: незачем открывать все /dev/input/event* каждые 2 с.
+                    let scan = with_service && devices_shown.load(Ordering::Relaxed);
+                    refresh(&shared, with_service, scan.then_some(config.as_path()));
                     ctx.request_repaint();
                     round = round.wrapping_add(1);
                     // Раз в 400 мс, systemd — каждый пятый раз; команда будит раньше.
@@ -88,6 +102,19 @@ impl Link {
 
     pub fn snapshot(&self) -> Snapshot {
         self.shared.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+
+    /// Спросить службу и systemd сейчас, не дожидаясь очередного опроса.
+    pub fn poll_now(&self) {
+        let _ = self.wake.send(true);
+    }
+
+    /// Открыта ли страница «Устройства». Только что открыли — искать сразу.
+    pub fn show_devices(&self, shown: bool) {
+        let was = self.devices_shown.swap(shown, Ordering::Relaxed);
+        if shown && !was {
+            self.poll_now();
+        }
     }
 
     /// Команда службе в фоне; по ошибке — всплывающее сообщение.
@@ -119,21 +146,30 @@ impl Link {
     }
 }
 
-fn refresh(shared: &Arc<Mutex<Snapshot>>, with_service: bool) {
+/// Обновить снимок. `devices_config` — заодно поискать устройства, если
+/// служба не отвечает.
+fn refresh(shared: &Arc<Mutex<Snapshot>>, with_service: bool, devices_config: Option<&Path>) {
     let result = ipc::request(&Request::Status);
     let service = with_service.then(query_service);
-    // journalctl идёт до нескольких секунд: под замком он держал бы кадр окна.
+    // journalctl и поиск устройств идут долго: под замком они держали бы кадр окна.
     let journal = (result.is_err() && with_service).then(journal);
+    let local_devices = devices_config
+        .filter(|_| result.is_err())
+        .map(local_devices);
     let Ok(mut snap) = shared.lock() else { return };
     match result {
         Ok(response) => {
             snap.status = response.status.map(Arc::from);
             snap.journal.clear();
+            snap.local_devices = None;
         }
         Err(_) => {
             snap.status = None;
             if let Some(journal) = journal {
                 snap.journal = journal;
+            }
+            if local_devices.is_some() {
+                snap.local_devices = local_devices;
             }
         }
     }
@@ -184,6 +220,15 @@ fn journal() -> Vec<String> {
         return Vec::new();
     };
     out.text().lines().map(str::to_owned).collect()
+}
+
+/// Устройства так, как их увидит служба с конфигом `config`.
+fn local_devices(config: &Path) -> Vec<DeviceInfo> {
+    let cfg = Config::load(config).unwrap_or_default();
+    devices::event_nodes()
+        .iter()
+        .filter_map(|p| devices::describe(p, &cfg))
+        .collect()
 }
 
 fn autostart_file() -> PathBuf {

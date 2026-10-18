@@ -73,7 +73,11 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
         ui.add_space(8.0);
     }
 
-    let devices = app.devices();
+    // Пока служба не отвечает, а окно ещё не нашло устройства, — пусто, без
+    // предупреждения: поиск займёт мгновение.
+    let Some(devices) = app.devices().map(<[DeviceInfo]>::to_vec) else {
+        return;
+    };
     if devices.is_empty() {
         card(ui, p, |ui| {
             widgets::empty_state(
