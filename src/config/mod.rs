@@ -1,7 +1,7 @@
 //! Конфиг: ~/.config/shiftfix/config.toml, все параметры необязательны.
 //!
-//! `Settings` — значения как в файле (их правит GUI), `Config` — разобранные
-//! и проверенные значения для демона.
+//! `Settings` — значения как в файле (их показывает и правит окно), `Config` —
+//! разобранные и проверенные значения (по ним работает служба).
 
 mod file;
 #[cfg(test)]
@@ -33,6 +33,13 @@ pub fn default_path() -> PathBuf {
     env::config_home().join("shiftfix").join("config.toml")
 }
 
+/// Значения как в файле. Их читает и пишет окно; служба и `shiftfix --check`
+/// получают из них `Config` (`Config::load`).
+///
+/// `backend` и `selection_method` — строки, а не перечисления: файл с неверным
+/// значением всё равно читается, окно показывает его, а не умолчания, и даёт
+/// выбрать верное, а что не так — объясняет `Config::from_settings`. Роли в
+/// `devices` — строки по той же причине.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -53,9 +60,13 @@ pub struct Settings {
     pub tray: bool,
     pub notify: bool,
     pub ignore_devices: Vec<String>,
-    /// Только для окна: демон секцию не читает. Ошибка в ней не роняет разбор.
+    /// Только для окна: служба разбирает секцию вместе с файлом, но не
+    /// пользуется ею. Разбор мягкий — ошибка в ней не роняет ни службу, ни окно.
     #[serde(default, deserialize_with = "theme::lenient")]
     pub theme: ThemeSettings,
+    /// Роли устройств, заданные вручную: ключ — «vendor:product имя»
+    /// (`devices::device_key`, например «046d:c52b Logitech USB Receiver»),
+    /// значение — `Role::as_str`.
     pub devices: BTreeMap<String, String>,
 }
 
@@ -102,6 +113,9 @@ impl Settings {
         for key in table.keys().filter(|k| !known.contains(k)) {
             warn!("config: неизвестный параметр {key}");
         }
+        // Текст разбирается второй раз (таблица — только для неизвестных
+        // ключей): ошибка разбора текста указывает строку и столбец значения,
+        // а из таблицы — нет.
         toml::from_str(&text).with_context(|| format!("{}: неверное значение", path.display()))
     }
 
@@ -237,6 +251,9 @@ fn one_of(names: impl IntoIterator<Item = &'static str>) -> String {
     }
 }
 
+/// Разобранные и проверенные значения (`from_settings`): по ним работает
+/// служба и проверяет систему `shiftfix --check`. Окно проверяет ими правку
+/// перед записью и описывает устройства, пока служба не запущена.
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Секунды: события evdev приходят с меткой времени в секундах.
@@ -257,6 +274,7 @@ pub struct Config {
     pub tray: bool,
     pub notify: bool,
     pub ignore_devices: Vec<String>,
+    /// Роли устройств, заданные вручную; ключ — как в `Settings::devices`.
     pub devices: BTreeMap<String, Role>,
 }
 
