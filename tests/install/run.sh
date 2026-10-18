@@ -312,6 +312,11 @@ as_user 'rm ~/.fakesd/off'
 fake_installed_version 0.3.0
 scenario 33-session-autostart-to-unit 0 './install.sh'
 
+# Служба упала (is-failed), программы те же: install.sh её не запускает, но в итоге
+# говорит, что она остановилась с ошибкой.
+as_user 'systemctl --user stop shiftfix.service && touch ~/.fakesd/failed'
+scenario 34-same-service-failed 0 './install.sh'
+
 if ((${#unexpected[@]})); then
     echo "Код выхода не тот, что ожидался: ${unexpected[*]}" >&2
     exit 1
