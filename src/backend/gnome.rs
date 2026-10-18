@@ -123,8 +123,8 @@ impl Gnome {
     }
 
     /// Порядок источников по `mru-sources` прямо сейчас.
-    fn order_now(&self, sources: &[Source]) -> Vec<usize> {
-        mru_order(sources, &self.pairs("mru-sources").unwrap_or_default())
+    fn order_now(&self, sources: &[Source]) -> Result<Vec<usize>> {
+        Ok(mru_order(sources, &self.pairs("mru-sources")?))
     }
 
     fn hotkey(&self) -> Option<(Vec<KeyCode>, KeyCode)> {
@@ -180,7 +180,7 @@ impl Backend for Gnome {
         keys.chord(&hold, tap, steps)?;
         let deadline = Instant::now() + Duration::from_millis(700);
         loop {
-            if self.order_now(&sources).first() == Some(&index) {
+            if self.order_now(&sources)?.first() == Some(&index) {
                 return Ok(());
             }
             if Instant::now() >= deadline {
@@ -241,7 +241,7 @@ mod tests {
 
     use super::*;
     use crate::keys::Stroke;
-    use crate::testutil::fake_command;
+    use crate::testutil::{NoKeys, fake_command};
 
     #[test]
     fn gvariant_and_accel() {
@@ -278,6 +278,28 @@ mod tests {
             [1, 0, 2]
         );
         assert_eq!(mru_order(&sources, &[]), [0, 1, 2]);
+    }
+
+    #[test]
+    fn gnome_set_fails_when_mru_unreadable() {
+        // Источники прочитались, а после нажатия gsettings отказал: без mru
+        // переключение не проверить, и «успехом» это быть не может.
+        let (_dir, gsettings) = fake_command(
+            "gsettings",
+            r#"once="$(dirname "$0")/once"
+if [ "$1" = list-recursively ] && [ ! -e "$once" ]; then
+  touch "$once"
+  echo "org.gnome.desktop.input-sources mru-sources [('xkb', 'ru'), ('xkb', 'us')]"
+  echo "org.gnome.desktop.input-sources sources [('xkb', 'us'), ('xkb', 'ru')]"
+elif [ "$3" = switch-input-source ]; then echo "['<Super>space']"
+else echo "нет такого ключа" >&2; exit 1
+fi"#,
+        );
+        let mut gnome = Gnome {
+            gsettings,
+            fallback: Vec::new(),
+        };
+        assert!(gnome.set(0, &mut NoKeys).is_err());
     }
 
     #[test]
