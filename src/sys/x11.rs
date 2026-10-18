@@ -4,10 +4,12 @@
 //! Подключение своё (x11rb, без libX11): служба часто стартует раньше сеанса,
 //! и XAUTHORITY приходится искать самим.
 
+use std::cmp::Reverse;
 use std::fs;
 use std::os::linux::net::SocketAddrExt;
 use std::os::unix::net::{SocketAddr, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use anyhow::{Context, Result, anyhow, bail};
 use x11rb::connection::Connection as _;
@@ -67,18 +69,7 @@ fn auth_files() -> Vec<PathBuf> {
         files.push(PathBuf::from(home).join(".Xauthority"));
     }
     let run = env::runtime_dir();
-    let mut found: Vec<PathBuf> = fs::read_dir(&run)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
-            name.starts_with("xauth_") || name.starts_with(".mutter-Xwaylandauth.")
-        })
-        .map(|e| e.path())
-        .collect();
-    found.sort();
-    files.extend(found);
+    files.extend(session_auth_files(&run));
     files.push(run.join("gdm").join("Xauthority"));
     let mut unique = Vec::new();
     for file in files {
@@ -87,6 +78,45 @@ fn auth_files() -> Vec<PathBuf> {
         }
     }
     unique
+}
+
+/// Файлы Xauthority сеансов KDE и GNOME, сначала самый свежий: от прошлых
+/// сеансов остаются старые.
+fn session_auth_files(run: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<(Reverse<Option<SystemTime>>, PathBuf)> = fs::read_dir(run)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            name.starts_with("xauth_") || name.starts_with(".mutter-Xwaylandauth.")
+        })
+        .map(|e| {
+            let modified = e.metadata().and_then(|m| m.modified()).ok();
+            (Reverse(modified), e.path())
+        })
+        .collect();
+    found.sort();
+    found.into_iter().map(|(_, path)| path).collect()
+}
+
+/// Сколько подключений пробовать: каждое — круг до X-сервера.
+const ATTEMPTS: usize = 12;
+
+/// Куки из файлов по порядку, без повторов; последняя попытка — без
+/// авторизации (XWayland в wlroots и др.).
+fn attempts(files: &[(PathBuf, Vec<u8>)], number: u32) -> Vec<(Option<PathBuf>, Option<Vec<u8>>)> {
+    let mut attempts: Vec<(Option<PathBuf>, Option<Vec<u8>>)> = Vec::new();
+    for (file, data) in files {
+        for cookie in parse_xauth(data, number) {
+            if !attempts.iter().any(|(_, c)| c.as_ref() == Some(&cookie)) {
+                attempts.push((Some(file.clone()), Some(cookie)));
+            }
+        }
+    }
+    attempts.truncate(ATTEMPTS - 1);
+    attempts.push((None, None));
+    attempts
 }
 
 fn stream(number: u32) -> std::io::Result<UnixStream> {
@@ -111,17 +141,15 @@ fn open(number: u32, cookie: Option<Vec<u8>>) -> Result<RustConnection> {
 pub fn connect() -> Result<XConn> {
     let display = env::x11_display().context("X-сервер не найден")?;
     let number = env::x11_number(&display).context("номер дисплея")?;
-    let mut attempts: Vec<(Option<PathBuf>, Option<Vec<u8>>)> = Vec::new();
-    for file in auth_files() {
-        for cookie in parse_xauth(&fs::read(&file).unwrap_or_default(), number) {
-            if !attempts.iter().any(|(_, c)| c.as_ref() == Some(&cookie)) {
-                attempts.push((Some(file.clone()), Some(cookie)));
-            }
-        }
-    }
-    attempts.push((None, None)); // XWayland без авторизации (wlroots и др.)
+    let files: Vec<(PathBuf, Vec<u8>)> = auth_files()
+        .into_iter()
+        .map(|file| {
+            let data = fs::read(&file).unwrap_or_default();
+            (file, data)
+        })
+        .collect();
     let mut last = anyhow!("нет подходящего Xauthority");
-    for (file, cookie) in attempts.into_iter().take(12) {
+    for (file, cookie) in attempts(&files, number) {
         match open(number, cookie) {
             Ok(conn) => {
                 if file.is_some() {
@@ -225,5 +253,31 @@ mod tests {
         assert_eq!(parse_xauth(&file, 0), [vec![1, 2, 3], vec![7]]);
         // Обрезанный файл не роняет разбор.
         assert_eq!(parse_xauth(&file[..5], 0), Vec::<Vec<u8>>::new());
+    }
+
+    #[test]
+    fn always_tries_without_auth() {
+        let cookies: Vec<u8> = (0..20)
+            .flat_map(|i| record("0", b"MIT-MAGIC-COOKIE-1", &[i]))
+            .collect();
+        let list = attempts(&[(PathBuf::from("a"), cookies)], 0);
+        assert_eq!(list.len(), ATTEMPTS);
+        assert_eq!(list[0], (Some(PathBuf::from("a")), Some(vec![0])));
+        assert_eq!(list.last(), Some(&(None, None)));
+    }
+
+    #[test]
+    fn fresh_auth_files_first() {
+        let dir = crate::testutil::TempDir::new("xauth");
+        let now = SystemTime::now();
+        for (name, age) in [("xauth_a", 60), ("xauth_b", 0), ("other", 0)] {
+            let file = fs::File::create(dir.join(name)).unwrap();
+            file.set_modified(now - std::time::Duration::from_secs(age))
+                .unwrap();
+        }
+        assert_eq!(
+            session_auth_files(&dir),
+            [dir.join("xauth_b"), dir.join("xauth_a")]
+        );
     }
 }
