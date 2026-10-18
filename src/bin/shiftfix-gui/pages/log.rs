@@ -62,12 +62,16 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             if widgets::button(ui, p, icons::FOLDER_OPEN, "Открыть конфиг", false).clicked()
             {
                 let path = app.settings.path().to_owned();
-                if !path.exists() {
-                    let _ = app.settings.saved().save(&path);
-                }
-                if let Err(err) =
+                // Файла ещё нет — создать, иначе открывать нечего.
+                let created = if path.exists() {
+                    Ok(())
+                } else {
+                    app.settings.saved().save(&path)
+                };
+                let opened = created.and_then(|()| {
                     shiftfix::sys::proc::spawn_detached("xdg-open", &[&path.to_string_lossy()])
-                {
+                });
+                if let Err(err) = opened {
                     app.toast(ToastKind::Error, format!("{err:#}"));
                 }
             }
