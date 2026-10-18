@@ -6,7 +6,7 @@ use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::wl_registry;
 use wayland_client::{Connection, Dispatch, QueueHandle};
 
-use crate::sys::env;
+use crate::sys::{env, paths};
 
 /// Подключиться к композитору сеанса; `None` — его нет или он не отвечает.
 pub fn connect() -> Option<Connection> {
@@ -14,7 +14,7 @@ pub fn connect() -> Option<Connection> {
     let path = if display.starts_with('/') {
         display.into()
     } else {
-        env::runtime_dir().join(display)
+        paths::runtime_dir().join(display)
     };
     Connection::from_socket(UnixStream::connect(path).ok()?).ok()
 }

@@ -25,7 +25,7 @@ use crate::ipc::{Request, Response, Status};
 use crate::keymap::{self, Keymap};
 use crate::selection::{self, Active};
 use crate::sys::session::{self, Logind};
-use crate::sys::{env, lock, proc};
+use crate::sys::{lock, paths, proc};
 use crate::{backend, ipc, logbuf};
 use tray::TrayIcon;
 use uinput::Injector;
@@ -80,7 +80,7 @@ struct Daemon {
 }
 
 pub fn run(path: PathBuf, cfg: Config) -> Result<()> {
-    let _lock = lock_file(&env::runtime_dir().join("shiftfix.lock"))?;
+    let _lock = lock_file(&paths::runtime_dir().join("shiftfix.lock"))?;
     let injector = Injector::new(cfg.key_delay)?;
     let (tx, rx) = mpsc::channel();
 

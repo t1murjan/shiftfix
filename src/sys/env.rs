@@ -5,59 +5,18 @@
 //! после падения композитора файл остаётся, а слушать его уже некому.
 
 use std::collections::HashMap;
-use std::env;
 use std::fs;
-use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt};
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::sys::dbus::{Bus, Client};
+use crate::sys::paths::{non_empty, runtime_dir, uid};
 
 /// Сколько помнить найденное: адреса нужны при каждом запуске внешней команды.
 const CACHE_TTL: Duration = Duration::from_secs(2);
-
-fn non_empty(var: &str) -> Option<String> {
-    env::var(var).ok().filter(|v| !v.is_empty())
-}
-
-pub fn uid() -> u32 {
-    // SAFETY: getuid не имеет ошибок и побочных эффектов.
-    unsafe { libc::getuid() }
-}
-
-/// Каталог настроек: `$XDG_CONFIG_HOME`, иначе `~/.config`.
-pub fn config_home() -> PathBuf {
-    env::var_os("XDG_CONFIG_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-        .unwrap_or_else(|| PathBuf::from("."))
-}
-
-/// Каталог сокетов и блокировок: `$XDG_RUNTIME_DIR`, иначе `/run/user/UID`,
-/// иначе свой каталог во временном.
-pub fn runtime_dir() -> PathBuf {
-    if let Some(dir) = non_empty("XDG_RUNTIME_DIR") {
-        return dir.into();
-    }
-    let run = PathBuf::from(format!("/run/user/{}", uid()));
-    if run.is_dir() {
-        run
-    } else {
-        private_dir(&env::temp_dir())
-    }
-}
-
-/// В общем `/tmp` блокировка и сокет службы другого пользователя мешали бы
-/// нашим, поэтому — `shiftfix-UID` с доступом только себе.
-fn private_dir(tmp: &Path) -> PathBuf {
-    let dir = tmp.join(format!("shiftfix-{}", uid()));
-    let _ = fs::DirBuilder::new().mode(0o700).create(&dir);
-    dir
-}
 
 type Slot<T> = Mutex<Option<(Instant, T)>>;
 
@@ -238,21 +197,6 @@ pub fn x11_display() -> Option<String> {
     })
 }
 
-static X_AUTHORITY: Mutex<Option<PathBuf>> = Mutex::new(None);
-
-/// Файл Xauthority, с которым удалось подключиться (его же получат xclip и GUI).
-pub fn set_x_authority(path: Option<PathBuf>) {
-    *X_AUTHORITY.lock().unwrap_or_else(|e| e.into_inner()) = path;
-}
-
-pub fn x_authority() -> Option<PathBuf> {
-    X_AUTHORITY
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
-        .or_else(|| session_var("XAUTHORITY").map(PathBuf::from))
-}
-
 /// Графический сеанс есть хоть какой-нибудь.
 pub fn graphical_session() -> bool {
     wayland_display().is_some() || x11_display().is_some()
@@ -265,57 +209,8 @@ pub fn desktop() -> String {
         .to_lowercase()
 }
 
-/// Команда с переменными сессии: wl-paste, xclip, hyprctl, swaymsg и GUI найдут
-/// композитор, даже если сама служба запустилась раньше сеанса.
-pub fn session_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
-    let mut cmd = Command::new(program);
-    if env::var_os("XDG_RUNTIME_DIR").is_none() {
-        cmd.env("XDG_RUNTIME_DIR", runtime_dir());
-    }
-    let wayland = wayland_display();
-    if let Some(display) = &wayland {
-        cmd.env("WAYLAND_DISPLAY", display);
-    }
-    if let Some(sig) = hyprland_signature() {
-        cmd.env("HYPRLAND_INSTANCE_SIGNATURE", sig);
-    }
-    if let Some(sock) = sway_socket() {
-        cmd.env("SWAYSOCK", sock);
-    }
-    if let Some(display) = x11_display() {
-        cmd.env("DISPLAY", display);
-        if let Some(auth) = x_authority() {
-            cmd.env("XAUTHORITY", auth);
-        }
-    }
-    for var in ["XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE"] {
-        if non_empty(var).is_none()
-            && let Some(value) = session_var(var)
-        {
-            cmd.env(var, value);
-        }
-    }
-    cmd
-}
-
-/// Есть ли программа в PATH.
-pub fn in_path(tool: &str) -> bool {
-    env::var_os("PATH")
-        .is_some_and(|path| env::split_paths(&path).any(|dir| dir.join(tool).is_file()))
-}
-
-/// Соседний исполняемый файл (shiftfix ↔ shiftfix-gui), иначе — из PATH.
-pub fn sibling_binary(name: &str) -> PathBuf {
-    env::current_exe()
-        .ok()
-        .map(|exe| exe.with_file_name(name))
-        .filter(|p| p.is_file())
-        .unwrap_or_else(|| PathBuf::from(name))
-}
-
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::UnixListener;
 
     use super::*;
@@ -327,17 +222,6 @@ mod tests {
         assert_eq!(x11_number("unix/:12"), Some(12));
         assert_eq!(x11_number("wayland-0"), None);
         assert_eq!(x11_number(""), None);
-    }
-
-    #[test]
-    fn private_runtime_fallback() {
-        let tmp = crate::testutil::TempDir::new("runtime");
-        let dir = private_dir(&tmp);
-        assert_eq!(dir, tmp.join(format!("shiftfix-{}", uid())));
-        assert_eq!(private_dir(&tmp), dir);
-        let meta = fs::metadata(&dir).unwrap();
-        assert!(meta.is_dir());
-        assert_eq!(meta.permissions().mode() & 0o777, 0o700);
     }
 
     #[test]

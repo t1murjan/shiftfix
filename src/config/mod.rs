@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::devices::Role;
 use crate::keymap::norm_layout;
 use crate::keys::parse_keys;
-use crate::sys::env;
+use crate::sys::paths;
 use file::merge_table;
 pub use theme::{ThemeMode, ThemeSettings};
 
@@ -30,7 +30,7 @@ pub const DEFAULT_CONFIG: &str = include_str!("default.toml");
 /// `~/.config/shiftfix/config.toml`: его читает служба без `--config` и
 /// правит окно.
 pub fn default_path() -> PathBuf {
-    env::config_home().join("shiftfix").join("config.toml")
+    paths::config_home().join("shiftfix").join("config.toml")
 }
 
 /// Значения как в файле. Их читает и пишет окно; служба и `shiftfix --check`

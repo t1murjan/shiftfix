@@ -24,8 +24,8 @@ use anyhow::{Result, bail};
 use crate::config::Config;
 use crate::daemon::Msg;
 use crate::engine::{Keys, Selection};
-use crate::sys::env;
 use crate::sys::wayland as compositor;
+use crate::sys::{env, paths};
 use wayland::WlClipboard;
 use x11::XClipboard;
 
@@ -121,9 +121,9 @@ impl Facts {
             } else {
                 None
             },
-            wl_clipboard: env::in_path("wl-paste") && env::in_path("wl-copy"),
+            wl_clipboard: paths::in_path("wl-paste") && paths::in_path("wl-copy"),
             x11: env::x11_display().is_some(),
-            xclip: env::in_path("xclip"),
+            xclip: paths::in_path("xclip"),
         }
     }
 }

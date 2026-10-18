@@ -3,15 +3,50 @@
 
 use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
-use std::process::{Child, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 
-use crate::sys::env::{self, session_command};
+use crate::sys::env;
+use crate::sys::paths::{in_path, non_empty, runtime_dir};
+use crate::sys::x11::x_authority;
 
 pub const TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Команда с переменными сессии: wl-paste, xclip, hyprctl, swaymsg и GUI найдут
+/// композитор, даже если сама служба запустилась раньше сеанса.
+pub fn session_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut cmd = Command::new(program);
+    if std::env::var_os("XDG_RUNTIME_DIR").is_none() {
+        cmd.env("XDG_RUNTIME_DIR", runtime_dir());
+    }
+    let wayland = env::wayland_display();
+    if let Some(display) = &wayland {
+        cmd.env("WAYLAND_DISPLAY", display);
+    }
+    if let Some(sig) = env::hyprland_signature() {
+        cmd.env("HYPRLAND_INSTANCE_SIGNATURE", sig);
+    }
+    if let Some(sock) = env::sway_socket() {
+        cmd.env("SWAYSOCK", sock);
+    }
+    if let Some(display) = env::x11_display() {
+        cmd.env("DISPLAY", display);
+        if let Some(auth) = x_authority() {
+            cmd.env("XAUTHORITY", auth);
+        }
+    }
+    for var in ["XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE"] {
+        if non_empty(var).is_none()
+            && let Some(value) = env::session_var(var)
+        {
+            cmd.env(var, value);
+        }
+    }
+    cmd
+}
 
 pub struct Output {
     pub ok: bool,
@@ -146,7 +181,7 @@ pub fn spawn_detached(cmd: impl AsRef<std::ffi::OsStr>, args: &[&str]) -> Result
 /// Уведомление на рабочем столе через notify-send, если он установлен.
 /// `options` — дополнительные параметры notify-send (срок показа, важность).
 pub fn notify(text: &str, options: &[&str]) {
-    if !env::in_path("notify-send") {
+    if !in_path("notify-send") {
         return;
     }
     let mut args = vec!["-a", "shiftfix", "-i", "shiftfix"];
