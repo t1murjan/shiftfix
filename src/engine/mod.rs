@@ -3,7 +3,11 @@
 //! Буфер хранит нажатые клавиши (скан-коды + Shift), а не символы. Исправить
 //! слово — значит переключить раскладку, стереть N символов и нажать те же
 //! клавиши ещё раз; таблицы для этого не нужны.
+//!
+//! Здесь — разбор событий и исправление; через что движок нажимает клавиши,
+//! переключает раскладку и читает выделение — в `ports.rs`.
 
+mod ports;
 #[cfg(test)]
 mod tests;
 
@@ -16,6 +20,8 @@ use anyhow::{Result, bail};
 use evdev::KeyCode;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
+
+pub use ports::{Backend, Guard, Keys, Selection};
 
 use crate::config::{Config, SelectionMethod};
 use crate::keymap::{self, Keymap, Layout};
@@ -34,33 +40,6 @@ const ACTIONS_MAX: usize = 30;
 /// Сколько секунд GUI получает сведения о раскладках из кеша: в GNOME и Hyprland
 /// каждое обращение к переключателю — запуск процесса, а GUI спрашивает часто.
 const LAYOUT_INFO_TTL: f64 = 1.5;
-
-/// Эмуляция нажатий.
-pub trait Keys {
-    /// Новые настройки (задержка эмуляции и т.п.).
-    fn configure(&mut self, _cfg: &Config) {}
-    fn backspace(&mut self, count: usize) -> Result<()>;
-    fn type_strokes(&mut self, strokes: &[Stroke]) -> Result<()>;
-    fn combo(&mut self, keys: &[KeyCode]) -> Result<()>;
-    /// Зажать `hold`, нажать `tap` `times` раз, отпустить (Super+Space+Space в GNOME).
-    fn chord(&mut self, hold: &[KeyCode], tap: KeyCode, times: usize) -> Result<()>;
-}
-
-/// Переключение раскладки.
-pub trait Backend {
-    fn name(&self) -> &'static str;
-    fn layouts(&mut self) -> Result<Vec<String>>;
-    /// `None` — текущая раскладка неизвестна (переключение хоткеем).
-    fn current(&mut self) -> Result<Option<usize>>;
-    fn set(&mut self, index: usize, keys: &mut dyn Keys) -> Result<()>;
-    fn toggle(&mut self, keys: &mut dyn Keys) -> Result<()>;
-}
-
-/// Выделенный текст и вставка.
-pub trait Selection {
-    fn read_primary(&mut self) -> Option<String>;
-    fn paste(&mut self, text: &str, keys: &mut dyn Keys) -> Result<()>;
-}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -104,9 +83,6 @@ struct Held {
     shift: bool,
     modifier: bool,
 }
-
-/// Почему исправлять сейчас нельзя (`None` — можно): неактивный сеанс и т.п.
-pub type Guard = Box<dyn FnMut() -> Option<String>>;
 
 pub struct Engine {
     cfg: Config,
