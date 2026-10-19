@@ -179,7 +179,73 @@ impl ThemeState {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
+    use crate::portal::{Appearance, Scheme};
+
+    fn ready(scheme: Scheme) -> PortalState {
+        PortalState::Ready(Appearance {
+            scheme: Some(scheme),
+            accent: None,
+        })
+    }
+
+    #[test]
+    fn forced_mode_until_chosen_then_system() {
+        let ctx = egui::Context::default();
+        let t = ThemeSettings::default();
+        assert_eq!(t.mode, ThemeMode::System);
+        let watch = SystemWatch::fixed(ready(Scheme::Light));
+        let mut theme = ThemeState::new(PathBuf::from("config.toml"), Some(ThemeMode::Dark), watch);
+        // `--theme dark` перекрывает и настройки, и светлую тему системы.
+        assert!(theme.forced());
+        assert_eq!(theme.mode(&t), ThemeMode::Dark);
+        assert!(theme.apply(&ctx, &t).dark);
+        theme.set_tab(Variant::Light);
+        assert_eq!(theme.tab(), Some(Variant::Light));
+        // Режим выбрали в окне: `--theme` больше не действует, вкладка
+        // «Оформления» — снова вариант на экране.
+        theme.mode_chosen();
+        assert!(!theme.forced());
+        assert_eq!(theme.mode(&t), ThemeMode::System);
+        assert_eq!(theme.tab(), None);
+        assert!(!theme.apply(&ctx, &t).dark);
+        // Система сменила тему — палитра следует за ней.
+        theme.watch.set(ready(Scheme::Dark));
+        assert!(theme.apply(&ctx, &t).dark);
+        assert_eq!(theme.note(), SystemNote::Dark);
+    }
+
+    #[test]
+    fn save_error_told_once_in_a_row() {
+        let dir = std::env::temp_dir().join(format!("shiftfix-theme-save-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        let broken = "double_tap_ms = [\n";
+        fs::write(&path, broken).unwrap();
+        let watch = SystemWatch::fixed(PortalState::Pending);
+        let mut theme = ThemeState::new(path.clone(), None, watch);
+        let t = ThemeSettings::default();
+
+        assert!(!theme.unsaved());
+        theme.changed();
+        assert!(theme.unsaved());
+        // Битый конфиг: об ошибке — при первой неудаче, а не после каждой правки.
+        assert!(theme.save(&t).is_some());
+        assert!(!theme.unsaved());
+        theme.changed();
+        assert_eq!(theme.save(&t), None);
+        assert_eq!(fs::read_to_string(&path).unwrap(), broken);
+        // Файл исправили — тема записана; новая ошибка — снова сказать.
+        fs::write(&path, "double_tap_ms = 350\n").unwrap();
+        assert_eq!(theme.save(&t), None);
+        assert!(fs::read_to_string(&path).unwrap().contains("[theme]"));
+        fs::write(&path, broken).unwrap();
+        assert!(theme.save(&t).is_some());
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn save_waits_for_deadline_and_release() {

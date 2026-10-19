@@ -98,6 +98,23 @@ impl SystemWatch {
     pub fn state(&self) -> PortalState {
         lock(&self.shared.state).clone()
     }
+
+    /// Для тестов: портал не запускается, ответ задаёт тест.
+    #[cfg(test)]
+    pub(super) fn fixed(state: PortalState) -> SystemWatch {
+        let watch = SystemWatch {
+            shared: Arc::default(),
+            started: Instant::now(),
+        };
+        watch.set(state);
+        watch
+    }
+
+    /// Для тестов: портал ответил `state`.
+    #[cfg(test)]
+    pub(super) fn set(&self, state: PortalState) {
+        *lock(&self.shared.state) = state;
+    }
 }
 
 /// Что окно знает о теме системы — строка в карточке «Оформление».
