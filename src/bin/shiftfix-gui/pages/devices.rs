@@ -30,26 +30,7 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
         "Устройства",
         "Клавиатуры shiftfix слушает, а клики мыши, тачпада и касания экрана сбрасывают запомненное слово.",
     );
-
-    Frame::NONE
-        .fill(p.accent.gamma_multiply(if p.dark { 0.16 } else { 0.09 }))
-        .stroke(Stroke::new(1.0, p.accent.gamma_multiply(0.35)))
-        .corner_radius(CornerRadius::same(12))
-        .inner_margin(Margin::same(14))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal_wrapped(|ui| {
-                ui.label(widgets::icon(icons::LIGHTBULB, 18.0).color(p.accent));
-                ui.label(
-                    RichText::new(
-                        "Нажмите клавишу, щёлкните или коснитесь экрана — точка у этого устройства вспыхнет. \
-                         Если устройство определилось неверно (например, сенсорный экран принят за тачпад), \
-                         выберите роль вручную.",
-                    )
-                    .color(p.text),
-                );
-            });
-        });
+    tip(ui, p);
     ui.add_space(14.0);
 
     let locked = app.settings.error().is_some();
@@ -73,18 +54,9 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
 
     // Пока служба не отвечает, а окно ещё не нашло устройства, — пусто, без
     // предупреждения: поиск займёт мгновение.
-    let Some(mut devices) = app.devices().map(<[DeviceInfo]>::to_vec) else {
+    let Some(devices) = devices_now(app) else {
         return;
     };
-    // Простой устройства — на момент опроса; досчитываем, чтобы точка гасла
-    // плавно, а не ступеньками раз в 400 мс.
-    let since_poll = app
-        .snap
-        .updated
-        .map_or(0, |t| t.elapsed().as_millis() as u64);
-    for dev in &mut devices {
-        dev.idle_ms = dev.idle_ms.map(|ms| ms + since_poll);
-    }
     if devices.is_empty() {
         card(ui, p, |ui| {
             widgets::empty_state(
@@ -97,6 +69,57 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
         return;
     }
 
+    if let Some((key, role)) = groups(ui, p, &devices, !locked) {
+        app.set_device_role(&key, role);
+    }
+}
+
+/// Подсказка в рамке акцентного цвета: как узнать устройство и поправить роль.
+fn tip(ui: &mut Ui, p: &Palette) {
+    Frame::NONE
+        .fill(p.accent.gamma_multiply(if p.dark { 0.16 } else { 0.09 }))
+        .stroke(Stroke::new(1.0, p.accent.gamma_multiply(0.35)))
+        .corner_radius(CornerRadius::same(12))
+        .inner_margin(Margin::same(14))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                ui.label(widgets::icon(icons::LIGHTBULB, 18.0).color(p.accent));
+                ui.label(
+                    RichText::new(
+                        "Нажмите клавишу, щёлкните или коснитесь экрана — точка у этого устройства вспыхнет. \
+                         Если устройство определилось неверно (например, сенсорный экран принят за тачпад), \
+                         выберите роль вручную.",
+                    )
+                    .color(p.text),
+                );
+            });
+        });
+}
+
+/// Устройства с простоем на этот кадр; `None` — их ещё не нашли.
+fn devices_now(app: &App) -> Option<Vec<DeviceInfo>> {
+    let mut devices = app.devices()?.to_vec();
+    // Простой устройства — на момент опроса; досчитываем, чтобы точка гасла
+    // плавно, а не ступеньками раз в 400 мс.
+    let since_poll = app
+        .snap
+        .updated
+        .map_or(0, |t| t.elapsed().as_millis() as u64);
+    for dev in &mut devices {
+        dev.idle_ms = dev.idle_ms.map(|ms| ms + since_poll);
+    }
+    Some(devices)
+}
+
+/// Карточки групп устройств; возвращает устройство, которому выбрали роль,
+/// и роль (`None` — «авто»).
+fn groups(
+    ui: &mut Ui,
+    p: &Palette,
+    devices: &[DeviceInfo],
+    editable: bool,
+) -> Option<(String, Option<Role>)> {
     let groups: [(&str, &str, &[Role]); 4] = [
         (icons::KEYBOARD, "Клавиатуры", &[Role::Keyboard]),
         (
@@ -128,16 +151,14 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
                 if i > 0 {
                     ui.separator();
                 }
-                if let Some(choice) = device_row(ui, p, dev, !locked) {
+                if let Some(choice) = device_row(ui, p, dev, editable) {
                     change = Some((dev.key.clone(), choice));
                 }
             }
         });
         ui.add_space(12.0);
     }
-    if let Some((key, role)) = change {
-        app.set_device_role(&key, role);
-    }
+    change
 }
 
 /// Строка устройства; возвращает выбранную роль (`Some(None)` — «авто»).
