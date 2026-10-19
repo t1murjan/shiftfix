@@ -41,7 +41,6 @@ struct Xkb {
 const KEYMAP_FORMAT_TEXT_V1: c_int = 1;
 /// Keysym'ы, которыми клавиша переключает группу раскладок.
 const GROUP_SWITCH_SYMS: [u32; 5] = [0xfe08, 0xfe09, 0xfe0a, 0xfe0b, 0xfe0c]; // ISO_Next_Group… ISO_Last_Group_Lock
-const KEY_CAPS_XKB: u32 = 58 + 8;
 /// dead_grave … dead_lowline и прочие мёртвые keysym'ы.
 const DEAD_SYMS: std::ops::RangeInclusive<u32> = 0xfe50..=0xfe93;
 
@@ -106,7 +105,10 @@ impl Compiled {
         (!compiled.map.is_null()).then_some(compiled)
     }
 
-    fn sym(&self, key: u32, group: u32, level: u32) -> Option<u32> {
+    /// Keysym клавиши в группе `group` на уровне `level` (0 — без Shift, 1 — с Shift).
+    fn sym(&self, key: KeyCode, group: u32, level: u32) -> Option<u32> {
+        // Код клавиши в xkb — код evdev + 8.
+        let key = u32::from(key.code()) + 8;
         let mut syms: *const u32 = ptr::null();
         // SAFETY: keymap жива; xkb пишет указатель на свой внутренний массив.
         unsafe {
@@ -122,44 +124,47 @@ impl Compiled {
 
     fn char_at(&self, key: KeyCode, group: u32, level: u32) -> Option<char> {
         let sym = self
-            .sym(u32::from(key.code()) + 8, group, level)
+            .sym(key, group, level)
             .filter(|sym| !DEAD_SYMS.contains(sym))?;
         // SAFETY: чистая функция.
         let code = unsafe { (self.xkb.keysym_to_utf32)(sym) };
         char::from_u32(code).filter(|c| *c != '\0' && !c.is_control())
     }
 
-    fn keymap(&self) -> Keymap {
-        // SAFETY: keymap жива; имена — C-строки внутри keymap.
-        let count = unsafe { (self.xkb.num_layouts)(self.map) };
-        let layouts = (0..count)
-            .map(|group| {
-                let name = unsafe { (self.xkb.layout_get_name)(self.map, group) };
-                let name = if name.is_null() {
-                    format!("Раскладка {}", group + 1)
-                } else {
-                    unsafe { CStr::from_ptr(name) }
-                        .to_string_lossy()
-                        .into_owned()
-                };
-                let keys = || ROW_KEYS.iter().chain([&KeyCode::KEY_SPACE]);
-                let pairs = keys().map(|&key| {
-                    (
-                        key,
-                        [self.char_at(key, group, 0), self.char_at(key, group, 1)],
-                    )
-                });
-                let dead = keys().flat_map(|&key| {
-                    [false, true].into_iter().filter_map(move |shift| {
-                        let sym = self.sym(u32::from(key.code()) + 8, group, u32::from(shift))?;
-                        DEAD_SYMS.contains(&sym).then_some((key, shift))
-                    })
-                });
-                Arc::new(Layout::from_pairs(name, pairs).with_dead(dead.collect::<Vec<_>>()))
+    /// Таблица группы `group`: имя, символы клавиш без Shift и с Shift, мёртвые клавиши.
+    fn layout(&self, group: u32) -> Arc<Layout> {
+        // SAFETY: keymap жива; имя — C-строка внутри keymap.
+        let name = unsafe { (self.xkb.layout_get_name)(self.map, group) };
+        let name = if name.is_null() {
+            format!("Раскладка {}", group + 1)
+        } else {
+            unsafe { CStr::from_ptr(name) }
+                .to_string_lossy()
+                .into_owned()
+        };
+        let keys = || ROW_KEYS.iter().chain([&KeyCode::KEY_SPACE]);
+        let pairs = keys().map(|&key| {
+            (
+                key,
+                [self.char_at(key, group, 0), self.char_at(key, group, 1)],
+            )
+        });
+        let dead = keys().flat_map(|&key| {
+            [false, true].into_iter().filter_map(move |shift| {
+                let sym = self.sym(key, group, u32::from(shift))?;
+                DEAD_SYMS.contains(&sym).then_some((key, shift))
             })
-            .collect();
+        });
+        Arc::new(Layout::from_pairs(name, pairs).with_dead(dead.collect::<Vec<_>>()))
+    }
+
+    /// Таблицы всех групп и то, переключает ли CapsLock группу.
+    fn keymap(&self) -> Keymap {
+        // SAFETY: keymap жива.
+        let count = unsafe { (self.xkb.num_layouts)(self.map) };
+        let layouts = (0..count).map(|group| self.layout(group)).collect();
         let caps_switches_group = (0..count.max(1)).any(|group| {
-            self.sym(KEY_CAPS_XKB, group, 0)
+            self.sym(KeyCode::KEY_CAPSLOCK, group, 0)
                 .is_some_and(|sym| GROUP_SWITCH_SYMS.contains(&sym))
         });
         Keymap {
