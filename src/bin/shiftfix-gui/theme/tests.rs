@@ -91,7 +91,6 @@ fn variant_palette_matches_resolve() {
         ..ThemeSettings::default()
     };
     let sys = System {
-        available: true,
         dark: Some(false),
         accent: Some(rgb(0x00aa55)),
     };
@@ -245,7 +244,6 @@ fn resolve_bad_hex_keeps_palette_accent() {
 fn system_accent_only_in_system_mode() {
     let green = rgb(0x00aa55);
     let sys = System {
-        available: true,
         dark: Some(true),
         accent: Some(green),
     };
@@ -280,7 +278,6 @@ fn system_mode() {
     // Портала нет — тёмная.
     assert!(resolve(&t, &System::default(), None).dark);
     let light = System {
-        available: true,
         dark: Some(false),
         accent: None,
     };
@@ -291,12 +288,6 @@ fn system_mode() {
         ..light
     };
     assert!(resolve(&t, &no_preference, None).dark);
-    // Портал недоступен — то, что в нём лежит, не учитывается.
-    let stale = System {
-        available: false,
-        ..light
-    };
-    assert!(resolve(&t, &stale, None).dark);
 }
 
 #[test]
@@ -320,7 +311,6 @@ fn system_from_portal() {
     assert!(resolve(&t, &ready(None, None), None).dark);
     // Акцент системы.
     let sys = ready(Some(Scheme::Light), Some([255, 128, 0]));
-    assert!(sys.available);
     assert_eq!(sys.accent, Some(rgb(0xff8000)));
     assert_eq!(resolve(&t, &sys, None).accent, rgb(0xff8000));
 }
@@ -337,7 +327,6 @@ fn forced_overrides_mode() {
     assert_eq!(resolve(&t, &none, None), find("gruvbox").light);
     assert_eq!(resolve(&t, &none, Some(ThemeMode::Dark)), find("nord").dark);
     let light = System {
-        available: true,
         dark: Some(false),
         accent: None,
     };
