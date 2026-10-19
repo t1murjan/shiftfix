@@ -78,7 +78,8 @@ found() {
 find_installed() {
     local path name fragment
     to_remove=()
-    found "${FILES[@]}" "$AUTOSTART" "$UNIT" "$UNIT.d" "$UNITS"/*.wants/shiftfix.service "$INCOMPLETE"
+    found "${FILES[@]}" "$AUTOSTART" "$UNIT" "$UNIT.d" "$UNITS"/*.wants/shiftfix.service "$INCOMPLETE" \
+        "$SOURCE_FILE"
     has_settings=0
     if [[ -e $SETTINGS || -L $SETTINGS ]]; then has_settings=1; fi
     if ((purge && has_settings)); then found "$SETTINGS"; fi

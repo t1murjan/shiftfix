@@ -526,7 +526,7 @@ stop_running() {
     fi
 }
 
-# Программы, значки, ярлык; конфиг — только если его ещё нет.
+# Программы, значки, ярлык, путь к исходникам (для окна); конфиг — только если его ещё нет.
 install_files() {
     step "Файлы"
     local i text
@@ -541,6 +541,10 @@ install_files() {
     done
     if ((${#changed[@]} == 0)); then note "всё как в сборке — ничего не заменялось"; fi
     if ((menu_changed)); then refresh_menu_caches; fi
+    if [[ "$(cat -- "$SOURCE_FILE" 2>/dev/null)" != "$HERE" ]]; then
+        mkdir -p "$(dirname "$SOURCE_FILE")"
+        put_text "$SOURCE_FILE" "$HERE"
+    fi
 
     # Конфиг пользователя не перезаписываем: новых параметров в нём нет — берутся по умолчанию.
     if [[ -e $CONFIG || -L $CONFIG ]]; then

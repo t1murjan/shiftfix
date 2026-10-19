@@ -140,6 +140,7 @@ Unix-сокет `$XDG_RUNTIME_DIR/shiftfix.sock`, на каждое соедин
 - `~/.local/bin/shiftfix`, `~/.local/bin/shiftfix-gui`, значки и ярлык в `~/.local/share`;
 - `~/.config/shiftfix/config.toml` — только если его нет;
 - юнит `~/.config/systemd/user/shiftfix.service` (текст — `shiftfix --print-unit`), без systemd — `~/.config/autostart/shiftfix.desktop`;
+- `~/.local/state/shiftfix-source` — путь к папке, откуда запускали `install.sh`: по нему окно проверяет новую версию и обновляет программу;
 - через sudo и только недостающее: `/etc/udev/rules.d/80-shiftfix-uinput.rules`, `/etc/modules-load.d/shiftfix-uinput.conf`, группу `input`.
 
 Пока первая установка не закончена, лежит метка `~/.local/state/shiftfix-install-incomplete`: оборвись установка после замены файлов, повторный запуск увидел бы ту же версию и не включил бы автозапуск. С меткой он доделывает первую установку.

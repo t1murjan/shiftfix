@@ -36,9 +36,13 @@ init_paths() {
     FILES=("$BIN/shiftfix" "$BIN/shiftfix-gui" "$ICONS/shiftfix.svg" "$ICONS/shiftfix-paused.svg"
         "$APPS/shiftfix.desktop")
     ROLES=(daemon gui icon icon menu)
+    STATE="${XDG_STATE_HOME:-$HOME/.local/state}"
     # Метка «первая установка не закончена»: её ставит install.sh перед заменой файлов
     # и снимает в конце; пока она есть, повторный запуск доделывает первую установку.
-    INCOMPLETE="${XDG_STATE_HOME:-$HOME/.local/state}/shiftfix-install-incomplete"
+    INCOMPLETE="$STATE/shiftfix-install-incomplete"
+    # Путь к папке, откуда запускали install.sh: оттуда окно проверяет новую версию
+    # и обновляет программу (git pull и ./install.sh в терминале).
+    SOURCE_FILE="$STATE/shiftfix-source"
     UDEV_RULE=/etc/udev/rules.d/80-shiftfix-uinput.rules
     UDEV_TEXT='KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"'
     MODULES=/etc/modules-load.d/shiftfix-uinput.conf
