@@ -23,6 +23,10 @@ pub trait Keys {
 /// Переключение раскладки.
 pub trait Backend {
     fn name(&self) -> &'static str;
+    /// Коды раскладок xkb, приведённые `keymap::norm_layout` («us», «ru»).
+    /// Порядок совпадает с номерами в `current` и `set`. Движок сверяет список
+    /// с keymap: если раскладок столько же, таблицы берутся из неё по номерам,
+    /// иначе — встроенные по кодам.
     fn layouts(&mut self) -> Result<Vec<String>>;
     /// `None` — текущая раскладка неизвестна (переключение хоткеем).
     fn current(&mut self) -> Result<Option<usize>>;
