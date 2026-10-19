@@ -1,0 +1,64 @@
+# ~/.config/shiftfix/config.toml — все параметры необязательны.
+# Удобнее менять их в программе shiftfix-gui, вкладка «Настройки».
+
+# Двойной Shift: второе нажатие должно начаться не позже double_tap_ms после
+# отпускания первого, и каждое нажатие короче tap_max_hold_ms.
+double_tap_ms = 400
+tap_max_hold_ms = 300
+
+# Пауза между эмулируемыми событиями клавиатуры и после смены раскладки.
+# Если в каком-то приложении теряются буквы — увеличьте key_delay_ms.
+key_delay_ms = 5
+switch_delay_ms = 40
+
+# Слова длиннее не трогаем (страховка от игр, где «слово» — это WASD).
+max_word_len = 50
+
+# Исправление выделенного текста (PRIMARY): в Wayland нужен wl-clipboard,
+# в X11 и GNOME — xclip.
+selection = true
+# paste — вставка через буфер обмена; type — перенабор клавишами: без буфера
+# обмена, но в нередактируемом месте нажатия уйдут как горячие клавиши сайта,
+# а переводы строк и символы, которых нет на клавиатуре, всё равно вставятся
+# через буфер обмена.
+selection_method = "paste"
+max_selection = 5000
+paste_keys = "KEY_LEFTCTRL+KEY_V"
+paste_restore_ms = 400
+restore_clipboard = true
+
+# auto | kde | gnome | hyprland | sway | x11 | hotkey
+backend = "auto"
+# Для backend = "hotkey" и для "auto", пока окружение не определено: сочетание
+# переключения раскладки и раскладки по порядку. В GNOME сочетание берётся
+# отсюда, если его не удалось прочитать из настроек GNOME, — тогда оно должно
+# совпадать с сочетанием GNOME.
+switch_hotkey = "KEY_LEFTMETA+KEY_SPACE"
+hotkey_layouts = ["us", "ru"]
+
+# Значок в системном трее и уведомления о паузе.
+tray = true
+notify = true
+
+# Устройства, чьи нажатия не учитываются (имена — из `shiftfix --check`).
+ignore_devices = ["ydotoold virtual device"]
+
+# Оформление окна shiftfix-gui (службе не нужно): «Настройки» → «Оформление».
+[theme]
+# system — как в системе (XDG Desktop Portal; если система не сообщает —
+# тёмная), light — светлая, dark — тёмная.
+mode = "system"
+# Палитра светлого и тёмного варианта: breeze, nord, catppuccin или gruvbox.
+light_palette = "breeze"
+dark_palette = "breeze"
+# Свой акцентный цвет "#rrggbb" вместо акцента палитры; "" — акцент палитры.
+light_accent = ""
+dark_accent = ""
+# Только для mode = "system": акцент как в системе (accent-color портала);
+# если система его не сообщает — свой акцент или акцент палитры.
+system_accent = false
+
+# Роли устройств, заданные вручную (вкладка «Устройства» в shiftfix-gui).
+# Ключ — «vendor:product имя», значение — keyboard, mouse, touchpad,
+# touchscreen, tablet или ignore.
+[devices]

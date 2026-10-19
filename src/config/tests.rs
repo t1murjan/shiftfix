@@ -1,0 +1,607 @@
+use std::fs;
+
+use super::*;
+use crate::testutil::TempDir;
+
+/// Каталог теста и путь к config.toml в нём; самого файла нет.
+fn temp(tag: &str) -> (TempDir, PathBuf) {
+    let dir = TempDir::new(&format!("config-{tag}"));
+    let path = dir.join("config.toml");
+    (dir, path)
+}
+
+/// Каталог теста с config.toml из `text`.
+fn write(tag: &str, text: &str) -> (TempDir, PathBuf) {
+    let (dir, path) = temp(tag);
+    fs::write(&path, text).unwrap();
+    (dir, path)
+}
+
+fn count_lines(text: &str, pred: impl Fn(&str) -> bool) -> usize {
+    text.lines().filter(|l| pred(l)).count()
+}
+
+#[test]
+fn default_text_matches_defaults() {
+    // Все секции и значения как таблицы: разбор в Settings не годится, [theme]
+    // разбирается мягко, и неверное значение в тексте тихо стало бы умолчанием.
+    let table: toml::Table = DEFAULT_CONFIG.parse().unwrap();
+    assert_eq!(table, toml::Table::try_from(Settings::default()).unwrap());
+    // [theme] перечисляет поля в порядке структуры и стоит перед [devices].
+    // Порядок — через toml_edit: toml::Table ключи сортирует.
+    let keys = |table: &toml_edit::Table| -> Vec<String> {
+        table.iter().map(|(key, _)| key.to_owned()).collect()
+    };
+    let text: toml_edit::DocumentMut = DEFAULT_CONFIG.parse().unwrap();
+    let fields: toml_edit::DocumentMut = toml::to_string(&ThemeSettings::default())
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(keys(text["theme"].as_table().unwrap()), keys(&fields));
+    // Комментарий к backend перечисляет все значения.
+    let backends = BackendKind::ALL.map(BackendKind::as_str).join(" | ");
+    assert!(
+        DEFAULT_CONFIG.contains(&format!("\n# {backends}\nbackend = ")),
+        "{backends}"
+    );
+    let pos = |s: &str| DEFAULT_CONFIG.find(s).unwrap();
+    assert!(pos("\n[theme]\n") < pos("# Роли устройств"));
+    assert!(DEFAULT_CONFIG.ends_with("[devices]\n"));
+
+    // `--print-config > config.toml`, как делает install.sh.
+    let (_dir, path) = write("print-config", DEFAULT_CONFIG);
+    assert_eq!(Settings::load(&path).unwrap(), Settings::default());
+    assert_eq!(
+        ThemeSettings::load(&path).unwrap(),
+        ThemeSettings::default()
+    );
+    assert!(ThemeSettings::has_mode(&path).unwrap());
+    Config::load(&path).unwrap();
+}
+
+#[test]
+fn partial_config_and_errors() {
+    let raw: Settings = toml::from_str("double_tap_ms = 250\nbackend = \"kde\"").unwrap();
+    let cfg = Config::from_settings(&raw).unwrap();
+    assert_eq!(cfg.double_tap, 0.25);
+    assert_eq!(cfg.backend, BackendKind::Kde);
+    assert_eq!(cfg.max_word_len, 50);
+    let raw: Settings = toml::from_str("[devices]\n\"1:2 x\" = \"touchscreen\"").unwrap();
+    let cfg = Config::from_settings(&raw).unwrap();
+    assert_eq!(cfg.devices["1:2 x"], Role::Touchscreen);
+
+    let err = |text: &str| {
+        let bad: Settings = toml::from_str(text).unwrap();
+        format!("{:#}", Config::from_settings(&bad).unwrap_err())
+    };
+    assert_eq!(
+        err("selection_method = \"clipboard\""),
+        "selection_method = \"clipboard\": допустимо paste или type"
+    );
+    assert_eq!(
+        err("backend = \"windows\""),
+        "backend = \"windows\": допустимо auto, kde, gnome, hyprland, sway, x11 или hotkey"
+    );
+    assert_eq!(
+        err("[devices]\n\"1:2 x\" = \"screen\""),
+        "devices.\"1:2 x\" = \"screen\": допустимо keyboard, mouse, touchpad, touchscreen, tablet или ignore"
+    );
+    assert_eq!(
+        err("paste_keys = \"ctrl+v\""),
+        "paste_keys: неизвестная клавиша: ctrl"
+    );
+    assert_eq!(
+        err("switch_hotkey = \"Super+Space\""),
+        "switch_hotkey: неизвестная клавиша: Super"
+    );
+}
+
+#[test]
+fn hotkey_layouts_are_normalized() {
+    // Как коды раскладок из keymap сеанса: строчными, без варианта, en → us.
+    let raw: Settings =
+        toml::from_str("hotkey_layouts = [\"US\", \" ru(phonetic) \", \"eng\", \"rus\", \"de\"]")
+            .unwrap();
+    let cfg = Config::from_settings(&raw).unwrap();
+    assert_eq!(cfg.hotkey_layouts, ["us", "ru", "us", "ru", "de"]);
+}
+
+#[test]
+fn save_keeps_comments_and_round_trips() {
+    let (_dir, path) = temp("save");
+    let mut settings = Settings {
+        double_tap_ms: 333,
+        tray: false,
+        ..Settings::default()
+    };
+    settings
+        .devices
+        .insert("046d:c52b Logitech USB Receiver".into(), "ignore".into());
+    settings.save(&path).unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.contains("# Двойной Shift: второе нажатие"), "{text}");
+    assert!(text.contains("double_tap_ms = 333"), "{text}");
+    assert!(
+        text.contains("\"046d:c52b Logitech USB Receiver\" = \"ignore\""),
+        "{text}"
+    );
+    assert_eq!(Settings::load(&path).unwrap(), settings);
+
+    // Повторное сохранение не плодит дубли и не трогает чужие комментарии.
+    fs::write(
+        &path,
+        text.replace("tray = false", "# мой комментарий\ntray = false"),
+    )
+    .unwrap();
+    settings.devices.clear();
+    settings.save(&path).unwrap();
+    let again = fs::read_to_string(&path).unwrap();
+    assert!(again.contains("# мой комментарий"), "{again}");
+    assert_eq!(
+        count_lines(&again, |l| l.starts_with("double_tap_ms")),
+        1,
+        "{again}"
+    );
+    assert!(!again.contains("Logitech"));
+    assert_eq!(Settings::load(&path).unwrap(), settings);
+}
+
+/// config.toml версии 0.3.0: тогдашний `--print-config`, без [theme].
+const CONFIG_0_3_0: &str = r#"# ~/.config/shiftfix/config.toml — все параметры необязательны.
+# Удобнее менять их в программе shiftfix-gui, вкладка «Настройки».
+
+# Двойной Shift: второе нажатие должно начаться не позже double_tap_ms после
+# отпускания первого, и каждое нажатие короче tap_max_hold_ms.
+double_tap_ms = 400
+tap_max_hold_ms = 300
+
+# Пауза между эмулируемыми событиями клавиатуры и после смены раскладки.
+# Если в каком-то приложении теряются буквы — увеличь key_delay_ms.
+key_delay_ms = 5
+switch_delay_ms = 40
+
+# Слова длиннее не трогаем (страховка от игр, где «слово» — это WASD).
+max_word_len = 50
+
+# Исправление выделенного текста (PRIMARY): в Wayland нужен wl-clipboard,
+# в X11 и GNOME — xclip.
+selection = true
+# paste — вставка через буфер обмена; type — перенабор клавишами: без буфера
+# обмена, но в нередактируемом месте нажатия уйдут как горячие клавиши сайта,
+# а переводы строк и символы, которых нет на клавиатуре, всё равно вставятся
+# через буфер обмена.
+selection_method = "paste"
+max_selection = 5000
+paste_keys = "KEY_LEFTCTRL+KEY_V"
+paste_restore_ms = 400
+restore_clipboard = true
+
+# auto | kde | gnome | hyprland | sway | x11 | hotkey
+backend = "auto"
+# Только для backend = "hotkey": сочетание переключения раскладки и раскладки по порядку.
+switch_hotkey = "KEY_LEFTMETA+KEY_SPACE"
+hotkey_layouts = ["us", "ru"]
+
+# Значок в системном трее и уведомления о паузе.
+tray = true
+notify = true
+
+# Устройства, чьи нажатия не учитываются (имена — из `shiftfix --check`).
+ignore_devices = ["ydotoold virtual device"]
+
+# Роли устройств, заданные вручную (вкладка «Устройства» в shiftfix-gui).
+# Ключ — «vendor:product имя», значение — keyboard, mouse, touchpad,
+# touchscreen, tablet или ignore.
+[devices]
+"#;
+
+/// Старый конфиг со своими значениями и ролями устройств.
+const CUSTOM_0_3_0: &str = r#"# мой конфиг
+double_tap_ms = 350
+key_delay_ms = 7
+backend = "kde"
+hotkey_layouts = ["us", "ru", "de"]
+
+[devices]
+"046d:c52b Logitech USB Receiver" = "ignore"
+"#;
+
+#[test]
+fn old_config_without_theme() {
+    for (name, text) in [("old", CONFIG_0_3_0), ("old-custom", CUSTOM_0_3_0)] {
+        let (_dir, path) = write(name, text);
+        let settings = Settings::load(&path).unwrap();
+        assert_eq!(settings.theme, ThemeSettings::default());
+        assert_eq!(
+            ThemeSettings::load(&path).unwrap(),
+            ThemeSettings::default()
+        );
+        assert!(!ThemeSettings::has_mode(&path).unwrap());
+        Config::from_settings(&settings).unwrap();
+        Config::load(&path).unwrap();
+    }
+    assert_eq!(
+        toml::from_str::<Settings>(CONFIG_0_3_0).unwrap(),
+        Settings::default()
+    );
+    let custom: Settings = toml::from_str(CUSTOM_0_3_0).unwrap();
+    assert_eq!((custom.double_tap_ms, custom.key_delay_ms), (350, 7));
+    assert_eq!(custom.devices.len(), 1);
+}
+
+#[test]
+fn partial_theme_uses_defaults() {
+    let s: Settings = toml::from_str("[theme]\nmode = \"dark\"\n").unwrap();
+    assert_eq!(
+        s.theme,
+        ThemeSettings {
+            mode: ThemeMode::Dark,
+            ..ThemeSettings::default()
+        }
+    );
+    assert_eq!(
+        s,
+        Settings {
+            theme: s.theme.clone(),
+            ..Settings::default()
+        }
+    );
+}
+
+#[test]
+fn bad_theme_values_fall_back() {
+    let text = "key_delay_ms = 7\n[theme]\nmode = 1\nlight_accent = 5\n\
+                dark_palette = \"nord\"\nsystem_accent = \"да\"\nmdoe = \"dark\"\n";
+    let (_dir, path) = write("bad-theme", text);
+    let settings = Settings::load(&path).unwrap();
+    assert_eq!(settings.key_delay_ms, 7);
+    assert_eq!(
+        settings.theme,
+        ThemeSettings {
+            dark_palette: "nord".into(),
+            ..ThemeSettings::default()
+        }
+    );
+    assert_eq!(ThemeSettings::load(&path).unwrap(), settings.theme);
+    Config::from_settings(&settings).unwrap();
+    Config::load(&path).unwrap();
+
+    for text in [
+        "theme = 5\n",
+        "theme = \"dark\"\n",
+        "[theme]\nmode = \"Dark\"\n",
+    ] {
+        let s: Settings = toml::from_str(text).unwrap();
+        assert_eq!(s.theme, ThemeSettings::default(), "{text}");
+    }
+
+    // Ошибка в чужом параметре тему не сбрасывает.
+    let (_dir, path) = write(
+        "foreign-error",
+        "key_delay_ms = \"x\"\n[theme]\nmode = \"light\"\n",
+    );
+    assert!(Settings::load(&path).is_err());
+    assert_eq!(ThemeSettings::load(&path).unwrap().mode, ThemeMode::Light);
+}
+
+#[test]
+fn theme_round_trips() {
+    let settings = Settings {
+        theme: ThemeSettings {
+            mode: ThemeMode::Light,
+            light_palette: "nord".into(),
+            dark_palette: "gruvbox".into(),
+            light_accent: "#ff8800".into(),
+            dark_accent: "#3daee9".into(),
+            system_accent: true,
+        },
+        ..Settings::default()
+    };
+    let text = toml::to_string(&settings).unwrap();
+    assert_eq!(toml::from_str::<Settings>(&text).unwrap(), settings);
+    for mode in [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark] {
+        let theme = ThemeSettings {
+            mode,
+            ..settings.theme.clone()
+        };
+        let value = toml::Value::try_from(&theme).unwrap();
+        assert_eq!(ThemeSettings::from_value(&value), theme);
+    }
+}
+
+#[test]
+fn theme_save_touches_only_theme() {
+    let old = CONFIG_0_3_0.replace("double_tap_ms = 400", "double_tap_ms = 350");
+    let (_dir, path) = write("theme-save", &old);
+    let theme = ThemeSettings {
+        mode: ThemeMode::Dark,
+        dark_palette: "nord".into(),
+        ..ThemeSettings::default()
+    };
+    theme.save(&path).unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.starts_with(&old), "{text}");
+    assert_eq!(count_lines(&text, |l| l == "[theme]"), 1, "{text}");
+    assert!(text.contains("# Двойной Shift"), "{text}");
+    assert!(text.contains("# Роли устройств"), "{text}");
+    assert!(text.contains("double_tap_ms = 350"), "{text}");
+    let settings = Settings::load(&path).unwrap();
+    assert_eq!(settings.theme, theme);
+    assert_eq!(settings.double_tap_ms, 350);
+    assert_eq!(ThemeSettings::load(&path).unwrap(), theme);
+
+    // Повторное сохранение: тот же текст байт в байт, файл не переписывается.
+    use std::os::unix::fs::MetadataExt;
+    let inode = fs::metadata(&path).unwrap().ino();
+    theme.save(&path).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), text);
+    assert_eq!(fs::metadata(&path).unwrap().ino(), inode);
+
+    // Новая тема снова меняет только [theme].
+    let light = ThemeSettings {
+        mode: ThemeMode::Light,
+        ..theme.clone()
+    };
+    light.save(&path).unwrap();
+    let again = fs::read_to_string(&path).unwrap();
+    assert!(again.starts_with(&old), "{again}");
+    assert_eq!(count_lines(&again, |l| l == "[theme]"), 1, "{again}");
+    assert_eq!(count_lines(&again, |l| l.starts_with("mode =")), 1);
+    assert_eq!(ThemeSettings::load(&path).unwrap(), light);
+}
+
+#[test]
+fn theme_save_without_file_starts_from_default() {
+    // Нет ни файла, ни каталога: каталог создаётся, основа — DEFAULT_CONFIG
+    // со всеми комментариями.
+    let dir = TempDir::new("config-theme-new");
+    let path = dir.join("shiftfix").join("config.toml");
+    assert!(!ThemeSettings::has_mode(&path).unwrap());
+    let theme = ThemeSettings {
+        mode: ThemeMode::Dark,
+        dark_palette: "nord".into(),
+        ..ThemeSettings::default()
+    };
+    theme.save(&path).unwrap();
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        DEFAULT_CONFIG
+            .replace("\nmode = \"system\"\n", "\nmode = \"dark\"\n")
+            .replace("dark_palette = \"breeze\"", "dark_palette = \"nord\"")
+    );
+    assert_eq!(
+        Settings::load(&path).unwrap(),
+        Settings {
+            theme,
+            ..Settings::default()
+        }
+    );
+}
+
+#[test]
+fn accent_reset_reaches_file() {
+    let (_dir, path) = write("accent", CONFIG_0_3_0);
+    let mut theme = ThemeSettings {
+        light_accent: "#ff8800".into(),
+        ..ThemeSettings::default()
+    };
+    theme.save(&path).unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.contains("light_accent = \"#ff8800\""), "{text}");
+    theme.light_accent.clear();
+    theme.save(&path).unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(!text.contains("#ff8800"), "{text}");
+    assert!(text.contains("light_accent = \"\""), "{text}");
+    assert_eq!(
+        ThemeSettings::load(&path).unwrap(),
+        ThemeSettings::default()
+    );
+
+    // То же через общий Settings::save.
+    let mut settings = Settings::load(&path).unwrap();
+    settings.theme.dark_accent = "#123456".into();
+    settings.save(&path).unwrap();
+    assert!(fs::read_to_string(&path).unwrap().contains("#123456"));
+    settings.theme.dark_accent.clear();
+    settings.save(&path).unwrap();
+    assert!(!fs::read_to_string(&path).unwrap().contains("#123456"));
+    assert_eq!(Settings::load(&path).unwrap(), settings);
+}
+
+#[test]
+fn save_refuses_broken_file() {
+    // Файл не разбирается или не читается как текст (не UTF-8): запись —
+    // ошибка, и файл остаётся как был, а не собирается заново из умолчаний.
+    let broken = "double_tap_ms = = 1\n[theme\nmode = \"dark\"\n";
+    let latin1 = b"# caf\xe9\ndouble_tap_ms = 350\n";
+    for (tag, bytes, reason) in [
+        ("broken", broken.as_bytes(), "ошибка TOML"),
+        ("latin1", &latin1[..], "не читается"),
+    ] {
+        let (dir, path) = temp(tag);
+        fs::write(&path, bytes).unwrap();
+        assert_eq!(file::tmp_path(&path), dir.join("config.toml.tmp"));
+        let err = ThemeSettings::default().save(&path).unwrap_err();
+        assert!(format!("{err:#}").contains(reason), "{tag}: {err:#}");
+        let err = Settings::default().save(&path).unwrap_err();
+        assert!(format!("{err:#}").contains(reason), "{tag}: {err:#}");
+        assert_eq!(fs::read(&path).unwrap(), bytes, "{tag}");
+        assert!(!file::tmp_path(&path).exists(), "{tag}");
+        assert!(ThemeSettings::load(&path).is_err(), "{tag}");
+        assert!(ThemeSettings::has_mode(&path).is_err(), "{tag}");
+        assert!(Settings::load(&path).is_err(), "{tag}");
+    }
+}
+
+#[test]
+fn save_changes_writes_only_changed_keys() {
+    let text = "# мой конфиг\ndouble_tap_ms = 350\nbackend = 'gnome'\nhotkey_layouts = [\"us\",\"ru\"]\n\n[devices]\n\"046d:c52b Mouse\" = \"mouse\"\n";
+    let (_dir, path) = write("changes", text);
+    let base = Settings::load(&path).unwrap();
+    // После чтения файл поправили руками: правка остаётся, а пишется только
+    // то, что изменили в окне.
+    let by_hand = text.replace("double_tap_ms = 350", "double_tap_ms = 360");
+    fs::write(&path, &by_hand).unwrap();
+    let mut ours = base.clone();
+    ours.key_delay_ms = 7;
+    ours.save_changes(&base, &path).unwrap();
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        by_hand.replace("\n\n[devices]", "\nkey_delay_ms = 7\n\n[devices]")
+    );
+
+    // Только роль устройства — меняется только [devices].
+    let before = fs::read_to_string(&path).unwrap();
+    let on_disk = Settings::load(&path).unwrap();
+    let mut roles = on_disk.clone();
+    roles
+        .devices
+        .insert("1234:5678 Pad".into(), "touchpad".into());
+    roles.save_changes(&on_disk, &path).unwrap();
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        format!("{before}\"1234:5678 Pad\" = \"touchpad\"\n")
+    );
+
+    // Ничего не изменилось — файл не пишется.
+    let on_disk = Settings::load(&path).unwrap();
+    fs::write(&path, "double_tap_ms = 1\n").unwrap();
+    on_disk.save_changes(&on_disk, &path).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "double_tap_ms = 1\n");
+}
+
+#[test]
+fn settings_save_merges_theme() {
+    let text = DEFAULT_CONFIG
+        .replace(
+            "\nmode = \"system\"\n",
+            "\n# мой комментарий к теме\nmode = \"dark\" # ночью\n",
+        )
+        .replace(
+            "system_accent = false",
+            "system_accent = false\nfuture_key = 1",
+        )
+        + "\"1:2 mouse\" = \"mouse\"\n\"3:4 pad\" = \"touchpad\"\n";
+    let (_dir, path) = write("merge", &text);
+    let mut settings = Settings::load(&path).unwrap();
+    assert_eq!(settings.theme.mode, ThemeMode::Dark);
+    assert_eq!(settings.devices.len(), 2);
+    settings.theme.light_palette = "gruvbox".into();
+    settings.double_tap_ms = 250;
+    settings.devices.remove("1:2 mouse");
+    settings.save(&path).unwrap();
+    let saved = fs::read_to_string(&path).unwrap();
+    // Повторное сохранение: тот же текст, файл не переписывается.
+    use std::os::unix::fs::MetadataExt;
+    let inode = fs::metadata(&path).unwrap().ino();
+    settings.save(&path).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), saved);
+    assert_eq!(fs::metadata(&path).unwrap().ino(), inode);
+
+    assert!(
+        saved.contains("# мой комментарий к теме\nmode = \"dark\" # ночью\n"),
+        "{saved}"
+    );
+    assert!(saved.contains("# Палитра светлого и тёмного"), "{saved}");
+    assert!(saved.contains("light_palette = \"gruvbox\""), "{saved}");
+    // Ключ от будущей версии в [theme] остаётся, удалённое устройство исчезает.
+    assert!(saved.contains("future_key = 1"), "{saved}");
+    assert!(!saved.contains("1:2 mouse"), "{saved}");
+    assert!(saved.contains("\"3:4 pad\" = \"touchpad\""), "{saved}");
+    for header in ["[theme]", "[devices]"] {
+        assert_eq!(count_lines(&saved, |l| l == header), 1, "{saved}");
+    }
+    for key in ["mode", "light_palette", "future_key", "double_tap_ms"] {
+        let prefix = format!("{key} =");
+        assert_eq!(
+            count_lines(&saved, |l| l.starts_with(&prefix)),
+            1,
+            "{saved}"
+        );
+    }
+    assert!(
+        saved.find("[theme]").unwrap() < saved.find("[devices]").unwrap(),
+        "{saved}"
+    );
+    assert_eq!(Settings::load(&path).unwrap(), settings);
+}
+
+#[test]
+fn settings_save_adds_theme_to_old_config() {
+    // Старый конфиг без [theme]: таблица появляется один раз, роли и
+    // комментарии на месте, повторное сохранение ничего не меняет.
+    let (_dir, path) = write("merge-old", CUSTOM_0_3_0);
+    let mut settings = Settings::load(&path).unwrap();
+    settings.theme.mode = ThemeMode::Light;
+    settings.save(&path).unwrap();
+    let saved = fs::read_to_string(&path).unwrap();
+    settings.save(&path).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), saved);
+    assert!(saved.starts_with("# мой конфиг\n"), "{saved}");
+    assert_eq!(count_lines(&saved, |l| l == "[theme]"), 1, "{saved}");
+    assert!(saved.contains("\"046d:c52b Logitech USB Receiver\" = \"ignore\""));
+    assert_eq!(Settings::load(&path).unwrap(), settings);
+}
+
+#[test]
+fn save_through_symlink_keeps_link_and_mode() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let (dir, path) = temp("symlink");
+    let real = dir.join("dotfiles").join("shiftfix.toml");
+    fs::create_dir_all(real.parent().unwrap()).unwrap();
+    fs::write(&real, CONFIG_0_3_0).unwrap();
+    fs::set_permissions(&real, fs::Permissions::from_mode(0o600)).unwrap();
+    symlink("dotfiles/shiftfix.toml", &path).unwrap();
+
+    let theme = ThemeSettings {
+        mode: ThemeMode::Light,
+        ..ThemeSettings::default()
+    };
+    theme.save(&path).unwrap();
+    let mut settings = Settings::load(&path).unwrap();
+    assert_eq!(settings.theme, theme);
+    settings.key_delay_ms = 9;
+    settings.save(&path).unwrap();
+
+    assert!(fs::symlink_metadata(&path).unwrap().is_symlink());
+    assert_eq!(
+        fs::metadata(&real).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(Settings::load(&real).unwrap(), settings);
+
+    // Висячая ссылка: файл создаётся там, куда она указывает.
+    let dangling = dir.join("dangling.toml");
+    symlink("dotfiles/new/config.toml", &dangling).unwrap();
+    theme.save(&dangling).unwrap();
+    assert!(fs::symlink_metadata(&dangling).unwrap().is_symlink());
+    assert_eq!(ThemeSettings::load(&dangling).unwrap(), theme);
+    assert!(dir.join("dotfiles/new/config.toml").is_file());
+
+    let mut names = Vec::new();
+    for sub in ["", "dotfiles", "dotfiles/new"] {
+        for entry in fs::read_dir(dir.join(sub)).unwrap() {
+            names.push(entry.unwrap().file_name().into_string().unwrap());
+        }
+    }
+    assert!(!names.iter().any(|n| n.ends_with(".tmp")), "{names:?}");
+}
+
+#[test]
+fn enum_names_round_trip() {
+    for backend in BackendKind::ALL {
+        assert_eq!(BackendKind::parse(backend.as_str()), Some(backend));
+    }
+    for method in SelectionMethod::ALL {
+        assert_eq!(SelectionMethod::parse(method.as_str()), Some(method));
+    }
+    // Режим темы пишется в файл через serde: имена должны совпадать.
+    for mode in ThemeMode::ALL {
+        assert_eq!(ThemeMode::parse(mode.as_str()), Some(mode));
+        let value = toml::Value::try_from(mode).unwrap();
+        assert_eq!(value.as_str(), Some(mode.as_str()));
+    }
+    assert_eq!(ThemeMode::parse("Dark"), None);
+    assert_eq!(BackendKind::parse("windows"), None);
+}

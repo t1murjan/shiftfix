@@ -1,0 +1,33 @@
+{
+  "version": "0.4.0",
+  "pid": 4242,
+  "enabled": true,
+  "layouts": {
+    "backend": "KDE",
+    "codes": ["us", "ru"],
+    "current": 0,
+    "from_keymap": true,
+    "error": null
+  },
+  "selection": true,
+  "selection_note": null,
+  "selection_via": "wl-clipboard",
+  "tray": true,
+  "tray_waiting": false,
+  "devices": [
+    {"path": "/dev/input/event3", "name": "AT Translated Set 2 keyboard", "key": "0001:0001 AT Translated Set 2 keyboard", "detected": "keyboard", "role": "keyboard", "overridden": false, "virtual_device": false, "idle_ms": null},
+    {"path": "/dev/input/event5", "name": "Logitech USB Mouse", "key": "046d:c077 Logitech USB Mouse", "detected": "mouse", "role": "mouse", "overridden": false, "virtual_device": false, "idle_ms": null},
+    {"path": "/dev/input/event7", "name": "SynPS/2 Touchpad", "key": "0002:0007 SynPS/2 Touchpad", "detected": "touchpad", "role": "ignore", "overridden": true, "virtual_device": false, "idle_ms": null}
+  ],
+  "actions": [
+    {"time": 1760000000, "kind": "word", "chars": 6, "from": "us", "to": "ru"},
+    {"time": 1760000060, "kind": "selection", "chars": 10, "from": "us", "to": "ru"},
+    {"time": 1760000065, "kind": "undo", "chars": 10, "from": "ru", "to": "us"}
+  ],
+  "log": [
+    {"time": 1760000000, "level": "INFO", "text": "готов: раскладки us, ru (KDE), выделение исправляется"},
+    {"time": 1760000001, "level": "WARN", "text": "пример предупреждения"},
+    {"time": 1760000002, "level": "ERROR", "text": "пример ошибки"}
+  ],
+  "config_path": "/home/user/.config/shiftfix/config.toml"
+}

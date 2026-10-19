@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Новый push в ту же ветку отменяет прогон предыдущего.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Тестам нужны Xvfb, setxkbmap и xclip (tests/x11.rs), dbus-daemon (KDE,
+      # портал) и libxkbcommon (таблицы раскладок); без них тесты пропускаются.
+      - name: Пакеты для тестов
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb x11-xkb-utils xclip dbus libxkbcommon0 shellcheck
+
+      - name: Форматирование
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      # Пакеты для тестов стоят, так что пропуск теста — ошибка.
+      - name: Тесты
+        run: cargo test --locked
+        env:
+          SHIFTFIX_TEST_STRICT: 1
+
+      - name: Shellcheck
+        run: shellcheck -x install.sh uninstall.sh scripts/common.sh tests/install/run.sh tests/install/fakes/*
+
+  # Собирается ли на самом старом Rust — rust-version из Cargo.toml.
+  msrv:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@1.95
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo check на Rust 1.95
+        run: cargo check --all-targets --locked
+
+  # Стенд install.sh и uninstall.sh (tests/install/run.sh). Падает, если код выхода
+  # какого-то сценария не тот, что записан в run.sh.
+  install-scripts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Сборка
+        run: cargo build --bins --locked
+
+      - name: Стенд
+        run: sudo tests/install/run.sh --container . target/debug "$RUNNER_TEMP/journal"
+
+      - name: Журналы стенда
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-journal
+          path: ${{ runner.temp }}/journal
+          if-no-files-found: ignore
