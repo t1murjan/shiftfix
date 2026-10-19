@@ -9,7 +9,7 @@ use egui_phosphor::regular as icons;
 use shiftfix::config::ThemeMode;
 
 use crate::app::App;
-use crate::theme::{self, HexCommit, Palette, SystemNote, Variant};
+use crate::theme::{self, Palette, SystemNote, Variant};
 use crate::widgets::{self, card, card_title, setting_row, toggle_row};
 
 const MODES: [(ThemeMode, &str, &str); 3] = [
@@ -29,6 +29,33 @@ struct HexDraft {
     text: String,
     /// Не цвет «#rrggbb» — поле подсвечено.
     bad: bool,
+}
+
+/// Что сделать с полем «#rrggbb», когда оно потеряло фокус.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum HexCommit {
+    /// В поле ничего не набирали — принимать нечего.
+    Keep,
+    /// Набранное отменено — забыть его.
+    Discard,
+    /// Принять цвет.
+    Apply(egui::Color32),
+    /// Не цвет — оставить набранное и подсветить.
+    Bad,
+}
+
+/// Уход из поля hex. Принимается только набранное (`edited`): если цвет
+/// сменили кнопкой («Сбросить», «Свой акцент», пипетка), набранное уже
+/// забыто, в поле сохранённый цвет, и уход из поля не должен его вернуть.
+/// Esc, пустое поле или поле, ставшее неактивным, — отмена.
+fn hex_commit(edited: bool, enabled: bool, escape: bool, text: &str) -> HexCommit {
+    if !edited {
+        HexCommit::Keep
+    } else if escape || !enabled || text.trim().is_empty() {
+        HexCommit::Discard
+    } else {
+        theme::parse_hex(text).map_or(HexCommit::Bad, HexCommit::Apply)
+    }
 }
 
 fn hex_field_id(v: Variant) -> Id {
@@ -297,7 +324,7 @@ fn hex_field(
         // сохранённый цвет, записывать его обратно нельзя.
         let edited = draft.is_some() || response.changed();
         let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
-        match theme::hex_commit(edited, ui.is_enabled(), escape, &text) {
+        match hex_commit(edited, ui.is_enabled(), escape, &text) {
             HexCommit::Keep => {}
             HexCommit::Discard => ui.data_mut(|d| d.remove::<HexDraft>(draft_id)),
             HexCommit::Apply(color) => {
@@ -326,4 +353,29 @@ fn hex_field(
     } else {
         "В config.toml неверный цвет — используется акцент палитры."
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hex_commit_only_typed() {
+        use HexCommit::*;
+        // «Сбросить» или выключенный «Свой акцент»: набранное забыто, в поле
+        // акцент палитры — уход из поля его не записывает.
+        assert_eq!(hex_commit(false, true, false, "#1d99f3"), Keep);
+        assert_eq!(hex_commit(false, false, false, "#1d99f3"), Keep);
+        assert_eq!(hex_commit(false, true, true, "#1d99f3"), Keep);
+        // Набрали и ушли из поля (Enter, клик мимо) — принять.
+        assert_eq!(
+            hex_commit(true, true, false, "#00aa55"),
+            Apply(egui::Color32::from_rgb(0x00, 0xaa, 0x55))
+        );
+        assert_eq!(hex_commit(true, true, false, "#0a5"), Bad);
+        // Esc, пусто или поле стало неактивным («Акцент как в системе»).
+        assert_eq!(hex_commit(true, true, true, "#00aa55"), Discard);
+        assert_eq!(hex_commit(true, true, false, "  "), Discard);
+        assert_eq!(hex_commit(true, false, false, "#00aa55"), Discard);
+    }
 }

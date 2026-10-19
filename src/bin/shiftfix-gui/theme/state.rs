@@ -8,11 +8,17 @@ use eframe::egui;
 use shiftfix::config::{ThemeMode, ThemeSettings};
 
 use super::system::system_accent_blocked;
-use super::{Palette, System, SystemNote, SystemWatch, Variant, apply_palette, resolve, save_due};
+use super::{Palette, System, SystemNote, SystemWatch, Variant, apply_palette, resolve};
 use crate::portal::PortalState;
 
 /// Тема пишется в файл не сразу: пипетка меняет цвет каждый кадр.
 const SAVE_DELAY: Duration = Duration::from_millis(400);
+
+/// Пора ли записать тему: срок вышел и кнопка мыши отпущена. Пока тянут
+/// ползунок пипетки, цвет меняется каждый кадр, а файл пишется один раз.
+fn save_due(at: Option<Instant>, now: Instant, pointer_down: bool) -> bool {
+    at.is_some_and(|at| now >= at) && !pointer_down
+}
 
 pub struct ThemeState {
     /// Конфиг, в котором хранится тема (тот же, откуда прочитаны настройки).
@@ -168,5 +174,21 @@ impl ThemeState {
                 first.then(|| format!("{err:#}"))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_waits_for_deadline_and_release() {
+        let now = Instant::now();
+        let later = now + Duration::from_millis(400);
+        assert!(!save_due(None, later, false), "сохранять нечего");
+        assert!(!save_due(Some(later), now, false), "срок не вышел");
+        assert!(!save_due(Some(now), later, true), "ползунок ещё тянут");
+        assert!(save_due(Some(now), later, false));
+        assert!(save_due(Some(now), now, false), "ровно в срок");
     }
 }

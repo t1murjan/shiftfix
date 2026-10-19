@@ -49,33 +49,6 @@ pub fn format_hex(c: Color32) -> String {
     format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b())
 }
 
-/// Что сделать с полем «#rrggbb», когда оно потеряло фокус.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum HexCommit {
-    /// В поле ничего не набирали — принимать нечего.
-    Keep,
-    /// Набранное отменено — забыть его.
-    Discard,
-    /// Принять цвет.
-    Apply(Color32),
-    /// Не цвет — оставить набранное и подсветить.
-    Bad,
-}
-
-/// Уход из поля hex. Принимается только набранное (`edited`): если цвет
-/// сменили кнопкой («Сбросить», «Свой акцент», пипетка), набранное уже
-/// забыто, в поле сохранённый цвет, и уход из поля не должен его вернуть.
-/// Esc, пустое поле или поле, ставшее неактивным, — отмена.
-pub fn hex_commit(edited: bool, enabled: bool, escape: bool, text: &str) -> HexCommit {
-    if !edited {
-        HexCommit::Keep
-    } else if escape || !enabled || text.trim().is_empty() {
-        HexCommit::Discard
-    } else {
-        parse_hex(text).map_or(HexCommit::Bad, HexCommit::Apply)
-    }
-}
-
 /// Сдвиг оттенка второго цвета градиента от своего акцента: как у Breeze,
 /// где после голубого идёт фиолетовый (около 54°).
 const ACCENT2_HUE_SHIFT: f32 = 0.15;
@@ -195,26 +168,6 @@ mod tests {
         for c in [orange, BLACK, WHITE, rgb(0x0a0b0c), rgb(0x3daee9)] {
             assert_eq!(parse_hex(&format_hex(c)), Some(c));
         }
-    }
-
-    #[test]
-    fn hex_commit_only_typed() {
-        use HexCommit::*;
-        // «Сбросить» или выключенный «Свой акцент»: набранное забыто, в поле
-        // акцент палитры — уход из поля его не записывает.
-        assert_eq!(hex_commit(false, true, false, "#1d99f3"), Keep);
-        assert_eq!(hex_commit(false, false, false, "#1d99f3"), Keep);
-        assert_eq!(hex_commit(false, true, true, "#1d99f3"), Keep);
-        // Набрали и ушли из поля (Enter, клик мимо) — принять.
-        assert_eq!(
-            hex_commit(true, true, false, "#00aa55"),
-            Apply(rgb(0x00aa55))
-        );
-        assert_eq!(hex_commit(true, true, false, "#0a5"), Bad);
-        // Esc, пусто или поле стало неактивным («Акцент как в системе»).
-        assert_eq!(hex_commit(true, true, true, "#00aa55"), Discard);
-        assert_eq!(hex_commit(true, true, false, "  "), Discard);
-        assert_eq!(hex_commit(true, false, false, "#00aa55"), Discard);
     }
 
     #[test]

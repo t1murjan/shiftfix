@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use shiftfix::config::{ThemeMode, ThemeSettings};
 
 use super::*;
@@ -13,17 +11,6 @@ fn own_accent(mode: ThemeMode, light: &str, dark: &str) -> ThemeSettings {
         dark_accent: dark.into(),
         ..ThemeSettings::default()
     }
-}
-
-#[test]
-fn save_waits_for_deadline_and_release() {
-    let now = Instant::now();
-    let later = now + std::time::Duration::from_millis(400);
-    assert!(!save_due(None, later, false), "сохранять нечего");
-    assert!(!save_due(Some(later), now, false), "срок не вышел");
-    assert!(!save_due(Some(now), later, true), "ползунок ещё тянут");
-    assert!(save_due(Some(now), later, false));
-    assert!(save_due(Some(now), now, false), "ровно в срок");
 }
 
 #[test]

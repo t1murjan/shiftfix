@@ -12,15 +12,11 @@ mod system;
 #[cfg(test)]
 mod tests;
 
-use std::time::Instant;
-
 use shiftfix::config::{ThemeMode, ThemeSettings};
 
 use palettes::lookup;
 
-pub use color::{
-    HexCommit, accent_readable, best_on, format_hex, hex_commit, knob_on, on_accent, parse_hex,
-};
+pub use color::{accent_readable, best_on, format_hex, knob_on, on_accent, parse_hex};
 pub use legacy::migrate_legacy;
 pub use palettes::{PALETTES, Palette, PaletteDef, find};
 pub use state::ThemeState;
@@ -148,10 +144,4 @@ pub fn set_own_accent(t: &mut ThemeSettings, v: Variant, on: bool) {
     if !on || slot.trim().is_empty() {
         *slot = accent;
     }
-}
-
-/// Пора ли записать тему: срок вышел и кнопка мыши отпущена. Пока тянут
-/// ползунок пипетки, цвет меняется каждый кадр, а файл пишется один раз.
-pub fn save_due(at: Option<Instant>, now: Instant, pointer_down: bool) -> bool {
-    at.is_some_and(|at| now >= at) && !pointer_down
 }
