@@ -9,7 +9,6 @@ use egui_phosphor::regular as icons;
 use shiftfix::config::ThemeMode;
 
 use crate::app::App;
-use crate::portal::PortalState;
 use crate::theme::{self, HexCommit, Palette, SystemNote, Variant};
 use crate::widgets::{self, card, card_title, setting_row, toggle_row};
 
@@ -76,12 +75,12 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
         ui.add_space(10.0);
 
         // Палитры и акцент — у светлого и тёмного варианта свои.
-        let variant = app.theme.tab.unwrap_or(Variant::of(p.dark));
+        let variant = app.theme.tab().unwrap_or(Variant::of(p.dark));
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             for (v, title) in VARIANTS {
                 if widgets::tab(ui, p, title, v == variant).clicked() {
-                    app.theme.tab = Some(v);
+                    app.theme.set_tab(v);
                 }
             }
         });
@@ -120,14 +119,14 @@ fn mode_row(app: &mut App, ui: &mut Ui, p: &Palette, mode: ThemeMode) {
             "Сейчас тема задана параметром --theme — только до закрытия окна.",
         );
     } else if mode == ThemeMode::System {
-        let note = SystemNote::of(&app.theme.portal);
+        let note = app.theme.note();
         let (glyph, color) = match note {
             SystemNote::Waiting => (icons::HOURGLASS_MEDIUM, p.weak),
             note if note.fallback() => (icons::WARNING, p.warning),
             _ => (icons::INFO, p.weak),
         };
         let line = note_line(ui, p, glyph, color, note.text());
-        if let PortalState::Unavailable(why) = &app.theme.portal {
+        if let Some(why) = app.theme.unavailable_reason() {
             line.on_hover_text(why);
         }
     }
@@ -149,7 +148,7 @@ fn palette_tiles(app: &mut App, ui: &mut Ui, p: &Palette, variant: Variant) {
 
 /// «Акцент как в системе» — только в системном режиме.
 fn system_accent_row(app: &mut App, ui: &mut Ui, p: &Palette) {
-    let blocked = theme::system_accent_blocked(&app.theme.portal);
+    let blocked = app.theme.system_accent_blocked();
     let mut on = app.settings.current.theme.system_accent;
     let hint = blocked.unwrap_or("Акцент из настроек системы вместо своего.");
     let toggled = ui
@@ -167,7 +166,7 @@ fn system_accent_row(app: &mut App, ui: &mut Ui, p: &Palette) {
 /// предупреждения о цвете.
 fn own_accent(app: &mut App, ui: &mut Ui, p: &Palette, mode: ThemeMode, variant: Variant) {
     let t = app.settings.current.theme.clone();
-    let system_accent = theme::system_accent_active(&t, &app.theme.system, mode);
+    let system_accent = theme::system_accent_active(&t, app.theme.system(), mode);
     let own = variant.accent(&t);
     let mut own_on = !own.trim().is_empty();
     let base = variant.of_def(theme::find(variant.palette_id(&t))).accent;
@@ -190,7 +189,7 @@ fn own_accent(app: &mut App, ui: &mut Ui, p: &Palette, mode: ThemeMode, variant:
     let t = app.settings.current.theme.clone();
     let own = variant.accent(&t);
 
-    let shown = theme::variant_palette(&t, &app.theme.system, mode, variant);
+    let shown = theme::variant_palette(&t, app.theme.system(), mode, variant);
     let mut message = None;
     ui.horizontal(|ui| {
         ui.add_enabled_ui(own_on && !system_accent, |ui| {
