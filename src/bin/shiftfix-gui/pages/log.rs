@@ -18,7 +18,17 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
         "Журнал",
         "Сообщения службы и проверка того, всё ли готово к работе",
     );
+    actions(app, ui, p);
+    ui.add_space(12.0);
+    if let Some(text) = app.check.output() {
+        check_result(ui, p, &text);
+        ui.add_space(12.0);
+    }
+    messages(app, ui, p);
+}
 
+/// Кнопки: проверка системы, служба, конфиг.
+fn actions(app: &mut App, ui: &mut Ui, p: &Palette) {
     card(ui, p, |ui| {
         ui.horizontal_wrapped(|ui| {
             let running = app.check.running();
@@ -58,41 +68,47 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             }
             if widgets::button(ui, p, icons::FOLDER_OPEN, "Открыть конфиг", false).clicked()
             {
-                let path = app.settings.path().to_owned();
-                // Файла ещё нет — создать, иначе открывать нечего.
-                let created = if path.exists() {
-                    Ok(())
-                } else {
-                    app.settings.saved().save(&path)
-                };
-                let opened = created.and_then(|()| {
-                    shiftfix::sys::proc::spawn_detached("xdg-open", &[&path.to_string_lossy()])
-                });
-                if let Err(err) = opened {
-                    app.toast(ToastKind::Error, format!("{err:#}"));
-                }
+                open_config(app);
             }
         });
     });
-    ui.add_space(12.0);
+}
 
-    if let Some(text) = app.check.output() {
-        card(ui, p, |ui| {
-            card_title(ui, p, icons::LIST_CHECKS, "Проверка системы");
-            for line in text.lines() {
-                let color = if line.contains('✗') {
-                    p.negative
-                } else if line.contains('✓') {
-                    p.positive
-                } else {
-                    p.text
-                };
-                ui.label(RichText::new(line).monospace().color(color));
-            }
-        });
-        ui.add_space(12.0);
+/// Открыть config.toml в редакторе по умолчанию; файла ещё нет — создать,
+/// иначе открывать нечего.
+fn open_config(app: &mut App) {
+    let path = app.settings.path().to_owned();
+    let created = if path.exists() {
+        Ok(())
+    } else {
+        app.settings.saved().save(&path)
+    };
+    let opened = created
+        .and_then(|()| shiftfix::sys::proc::spawn_detached("xdg-open", &[&path.to_string_lossy()]));
+    if let Err(err) = opened {
+        app.toast(ToastKind::Error, format!("{err:#}"));
     }
+}
 
+/// Вывод `shiftfix --check`: строки с ✗ — красным, с ✓ — зелёным.
+fn check_result(ui: &mut Ui, p: &Palette, text: &str) {
+    card(ui, p, |ui| {
+        card_title(ui, p, icons::LIST_CHECKS, "Проверка системы");
+        for line in text.lines() {
+            let color = if line.contains('✗') {
+                p.negative
+            } else if line.contains('✓') {
+                p.positive
+            } else {
+                p.text
+            };
+            ui.label(RichText::new(line).monospace().color(color));
+        }
+    });
+}
+
+/// Журнал службы, а пока она не отвечает — journalctl.
+fn messages(app: &mut App, ui: &mut Ui, p: &Palette) {
     let (lines, source) = match app.status() {
         Some(s) => (
             s.log
