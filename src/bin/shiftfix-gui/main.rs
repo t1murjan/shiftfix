@@ -85,8 +85,15 @@ fn listen_for_raise(ctx: egui::Context) -> Receiver<app::Page> {
     let (pages, raised) = mpsc::channel();
     let path = raise_socket();
     let _ = fs::remove_file(&path); // блокировка у нас — старый сокет ничей
-    let Ok(listener) = UnixListener::bind(&path) else {
-        return raised;
+    let listener = match UnixListener::bind(&path) {
+        Ok(listener) => listener,
+        Err(err) => {
+            log::warn!(
+                "сокет {}: {err} — повторный запуск не сможет показать окно",
+                path.display()
+            );
+            return raised;
+        }
     };
     let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
     let spawned = thread::Builder::new().name("raise".into()).spawn(move || {
@@ -110,7 +117,7 @@ fn listen_for_raise(ctx: egui::Context) -> Receiver<app::Page> {
         }
     });
     if let Err(err) = spawned {
-        eprintln!("shiftfix-gui: {err}");
+        log::warn!("сокет {}: поток не запущен: {err}", path.display());
     }
     raised
 }
@@ -174,7 +181,8 @@ fn main() -> eframe::Result {
     }));
 
     // Второе окно рядом с первым только путает: настройки сохранялись бы наперегонки.
-    let _lock = match lock::try_lock(&paths::runtime_dir().join("shiftfix-gui.lock")) {
+    let lock_path = paths::runtime_dir().join("shiftfix-gui.lock");
+    let _lock = match lock::try_lock(&lock_path) {
         Ok(Some(file)) => Some(file),
         Ok(None) => {
             if !raise_existing(page) {
@@ -182,8 +190,13 @@ fn main() -> eframe::Result {
             }
             return Ok(());
         }
-        // Файл блокировки не создать — открываемся без него.
-        Err(_) => None,
+        Err(err) => {
+            log::warn!(
+                "блокировка окна {}: {err} — открываюсь без неё",
+                lock_path.display()
+            );
+            None
+        }
     };
 
     // Портал отвечает не сразу: спрашиваем, пока создаётся окно.
