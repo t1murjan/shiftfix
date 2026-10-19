@@ -10,13 +10,18 @@ echo "$*" >>"$HOME/log/systemctl.log"
 [[ -e $SD/off ]] && exit 1
 [[ $1 == --user ]] || exit 1
 shift
-now=0 args=()
-for a in "$@"; do
-    case $a in
-    --quiet | -p | --value) ;;
+now=0 prop='' args=()
+while (($#)); do
+    case $1 in
+    --quiet | --value) ;;
     --now) now=1 ;;
-    *) args+=("$a") ;;
+    -p)
+        prop=$2
+        shift
+        ;;
+    *) args+=("$1") ;;
     esac
+    shift
 done
 set -- "${args[@]}"
 cmd=$1 unit=${2:-shiftfix.service}
@@ -81,7 +86,12 @@ disable)
     ;;
 start) start ;;
 stop) stop ;;
-show) [[ -f $UNITS/shiftfix.service ]] && echo "$UNITS/shiftfix.service" ;;
+show)
+    # Подделка знает только свойство FragmentPath (его спрашивает uninstall.sh). На
+    # другие — ошибка: путь юнита в ответ дал бы сценарию пройти по неверной причине.
+    [[ $prop == FragmentPath ]] || exit 1
+    [[ -f $UNITS/shiftfix.service ]] && echo "$UNITS/shiftfix.service"
+    ;;
 *) exit 1 ;;
 esac
 exit 0
