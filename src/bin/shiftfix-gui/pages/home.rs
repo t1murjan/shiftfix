@@ -9,15 +9,20 @@ use shiftfix::devices::Role;
 use shiftfix::engine::ActionKind;
 use shiftfix::ipc::{Request, Status};
 
-use crate::app::{App, Page, State, state_label};
+use crate::app::{App, Page, State, VERSION, state_label};
 use crate::format::clock;
 use crate::link::ServiceAction;
 use crate::theme::{self, Palette};
+use crate::update::{self, Outcome};
 use crate::widgets::{self, bold, card, card_title, keycap};
 
 pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
     hero(app, ui, p);
     ui.add_space(16.0);
+    if let Some(Outcome::Newer(version)) = app.update.state().outcome {
+        new_version(app, ui, p, &version);
+        ui.add_space(16.0);
+    }
     stats(app, ui, p);
     ui.add_space(16.0);
     if app.status().is_some_and(|s| s.tray_waiting) {
@@ -189,6 +194,30 @@ fn hero_toggle(ui: &mut Ui, ink: Color32, accent: Color32, on: &mut bool) -> egu
     response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text("Включить или поставить на паузу")
+}
+
+/// Проверка нашла новую версию: строка о ней и «Обновить».
+fn new_version(app: &mut App, ui: &mut Ui, p: &Palette, version: &str) {
+    card(ui, p, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(widgets::icon(icons::ARROW_CIRCLE_UP, 26.0).color(p.accent));
+            ui.add_space(4.0);
+            ui.vertical(|ui| {
+                ui.label(bold(format!("Доступна версия {version}"), 16.0).color(p.text));
+                ui.label(
+                    RichText::new(format!("Сейчас установлена {VERSION}"))
+                        .size(12.5)
+                        .color(p.weak),
+                );
+            });
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let button = widgets::button(ui, p, icons::DOWNLOAD_SIMPLE, "Обновить", true);
+                if button.on_hover_text(update::BUTTON_HINT).clicked() {
+                    app.run_update();
+                }
+            });
+        });
+    });
 }
 
 /// Карточка-показатель; пока служба не отвечает — прочерк вместо `add`.

@@ -9,6 +9,7 @@ mod pages;
 mod portal;
 mod theme;
 mod toast;
+mod update;
 mod widgets;
 
 use std::fs;
