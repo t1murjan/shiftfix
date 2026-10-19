@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
 use crate::config::Config;
 use crate::engine::{Keys, Selection};
@@ -214,45 +214,40 @@ fn run(send: &dyn Fn(Event) -> bool, active: &Active, stop: &AtomicBool) {
     let mut failures = 0u32;
     while !stopped() {
         let started = Instant::now();
-        let (reason, wait) = match decide() {
-            Choice::Wait(reason, secs) => (reason, Some(secs)),
+        let watched = match decide() {
+            Choice::Wait(reason, secs) => {
+                if stopped() || !send(Event::Watch(Err(reason))) {
+                    return;
+                }
+                thread::sleep(Duration::from_secs(secs));
+                continue;
+            }
             Choice::Wayland => {
                 active.set(Source::Wayland);
-                let result = wayland::watch(send, stop, "wl-paste");
-                if stopped() {
-                    return; // источник уже сброшен, а новый поток мог выставить свой
-                }
-                active.set(Source::None);
-                match result {
-                    Some(reason) => (reason, None),
-                    None => return, // служба завершается
-                }
+                wayland::watch(send, stop, "wl-paste")
             }
             Choice::X11 => {
                 active.set(Source::X11);
-                let result = x11::watch(send, stop);
-                if stopped() {
-                    return;
-                }
-                active.set(Source::None);
-                match result {
-                    Ok(()) => return,
-                    Err(err) => (format!("X11: {err:#}"), None),
-                }
+                x11::watch(send, stop).context("X11")
             }
         };
-        if stopped() || !send(Event::Watch(Err(reason))) {
+        if stopped() {
+            return; // источник уже сброшен, а новый поток мог выставить свой
+        }
+        active.set(Source::None);
+        let Err(err) = watched else {
+            return; // служба завершается
+        };
+        if !send(Event::Watch(Err(format!("{err:#}")))) {
             return;
         }
-        let secs = wait.unwrap_or_else(|| {
-            // Слежение работало и оборвалось (перезапуск композитора) — пробуем снова,
-            // при повторных сбоях всё реже.
-            if started.elapsed() > Duration::from_secs(30) {
-                failures = 0;
-            }
-            failures += 1;
-            2u64.saturating_pow(failures.min(6)).min(60)
-        });
+        // Слежение работало и оборвалось (перезапуск композитора) — пробуем снова,
+        // при повторных сбоях всё реже.
+        if started.elapsed() > Duration::from_secs(30) {
+            failures = 0;
+        }
+        failures += 1;
+        let secs = 2u64.saturating_pow(failures.min(6)).min(60);
         thread::sleep(Duration::from_secs(secs));
     }
 }

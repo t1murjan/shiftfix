@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 
 use super::Event;
 use super::clipboard::{Clipboard, Paste, TEXT_TYPES, UTF8};
@@ -97,9 +97,9 @@ impl Selection for WlClipboard {
 }
 
 /// `wl-paste --primary --watch` печатает размер каждого нового выделения.
-/// Возвращает причину остановки; `None` — служба завершается или слежение
-/// остановлено (`stop`).
-pub fn watch(send: &dyn Fn(Event) -> bool, stop: &AtomicBool, wl_paste: &str) -> Option<String> {
+/// `Ok(())` — служба завершается или слежение остановлено (`stop`), ошибка —
+/// почему wl-paste завершился сам.
+pub fn watch(send: &dyn Fn(Event) -> bool, stop: &AtomicBool, wl_paste: &str) -> Result<()> {
     let started = Instant::now();
     let mut cmd = session_command(wl_paste);
     cmd.args(["--primary", "--watch", "sh", "-c", "wc -c"])
@@ -113,29 +113,30 @@ pub fn watch(send: &dyn Fn(Event) -> bool, stop: &AtomicBool, wl_paste: &str) ->
             Ok(())
         });
     }
-    let mut child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(err) => return Some(format!("wl-paste: {err}")),
-    };
+    let mut child = cmd.spawn().context("wl-paste")?;
     let mut stderr = child.stderr.take().expect("stderr");
     let errors = thread::spawn(move || {
         let mut text = String::new();
         let _ = stderr.read_to_string(&mut text);
         text
     });
+    let stdout = BufReader::new(child.stdout.take().expect("stdout"));
+    // Стоп или получателя больше нет: остановить wl-paste и не оставить зомби.
+    let mut quit = || -> Result<()> {
+        let _ = child.kill();
+        let _ = child.wait();
+        Ok(())
+    };
     let mut announced = false;
-    for line in BufReader::new(child.stdout.take().expect("stdout")).lines() {
+    for line in stdout.lines() {
         let Ok(line) = line else { break };
         if stop.load(Ordering::Relaxed) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return None;
+            return quit();
         }
         if !announced {
             announced = true;
             if !send(Event::Watch(Ok("wl-clipboard"))) {
-                let _ = child.kill();
-                return None;
+                return quit();
             }
         }
         if started.elapsed() < Duration::from_millis(700) {
@@ -144,17 +145,15 @@ pub fn watch(send: &dyn Fn(Event) -> bool, stop: &AtomicBool, wl_paste: &str) ->
         if let Ok(size) = line.trim().parse()
             && !send(Event::Primary(size))
         {
-            let _ = child.kill();
-            return None;
+            return quit();
         }
     }
     let _ = child.wait();
     let err = errors.join().unwrap_or_default();
-    Some(if err.trim().is_empty() {
-        "wl-paste завершился".to_owned()
-    } else {
-        format!("wl-paste: {}", err.trim())
-    })
+    if err.trim().is_empty() {
+        bail!("wl-paste завершился");
+    }
+    bail!("wl-paste: {}", err.trim())
 }
 
 #[cfg(test)]
@@ -286,6 +285,38 @@ cat > "$d/clip"; printf '%s\n' "$2" > "$d/clip.types""#;
             Ok(Event::Watch(Ok("wl-clipboard")))
         ));
         stop.store(true, Ordering::Relaxed);
-        assert_eq!(done.recv_timeout(Duration::from_secs(5)), Ok(None));
+        assert!(matches!(
+            done.recv_timeout(Duration::from_secs(5)),
+            Ok(Ok(()))
+        ));
+    }
+
+    #[test]
+    fn watch_stops_wl_paste_when_receiver_is_gone() {
+        let dir = TempDir::new("clip-watch-gone");
+        let wl_paste = write_script(
+            &dir,
+            "wl-paste",
+            r#"echo $$ > "$(dirname "$0")/pid"; while :; do echo 3; sleep 0.05; done"#,
+        );
+        assert!(watch(&|_| false, &AtomicBool::new(false), &wl_paste).is_ok());
+        let pid = fs::read_to_string(dir.join("pid")).unwrap();
+        let proc = format!("/proc/{}", pid.trim());
+        assert!(!Path::new(&proc).exists(), "wl-paste не дождались: {proc}");
+    }
+
+    #[test]
+    fn watch_says_why_wl_paste_exited() {
+        let dir = TempDir::new("clip-watch-exit");
+        let error = |wl_paste: &str| {
+            let result = watch(&|_| true, &AtomicBool::new(false), wl_paste);
+            format!("{:#}", result.unwrap_err())
+        };
+        let noisy = write_script(&dir, "noisy", "echo boom >&2; exit 1");
+        assert_eq!(error(&noisy), "wl-paste: boom");
+        let quiet = write_script(&dir, "quiet", "exit 1");
+        assert_eq!(error(&quiet), "wl-paste завершился");
+        let missing = dir.join("missing");
+        assert!(error(&missing.to_string_lossy()).starts_with("wl-paste: "));
     }
 }
