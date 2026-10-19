@@ -479,6 +479,10 @@ plan_files() {
         daemon | gui) srcs[i]="$TARGET/${FILES[i]##*/}" perms[i]=755 ;;
         icon) srcs[i]="assets/${FILES[i]##*/}" perms[i]=644 ;;
         menu) srcs[i]=$desktop perms[i]=644 ;;
+        *)
+            echo "install.sh: неизвестная роль ${ROLES[i]} у ${FILES[i]} (scripts/common.sh)" >&2
+            exit 1
+            ;;
         esac
         # Ссылка (например, на target/release) — тоже замена: иначе сравнили бы сборку саму с собой.
         if [[ -L ${FILES[i]} ]] || ! same_file "${srcs[i]}" "${FILES[i]}" ||

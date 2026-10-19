@@ -32,6 +32,7 @@ init_paths() {
     # Что ставит install.sh из сборки и assets/ (в этом порядке) и удаляет uninstall.sh.
     # Роль — откуда файл и что обновить после замены: daemon и gui — программы
     # (перезапустить), icon — значок, menu — ярлык (обновить меню).
+    # Новая роль — новая ветка в plan_files (install.sh).
     FILES=("$BIN/shiftfix" "$BIN/shiftfix-gui" "$ICONS/shiftfix.svg" "$ICONS/shiftfix-paused.svg"
         "$APPS/shiftfix.desktop")
     ROLES=(daemon gui icon icon menu)
