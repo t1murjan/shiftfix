@@ -11,14 +11,13 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use eframe::egui;
 use shiftfix::config::Config;
+use shiftfix::daemon;
 use shiftfix::devices::{self, DeviceInfo};
 use shiftfix::ipc::{self, Request, Status};
-use shiftfix::service;
+use shiftfix::service::{self, UNIT};
 use shiftfix::sys::{lock, paths, proc};
 
 use crate::toast::{Toast, ToastKind};
-
-use shiftfix::service::UNIT;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Service {
@@ -333,10 +332,9 @@ fn run_without_systemd(action: ServiceAction) -> Result<String> {
         ServiceAction::Start | ServiceAction::Restart => {
             if matches!(action, ServiceAction::Restart) {
                 let _ = ipc::request(&Request::Quit);
-                // Тот же файл блокировки, что берёт служба (daemon::run): пока
-                // прежняя его держит, новая сразу выйдет с «уже запущен».
-                let lock = paths::runtime_dir().join("shiftfix.lock");
-                wait_for_unlock(&lock, Duration::from_secs(5))?;
+                // Пока прежняя служба держит блокировку, новая сразу выйдет
+                // с «уже запущен».
+                wait_for_unlock(&daemon::lock_path(), Duration::from_secs(5))?;
             }
             proc::spawn_detached(daemon_binary(), &[])?;
             Ok("Служба запущена".into())
