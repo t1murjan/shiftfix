@@ -1,7 +1,5 @@
 //! Карточка «Оформление»: режим темы, палитры вариантов и свой акцент.
 
-//! Настройки: правка config.toml с сохранением комментариев.
-
 use eframe::egui::color_picker::{self, Alpha};
 use eframe::egui::{
     self, Align, CornerRadius, Frame, Id, Layout, Margin, RichText, Stroke, StrokeKind, TextStyle,
@@ -74,40 +72,10 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
     card(ui, p, |ui| {
         card_title(ui, p, icons::PALETTE, "Оформление");
         let mode = app.theme_mode();
-        setting_row(
-            ui,
-            p,
-            "Тема",
-            "Применяется и сохраняется сразу.",
-            330.0,
-            |ui| {
-                if let Some(mode) = widgets::segment(ui, p, mode, &MODES) {
-                    app.set_mode(mode);
-                }
-            },
-        );
-        if app.theme.forced() {
-            note_line(
-                ui,
-                p,
-                icons::INFO,
-                p.weak,
-                "Сейчас тема задана параметром --theme — только до закрытия окна.",
-            );
-        } else if mode == ThemeMode::System {
-            let note = SystemNote::of(&app.theme.portal);
-            let (glyph, color) = match note {
-                SystemNote::Waiting => (icons::HOURGLASS_MEDIUM, p.weak),
-                note if note.fallback() => (icons::WARNING, p.warning),
-                _ => (icons::INFO, p.weak),
-            };
-            let line = note_line(ui, p, glyph, color, note.text());
-            if let PortalState::Unavailable(why) = &app.theme.portal {
-                line.on_hover_text(why);
-            }
-        }
+        mode_row(app, ui, p, mode);
         ui.add_space(10.0);
 
+        // Палитры и акцент — у светлого и тёмного варианта свои.
         let variant = app.theme.tab.unwrap_or(Variant::of(p.dark));
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
@@ -118,119 +86,172 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             }
         });
         ui.add_space(10.0);
-
-        // Плитки — по списку палитр: новая палитра появится здесь сама.
-        let t = app.settings.current.theme.clone();
-        let chosen = theme::find(variant.palette_id(&t)).id;
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(14.0, 12.0);
-            for def in theme::PALETTES {
-                let preview = variant.of_def(def);
-                if widgets::palette_tile(ui, p, preview, def.name, def.id == chosen).clicked() {
-                    app.set_theme(|t| *variant.palette_id_mut(t) = def.id.to_owned());
-                }
-            }
-        });
+        palette_tiles(app, ui, p, variant);
         ui.add_space(12.0);
-
-        let system_accent = theme::system_accent_active(&t, &app.theme.system, mode);
         if mode == ThemeMode::System {
-            let blocked = theme::system_accent_blocked(&app.theme.portal);
-            let mut on = t.system_accent;
-            let hint = blocked.unwrap_or("Акцент из настроек системы вместо своего.");
-            let toggled = ui
-                .add_enabled_ui(blocked.is_none(), |ui| {
-                    toggle_row(ui, p, &mut on, "Акцент как в системе", hint)
-                })
-                .inner
-                .on_disabled_hover_text(hint);
-            if toggled.changed() {
-                app.set_theme(|t| t.system_accent = on);
+            system_accent_row(app, ui, p);
+        }
+        own_accent(app, ui, p, mode, variant);
+        ui.add_space(6.0);
+        reset_button(app, ui, p, variant);
+    });
+}
+
+/// Режим темы и строка под ним: тема задана `--theme` или что с темой системы.
+fn mode_row(app: &mut App, ui: &mut Ui, p: &Palette, mode: ThemeMode) {
+    setting_row(
+        ui,
+        p,
+        "Тема",
+        "Применяется и сохраняется сразу.",
+        330.0,
+        |ui| {
+            if let Some(mode) = widgets::segment(ui, p, mode, &MODES) {
+                app.set_mode(mode);
+            }
+        },
+    );
+    if app.theme.forced() {
+        note_line(
+            ui,
+            p,
+            icons::INFO,
+            p.weak,
+            "Сейчас тема задана параметром --theme — только до закрытия окна.",
+        );
+    } else if mode == ThemeMode::System {
+        let note = SystemNote::of(&app.theme.portal);
+        let (glyph, color) = match note {
+            SystemNote::Waiting => (icons::HOURGLASS_MEDIUM, p.weak),
+            note if note.fallback() => (icons::WARNING, p.warning),
+            _ => (icons::INFO, p.weak),
+        };
+        let line = note_line(ui, p, glyph, color, note.text());
+        if let PortalState::Unavailable(why) = &app.theme.portal {
+            line.on_hover_text(why);
+        }
+    }
+}
+
+/// Плитки — по списку палитр: новая палитра появится здесь сама.
+fn palette_tiles(app: &mut App, ui: &mut Ui, p: &Palette, variant: Variant) {
+    let chosen = theme::find(variant.palette_id(&app.settings.current.theme)).id;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(14.0, 12.0);
+        for def in theme::PALETTES {
+            let preview = variant.of_def(def);
+            if widgets::palette_tile(ui, p, preview, def.name, def.id == chosen).clicked() {
+                app.set_theme(|t| *variant.palette_id_mut(t) = def.id.to_owned());
             }
         }
+    });
+}
 
-        let own = variant.accent(&t);
-        let mut own_on = !own.trim().is_empty();
-        let base = variant.of_def(theme::find(variant.palette_id(&t))).accent;
-        let hint = if system_accent {
-            "Сейчас действует акцент системы."
-        } else {
-            "Цвет кнопок, ссылок и значков вместо цвета палитры."
-        };
-        let toggled = ui
-            .add_enabled_ui(!system_accent, |ui| {
-                toggle_row(ui, p, &mut own_on, "Свой акцент", hint)
-            })
-            .inner;
-        if toggled.changed() {
-            app.set_theme(|t| theme::set_own_accent(t, variant, own_on));
-            forget_hex_drafts(ui);
-        }
-        // Дальше — уже с акцентом, который только что записал переключатель:
-        // со старым пустым поле на кадр показало бы «неверный цвет».
-        let t = app.settings.current.theme.clone();
-        let own = variant.accent(&t);
+/// «Акцент как в системе» — только в системном режиме.
+fn system_accent_row(app: &mut App, ui: &mut Ui, p: &Palette) {
+    let blocked = theme::system_accent_blocked(&app.theme.portal);
+    let mut on = app.settings.current.theme.system_accent;
+    let hint = blocked.unwrap_or("Акцент из настроек системы вместо своего.");
+    let toggled = ui
+        .add_enabled_ui(blocked.is_none(), |ui| {
+            toggle_row(ui, p, &mut on, "Акцент как в системе", hint)
+        })
+        .inner
+        .on_disabled_hover_text(hint);
+    if toggled.changed() {
+        app.set_theme(|t| t.system_accent = on);
+    }
+}
 
-        let shown = theme::variant_palette(&t, &app.theme.system, mode, variant);
-        let mut message = None;
-        ui.horizontal(|ui| {
-            ui.add_enabled_ui(own_on && !system_accent, |ui| {
-                let mut color = theme::parse_hex(own).unwrap_or(base);
-                if color_picker::color_edit_button_srgba(ui, &mut color, Alpha::Opaque)
-                    .on_hover_text("Выбрать цвет")
-                    .changed()
-                {
-                    let hex = theme::format_hex(color);
-                    app.set_theme(|t| *variant.accent_mut(t) = hex);
-                    forget_hex_drafts(ui);
-                }
-                message = hex_field(app, ui, p, variant, own_on.then_some(own), base);
-            });
-            ui.add_space(8.0);
-            // Образец кнопки — каким будет акцент этого варианта.
-            Frame::NONE
-                .fill(shown.accent)
-                .corner_radius(CornerRadius::same(9))
-                .inner_margin(Margin::symmetric(14, 7))
-                .show(ui, |ui| {
-                    ui.label(widgets::icon_job(
-                        icons::CHECK,
-                        "Образец",
-                        14.0,
-                        shown.on_accent,
-                    ));
-                });
-        });
-        if let Some(text) = message {
-            note_line(ui, p, icons::WARNING_CIRCLE, p.negative, text);
-        }
-        if !theme::accent_readable(&shown) {
-            let text = if system_accent {
-                "Акцент системы плохо виден на фоне карточек."
-            } else if shown.dark {
-                "Акцент плохо виден на фоне карточек — возьмите цвет светлее."
-            } else {
-                "Акцент плохо виден на фоне карточек — возьмите цвет темнее."
-            };
-            note_line(ui, p, icons::WARNING, p.warning, text);
-        }
-        ui.add_space(6.0);
+/// «Свой акцент»: переключатель, пипетка, поле hex, образец кнопки и
+/// предупреждения о цвете.
+fn own_accent(app: &mut App, ui: &mut Ui, p: &Palette, mode: ThemeMode, variant: Variant) {
+    let t = app.settings.current.theme.clone();
+    let system_accent = theme::system_accent_active(&t, &app.theme.system, mode);
+    let own = variant.accent(&t);
+    let mut own_on = !own.trim().is_empty();
+    let base = variant.of_def(theme::find(variant.palette_id(&t))).accent;
+    let hint = if system_accent {
+        "Сейчас действует акцент системы."
+    } else {
+        "Цвет кнопок, ссылок и значков вместо цвета палитры."
+    };
+    let toggled = ui
+        .add_enabled_ui(!system_accent, |ui| {
+            toggle_row(ui, p, &mut own_on, "Свой акцент", hint)
+        })
+        .inner;
+    if toggled.changed() {
+        app.set_theme(|t| theme::set_own_accent(t, variant, own_on));
+        forget_hex_drafts(ui);
+    }
+    // Дальше — уже с акцентом, который только что записал переключатель:
+    // со старым пустым поле на кадр показало бы «неверный цвет».
+    let t = app.settings.current.theme.clone();
+    let own = variant.accent(&t);
 
-        let mut reset = t.clone();
-        theme::reset_variant(&mut reset, variant);
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let clicked = ui
-                .add_enabled_ui(reset != t, |ui| {
-                    widgets::button(ui, p, icons::ARROW_COUNTER_CLOCKWISE, "Сбросить", false)
-                })
-                .inner
-                .on_hover_text("Палитра и акцент этого варианта — по умолчанию; режим не меняется.")
-                .clicked();
-            if clicked {
-                app.set_theme(|t| theme::reset_variant(t, variant));
+    let shown = theme::variant_palette(&t, &app.theme.system, mode, variant);
+    let mut message = None;
+    ui.horizontal(|ui| {
+        ui.add_enabled_ui(own_on && !system_accent, |ui| {
+            let mut color = theme::parse_hex(own).unwrap_or(base);
+            if color_picker::color_edit_button_srgba(ui, &mut color, Alpha::Opaque)
+                .on_hover_text("Выбрать цвет")
+                .changed()
+            {
+                let hex = theme::format_hex(color);
+                app.set_theme(|t| *variant.accent_mut(t) = hex);
                 forget_hex_drafts(ui);
             }
+            message = hex_field(app, ui, p, variant, own_on.then_some(own), base);
         });
+        ui.add_space(8.0);
+        // Образец кнопки — каким будет акцент этого варианта.
+        Frame::NONE
+            .fill(shown.accent)
+            .corner_radius(CornerRadius::same(9))
+            .inner_margin(Margin::symmetric(14, 7))
+            .show(ui, |ui| {
+                ui.label(widgets::icon_job(
+                    icons::CHECK,
+                    "Образец",
+                    14.0,
+                    shown.on_accent,
+                ));
+            });
+    });
+    if let Some(text) = message {
+        note_line(ui, p, icons::WARNING_CIRCLE, p.negative, text);
+    }
+    if !theme::accent_readable(&shown) {
+        let text = if system_accent {
+            "Акцент системы плохо виден на фоне карточек."
+        } else if shown.dark {
+            "Акцент плохо виден на фоне карточек — возьмите цвет светлее."
+        } else {
+            "Акцент плохо виден на фоне карточек — возьмите цвет темнее."
+        };
+        note_line(ui, p, icons::WARNING, p.warning, text);
+    }
+}
+
+/// «Сбросить»: палитра и акцент варианта — по умолчанию.
+fn reset_button(app: &mut App, ui: &mut Ui, p: &Palette, variant: Variant) {
+    let t = app.settings.current.theme.clone();
+    let mut reset = t.clone();
+    theme::reset_variant(&mut reset, variant);
+    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        let clicked = ui
+            .add_enabled_ui(reset != t, |ui| {
+                widgets::button(ui, p, icons::ARROW_COUNTER_CLOCKWISE, "Сбросить", false)
+            })
+            .inner
+            .on_hover_text("Палитра и акцент этого варианта — по умолчанию; режим не меняется.")
+            .clicked();
+        if clicked {
+            app.set_theme(|t| theme::reset_variant(t, variant));
+            forget_hex_drafts(ui);
+        }
     });
 }
 
