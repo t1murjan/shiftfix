@@ -8,8 +8,6 @@ use shiftfix::config::{ThemeMode, ThemeSettings};
 /// Что делать со старым файлом `gui-theme` (режим окна до версии 0.4).
 #[derive(Debug, PartialEq, Eq)]
 pub enum Migration {
-    /// Файла нет.
-    Nothing,
     /// Перенести режим в `[theme]`, после удачной записи удалить файл.
     Adopt(ThemeMode),
     /// Режим в конфиге уже есть (или в файле мусор): файл просто удалить.
@@ -18,14 +16,11 @@ pub enum Migration {
     Keep,
 }
 
-pub fn migration(legacy: Option<&str>, config_ok: bool, config_has_mode: bool) -> Migration {
-    let Some(text) = legacy else {
-        return Migration::Nothing;
-    };
+pub fn migration(legacy: &str, config_ok: bool, config_has_mode: bool) -> Migration {
     if !config_ok {
         return Migration::Keep;
     }
-    match ThemeMode::parse(text.trim()) {
+    match ThemeMode::parse(legacy.trim()) {
         Some(mode) if !config_has_mode => Migration::Adopt(mode),
         _ => Migration::Remove,
     }
@@ -55,7 +50,7 @@ pub fn migrate_legacy(config: &Path, theme: &mut ThemeSettings) {
             log::warn!("не удалён {}: {err}", legacy.display());
         }
     };
-    match migration(Some(&text), config_ok, has_mode) {
+    match migration(&text, config_ok, has_mode) {
         Migration::Adopt(mode) => {
             let moved = ThemeSettings {
                 mode,
@@ -70,7 +65,7 @@ pub fn migrate_legacy(config: &Path, theme: &mut ThemeSettings) {
             }
         }
         Migration::Remove => remove(),
-        Migration::Keep | Migration::Nothing => {}
+        Migration::Keep => {}
     }
 }
 
@@ -80,14 +75,13 @@ mod tests {
 
     #[test]
     fn legacy_migration_rules() {
-        assert_eq!(migration(None, true, false), Migration::Nothing);
         assert_eq!(
-            migration(Some("light\n"), true, false),
+            migration("light\n", true, false),
             Migration::Adopt(ThemeMode::Light)
         );
-        assert_eq!(migration(Some("dark"), true, true), Migration::Remove);
-        assert_eq!(migration(Some("мусор"), true, false), Migration::Remove);
-        assert_eq!(migration(Some("light"), false, false), Migration::Keep);
+        assert_eq!(migration("dark", true, true), Migration::Remove);
+        assert_eq!(migration("мусор", true, false), Migration::Remove);
+        assert_eq!(migration("light", false, false), Migration::Keep);
     }
 
     #[test]
