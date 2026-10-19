@@ -36,8 +36,8 @@ pub struct Snapshot {
     pub service: Service,
     /// Последние строки журнала службы, когда она не отвечает.
     pub journal: Vec<String>,
-    /// Последняя ошибка среди этих строк — скорее всего, почему служба
-    /// остановилась.
+    /// Ошибка, после которой служба больше ничего не писала, — скорее всего,
+    /// почему она остановилась.
     pub last_error: Option<String>,
     /// Устройства, которые окно нашло само, пока служба не отвечает
     /// (`None` — ещё не искало).
@@ -219,9 +219,11 @@ fn query_service() -> Service {
     }
 }
 
-/// Последние строки журнала службы и последняя ошибка среди них.
+/// Последние строки журнала службы и ошибка, после которой служба больше
+/// ничего не писала (`Snapshot::last_error`).
 fn journal() -> (Vec<String>, Option<String>) {
-    // В JSON у строки есть приоритет: ошибку видно не по тексту.
+    // В JSON у строки есть приоритет — ошибку видно не по тексту — и
+    // SYSLOG_IDENTIFIER: по нему строки самого systemd отличаются от строк службы.
     let args = [
         "--user",
         "-u",
@@ -231,7 +233,7 @@ fn journal() -> (Vec<String>, Option<String>) {
         "--no-pager",
         "-o",
         "json",
-        "--output-fields=MESSAGE,PRIORITY",
+        "--output-fields=MESSAGE,PRIORITY,SYSLOG_IDENTIFIER",
     ];
     match proc::run("journalctl", &args, Duration::from_secs(4)) {
         Ok(out) => parse_journal(&out.text()),
@@ -239,7 +241,10 @@ fn journal() -> (Vec<String>, Option<String>) {
     }
 }
 
-/// Разобрать `journalctl -o json`: по объекту на строку.
+/// Разобрать `journalctl -o json`: по объекту на строку. Ошибка считается
+/// причиной остановки, только если это последняя строка службы: если после неё
+/// служба написала что-то ещё (при остановке — «выход»), остановилась она не
+/// из-за этой ошибки.
 fn parse_journal(json: &str) -> (Vec<String>, Option<String>) {
     let mut lines = Vec::new();
     let mut last_error = None;
@@ -251,12 +256,14 @@ fn parse_journal(json: &str) -> (Vec<String>, Option<String>) {
         let Some(text) = entry["MESSAGE"].as_str() else {
             continue;
         };
-        // PRIORITY — строка с числом: 3 — err, меньше — ещё серьёзнее.
-        let priority = entry["PRIORITY"]
-            .as_str()
-            .and_then(|p| p.parse::<u8>().ok());
-        if priority.is_some_and(|p| p <= 3) {
-            last_error = Some(text.to_owned());
+        // Строки systemd о юните («Main process exited», «Stopped») пишутся
+        // после строк службы и причину не меняют.
+        if entry["SYSLOG_IDENTIFIER"].as_str() != Some("systemd") {
+            // PRIORITY — строка с числом: 3 — err, меньше — ещё серьёзнее.
+            let priority = entry["PRIORITY"]
+                .as_str()
+                .and_then(|p| p.parse::<u8>().ok());
+            last_error = priority.is_some_and(|p| p <= 3).then(|| text.to_owned());
         }
         lines.push(text.to_owned());
     }
@@ -428,9 +435,9 @@ mod tests {
 
     #[test]
     fn journal_error_is_found_by_priority() {
-        let json = r#"{"MESSAGE":"готов: раскладки us, ru","PRIORITY":"6"}
-{"MESSAGE":"нет доступа к 3 устройствам в /dev/input","PRIORITY":"3"}
-{"MESSAGE":"shiftfix.service: Main process exited, code=exited, status=2/INVALIDARGUMENT","PRIORITY":"5"}
+        let json = r#"{"MESSAGE":"готов: раскладки us, ru","PRIORITY":"6","SYSLOG_IDENTIFIER":"shiftfix"}
+{"MESSAGE":"нет доступа к 3 устройствам в /dev/input","PRIORITY":"3","SYSLOG_IDENTIFIER":"shiftfix"}
+{"MESSAGE":"shiftfix.service: Main process exited, code=exited, status=2/INVALIDARGUMENT","PRIORITY":"5","SYSLOG_IDENTIFIER":"systemd"}
 {"MESSAGE":[208,189,208],"PRIORITY":"3"}
 не JSON
 "#;
@@ -445,6 +452,16 @@ mod tests {
             parse_journal(r#"{"MESSAGE":"выход","PRIORITY":"6"}"#).1,
             None
         );
+    }
+
+    #[test]
+    fn error_before_normal_exit_is_not_the_cause() {
+        // Ошибка во время работы, потом службу остановили: она написала «выход».
+        let json = r#"{"MESSAGE":"конфиг не перечитан: неверное значение","PRIORITY":"3","SYSLOG_IDENTIFIER":"shiftfix"}
+{"MESSAGE":"выход","PRIORITY":"6","SYSLOG_IDENTIFIER":"shiftfix"}
+{"MESSAGE":"Stopped shiftfix.service - shiftfix.","PRIORITY":"6","SYSLOG_IDENTIFIER":"systemd"}
+"#;
+        assert_eq!(parse_journal(json).1, None);
     }
 
     #[test]
