@@ -34,10 +34,8 @@ use uinput::Injector;
 pub enum Msg {
     /// От устройств ввода (`devices`).
     Input(Event),
-    /// PRIMARY изменился; размер нового выделения в байтах.
-    Primary(usize),
-    /// Слежение за PRIMARY: `Ok(чем)` — работает, иначе причина, почему нет.
-    Selection(Result<&'static str, String>),
+    /// От слежения за выделением (`selection`).
+    Selection(selection::Event),
     Keymap(Keymap),
     TogglePause,
     Reload,
@@ -195,8 +193,11 @@ impl Daemon {
             self.selection_watcher = None;
         } else if self.selection_watcher.is_none() {
             self.selection = Err("запускается".into());
-            self.selection_watcher =
-                selection::spawn_watcher(self.tx.clone(), self.selection_active.clone());
+            let tx = self.tx.clone();
+            self.selection_watcher = selection::spawn_watcher(
+                move |event| tx.send(Msg::Selection(event)).is_ok(),
+                self.selection_active.clone(),
+            );
         }
     }
 
@@ -319,8 +320,8 @@ impl Daemon {
                 info!("устройство отключено: {name}");
                 self.engine.resync(self.registry.held_keys());
             }
-            Msg::Primary(size) => self.engine.primary_changed(size),
-            Msg::Selection(state) => {
+            Msg::Selection(selection::Event::Primary(size)) => self.engine.primary_changed(size),
+            Msg::Selection(selection::Event::Watch(state)) => {
                 if state != self.selection {
                     match &state {
                         Ok(via) => info!("слежу за выделением (PRIMARY) через {via}"),
@@ -508,9 +509,11 @@ mod tests {
             (s.selection, s.selection_note, s.selection_via)
         };
 
-        d.handle(Msg::Selection(Err("нет wl-paste".into())));
+        d.handle(Msg::Selection(selection::Event::Watch(Err(
+            "нет wl-paste".into()
+        ))));
         assert_eq!(status(&mut d), (false, Some("нет wl-paste".into()), None));
-        d.handle(Msg::Selection(Ok("X11")));
+        d.handle(Msg::Selection(selection::Event::Watch(Ok("X11"))));
         assert_eq!(status(&mut d), (true, None, Some("X11".into())));
         d.engine.set_selection(None);
         assert_eq!(

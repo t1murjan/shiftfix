@@ -9,7 +9,6 @@ use std::time::Duration;
 use anyhow::Result;
 use evdev::KeyCode;
 use shiftfix::backend::XkbLayout;
-use shiftfix::daemon::Msg;
 use shiftfix::engine::{Backend, Keys};
 use shiftfix::keys::Stroke;
 use shiftfix::sys::{env, paths};
@@ -139,15 +138,15 @@ fn reports_primary(display: &str) {
     let flag = Arc::clone(&stop);
     let (done_tx, done) = mpsc::channel();
     std::thread::spawn(move || {
-        let _ = done_tx.send(selection::x11::watch(&tx, &flag).is_ok());
+        let _ = done_tx.send(selection::x11::watch(&|event| tx.send(event).is_ok(), &flag).is_ok());
     });
     let next = || {
         rx.recv_timeout(Duration::from_secs(5))
             .expect("событие от X11")
     };
     assert!(
-        matches!(next(), Msg::Selection(Ok("X11"))),
-        "ждали Selection(Ok(\"X11\")), keymap выделение больше не присылает"
+        matches!(next(), selection::Event::Watch(Ok("X11"))),
+        "ждали Watch(Ok(\"X11\")), keymap выделение больше не присылает"
     );
     let mut xclip = Command::new("xclip")
         .args(["-selection", "primary", "-i"])
@@ -157,7 +156,7 @@ fn reports_primary(display: &str) {
         .unwrap();
     drop(xclip.stdin.take()); // пустой ввод тоже делает xclip владельцем PRIMARY
     let primary = match next() {
-        Msg::Primary(size) => size,
+        selection::Event::Primary(size) => size,
         _ => panic!("ждали Primary"),
     };
     assert_eq!(primary, 1);

@@ -15,19 +15,25 @@ pub mod x11;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 
 use crate::config::Config;
-use crate::daemon::Msg;
 use crate::engine::{Keys, Selection};
 use crate::sys::wayland as compositor;
 use crate::sys::{env, paths};
 use wayland::WlClipboard;
 use x11::XClipboard;
+
+/// Событие слежения за выделением для службы.
+pub enum Event {
+    /// Слежение: `Ok(чем)` — работает, иначе причина, почему нет.
+    Watch(Result<&'static str, String>),
+    /// PRIMARY изменился; размер нового выделения в байтах.
+    Primary(usize),
+}
 
 /// Источник выделения.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -180,7 +186,11 @@ impl Drop for Watcher {
     }
 }
 
-pub fn spawn_watcher(tx: Sender<Msg>, active: Active) -> Option<Watcher> {
+/// `send` — куда отдавать события; `false` от неё — получателя больше нет.
+pub fn spawn_watcher(
+    send: impl Fn(Event) -> bool + Send + 'static,
+    active: Active,
+) -> Option<Watcher> {
     let stop = Arc::new(AtomicBool::new(false));
     let watcher = Watcher {
         stop: Arc::clone(&stop),
@@ -188,7 +198,7 @@ pub fn spawn_watcher(tx: Sender<Msg>, active: Active) -> Option<Watcher> {
     };
     let spawned = thread::Builder::new()
         .name("selection".into())
-        .spawn(move || run(&tx, &active, &stop));
+        .spawn(move || run(&send, &active, &stop));
     match spawned {
         Ok(_) => Some(watcher),
         Err(err) => {
@@ -198,7 +208,7 @@ pub fn spawn_watcher(tx: Sender<Msg>, active: Active) -> Option<Watcher> {
     }
 }
 
-fn run(tx: &Sender<Msg>, active: &Active, stop: &AtomicBool) {
+fn run(send: &dyn Fn(Event) -> bool, active: &Active, stop: &AtomicBool) {
     let stopped = || stop.load(Ordering::Relaxed);
     let mut failures = 0u32;
     while !stopped() {
@@ -207,7 +217,7 @@ fn run(tx: &Sender<Msg>, active: &Active, stop: &AtomicBool) {
             Choice::Wait(reason, secs) => (reason, Some(secs)),
             Choice::Wayland => {
                 active.set(Source::Wayland);
-                let result = wayland::watch(tx, stop, "wl-paste");
+                let result = wayland::watch(send, stop, "wl-paste");
                 if stopped() {
                     return; // источник уже сброшен, а новый поток мог выставить свой
                 }
@@ -219,7 +229,7 @@ fn run(tx: &Sender<Msg>, active: &Active, stop: &AtomicBool) {
             }
             Choice::X11 => {
                 active.set(Source::X11);
-                let result = x11::watch(tx, stop);
+                let result = x11::watch(send, stop);
                 if stopped() {
                     return;
                 }
@@ -230,7 +240,7 @@ fn run(tx: &Sender<Msg>, active: &Active, stop: &AtomicBool) {
                 }
             }
         };
-        if stopped() || tx.send(Msg::Selection(Err(reason))).is_err() {
+        if stopped() || !send(Event::Watch(Err(reason))) {
             return;
         }
         let secs = wait.unwrap_or_else(|| {
