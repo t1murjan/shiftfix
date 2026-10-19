@@ -10,7 +10,7 @@ pub(super) fn non_empty(var: &str) -> Option<String> {
     env::var(var).ok().filter(|v| !v.is_empty())
 }
 
-pub fn uid() -> u32 {
+pub(crate) fn uid() -> u32 {
     // SAFETY: getuid не имеет ошибок и побочных эффектов.
     unsafe { libc::getuid() }
 }

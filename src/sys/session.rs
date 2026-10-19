@@ -20,7 +20,8 @@ impl Default for Logind {
 
 impl Logind {
     /// Для тестов: logind на отдельной шине.
-    pub fn with_address(address: &str) -> Logind {
+    #[cfg(test)]
+    pub(crate) fn with_address(address: &str) -> Logind {
         Logind {
             client: Client::with_address(address),
         }

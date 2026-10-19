@@ -170,7 +170,7 @@ impl Compiled {
 }
 
 /// Разобрать keymap в текстовом формате xkb (как её присылает композитор).
-pub fn from_text(text: &str) -> Option<Keymap> {
+pub(crate) fn from_text(text: &str) -> Option<Keymap> {
     let text = CString::new(text.trim_end_matches('\0')).ok()?;
     let compiled = Compiled::new(|xkb, ctx| {
         // SAFETY: строка с нулём на конце живёт до конца вызова.

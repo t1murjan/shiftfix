@@ -147,7 +147,7 @@ impl Tray for ShiftTray {
     }
 }
 
-pub struct TrayIcon {
+pub(crate) struct TrayIcon {
     handle: Handle<ShiftTray>,
     visible: Arc<AtomicBool>,
 }
@@ -177,11 +177,11 @@ impl TrayIcon {
     }
 
     /// Значок действительно показан на панели.
-    pub fn visible(&self) -> bool {
+    pub(crate) fn visible(&self) -> bool {
         self.visible.load(Ordering::Relaxed)
     }
 
-    pub fn update(&self, enabled: bool, layouts: &str) {
+    pub(crate) fn update(&self, enabled: bool, layouts: &str) {
         let layouts = layouts.to_owned();
         self.handle.update(move |tray| {
             tray.enabled = enabled;

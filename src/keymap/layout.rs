@@ -34,7 +34,7 @@ pub struct Layout {
 
 impl Layout {
     /// Таблица из пар «клавиша → символы без Shift и с Shift». Пробел добавляется сам.
-    pub fn from_pairs(
+    pub(crate) fn from_pairs(
         name: impl Into<String>,
         pairs: impl IntoIterator<Item = (KeyCode, [Option<char>; 2])>,
     ) -> Self {
@@ -70,12 +70,12 @@ impl Layout {
         }
     }
 
-    pub fn with_dead(mut self, dead: impl IntoIterator<Item = (KeyCode, bool)>) -> Self {
+    pub(crate) fn with_dead(mut self, dead: impl IntoIterator<Item = (KeyCode, bool)>) -> Self {
         self.dead.extend(dead);
         self
     }
 
-    pub fn is_dead(&self, key: KeyCode, shift: bool) -> bool {
+    pub(crate) fn is_dead(&self, key: KeyCode, shift: bool) -> bool {
         self.dead.contains(&(key, shift))
     }
 
@@ -90,17 +90,18 @@ impl Layout {
         Layout::from_pairs(name, pairs)
     }
 
-    pub fn char_at(&self, key: KeyCode, shift: bool) -> Option<char> {
+    pub(crate) fn char_at(&self, key: KeyCode, shift: bool) -> Option<char> {
         self.chars
             .get(&key)
             .and_then(|pair| pair[usize::from(shift)])
     }
 
-    pub fn key_for(&self, ch: char) -> Option<(KeyCode, bool)> {
+    pub(crate) fn key_for(&self, ch: char) -> Option<(KeyCode, bool)> {
         self.keys.get(&ch).copied()
     }
 
-    pub fn letter_count(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn letter_count(&self) -> usize {
         self.letters.len()
     }
 
@@ -127,12 +128,12 @@ static BUILTIN: LazyLock<Vec<Arc<Layout>>> = LazyLock::new(|| {
 });
 
 /// Встроенная таблица по коду раскладки (`us`, `ru`).
-pub fn builtin(code: &str) -> Option<Arc<Layout>> {
+pub(crate) fn builtin(code: &str) -> Option<Arc<Layout>> {
     BUILTIN.iter().find(|l| l.name == code).cloned()
 }
 
 /// `us(intl)` → `us`, `EN` → `us`.
-pub fn norm_layout(name: &str) -> String {
+pub(crate) fn norm_layout(name: &str) -> String {
     let base = name.trim().to_lowercase();
     let base = base.split('(').next().unwrap_or_default();
     match base {
@@ -143,7 +144,7 @@ pub fn norm_layout(name: &str) -> String {
 }
 
 /// Длинное имя xkb (`Russian`, `English (US)`) → код раскладки.
-pub fn code_from_long_name(name: &str) -> Option<&'static str> {
+pub(crate) fn code_from_long_name(name: &str) -> Option<&'static str> {
     const HINTS: [(&str, &str); 8] = [
         ("english", "us"),
         ("russian", "ru"),

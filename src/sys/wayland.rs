@@ -31,7 +31,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Globals {
 
 /// Есть ли у композитора протокол data-control (без него wl-paste не может
 /// следить за выделением; так в GNOME). `None` — к композитору не подключиться.
-pub fn data_control() -> Option<bool> {
+pub(crate) fn data_control() -> Option<bool> {
     let conn = connect()?;
     let (globals, _queue) = registry_queue_init::<Globals>(&conn).ok()?;
     Some(globals.contents().with_list(|list| {

@@ -13,7 +13,7 @@ use crate::sys::dbus::{Bus, Client};
 use crate::sys::{env, paths};
 
 /// Определяет окружение лениво и переопределяет, если оно перестало отвечать.
-pub struct Auto {
+pub(crate) struct Auto {
     found: Option<Box<dyn Backend>>,
     fallback: Hotkey,
     last_probe: Option<Instant>,

@@ -16,7 +16,7 @@ use crate::config::Config;
 use crate::engine::{Keys, Selection};
 use crate::sys::proc::{TIMEOUT, feed, run, session_command};
 
-pub struct WlClipboard {
+pub(crate) struct WlClipboard {
     paste: Paste,
     wl_paste: String,
     wl_copy: String,

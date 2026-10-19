@@ -14,7 +14,7 @@ pub enum Bus {
     System,
 }
 
-pub struct Client {
+pub(crate) struct Client {
     bus: Bus,
     /// Адрес шины для тестов; обычно — стандартная шина.
     address: Option<String>,
@@ -30,7 +30,8 @@ impl Client {
         }
     }
 
-    pub fn with_address(address: &str) -> Client {
+    #[cfg(test)]
+    pub(crate) fn with_address(address: &str) -> Client {
         Client {
             bus: Bus::Session,
             address: Some(address.to_owned()),
@@ -58,7 +59,7 @@ impl Client {
         Ok(self.conn.as_ref().expect("connection"))
     }
 
-    pub fn call<B>(
+    pub(crate) fn call<B>(
         &mut self,
         dest: &str,
         path: &str,
@@ -101,7 +102,7 @@ impl Client {
     }
 
     /// Есть ли у имени владелец (запущен ли сервис).
-    pub fn has_owner(&mut self, name: &str) -> bool {
+    pub(crate) fn has_owner(&mut self, name: &str) -> bool {
         self.call(
             "org.freedesktop.DBus",
             "/org/freedesktop/DBus",

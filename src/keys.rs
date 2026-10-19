@@ -7,7 +7,7 @@ use evdev::KeyCode;
 /// Клавиши основного блока: цифровой ряд, три буквенных ряда и ISO-клавиша
 /// между левым Shift и Z.
 #[rustfmt::skip]
-pub const ROW_KEYS: [KeyCode; 48] = [
+pub(crate) const ROW_KEYS: [KeyCode; 48] = [
     KeyCode::KEY_GRAVE, KeyCode::KEY_1, KeyCode::KEY_2, KeyCode::KEY_3, KeyCode::KEY_4,
     KeyCode::KEY_5, KeyCode::KEY_6, KeyCode::KEY_7, KeyCode::KEY_8, KeyCode::KEY_9,
     KeyCode::KEY_0, KeyCode::KEY_MINUS, KeyCode::KEY_EQUAL,
@@ -32,20 +32,20 @@ pub struct Stroke {
 }
 
 /// Печатает символ: пробел или клавиша основного блока (`ROW_KEYS`).
-pub fn is_char(key: KeyCode) -> bool {
+pub(crate) fn is_char(key: KeyCode) -> bool {
     key == KeyCode::KEY_SPACE || ROW_KEYS.contains(&key)
 }
 
-pub fn is_shift(key: KeyCode) -> bool {
+pub(crate) fn is_shift(key: KeyCode) -> bool {
     matches!(key, KeyCode::KEY_LEFTSHIFT | KeyCode::KEY_RIGHTSHIFT)
 }
 
-pub fn is_ctrl(key: KeyCode) -> bool {
+pub(crate) fn is_ctrl(key: KeyCode) -> bool {
     matches!(key, KeyCode::KEY_LEFTCTRL | KeyCode::KEY_RIGHTCTRL)
 }
 
 /// Ctrl/Alt/Meta, без Shift: с ними нажатие — сочетание, а не символ.
-pub fn is_modifier(key: KeyCode) -> bool {
+pub(crate) fn is_modifier(key: KeyCode) -> bool {
     is_ctrl(key)
         || matches!(
             key,
@@ -56,7 +56,7 @@ pub fn is_modifier(key: KeyCode) -> bool {
         )
 }
 
-pub fn is_nav(key: KeyCode) -> bool {
+pub(crate) fn is_nav(key: KeyCode) -> bool {
     matches!(
         key,
         KeyCode::KEY_LEFT
@@ -71,7 +71,7 @@ pub fn is_nav(key: KeyCode) -> bool {
 }
 
 /// Не двигают курсор и не меняют текст — буфер не сбрасывают.
-pub fn is_neutral(key: KeyCode) -> bool {
+pub(crate) fn is_neutral(key: KeyCode) -> bool {
     matches!(
         key,
         KeyCode::KEY_CAPSLOCK
@@ -90,7 +90,7 @@ pub fn is_neutral(key: KeyCode) -> bool {
     )
 }
 
-pub fn is_click(key: KeyCode) -> bool {
+pub(crate) fn is_click(key: KeyCode) -> bool {
     matches!(
         key,
         KeyCode::BTN_LEFT
@@ -102,7 +102,7 @@ pub fn is_click(key: KeyCode) -> bool {
 }
 
 /// Коды `BTN_*` (мышь, тачпад, перо, джойстик); всё остальное в `EV_KEY` — клавиши.
-pub fn is_button(key: KeyCode) -> bool {
+pub(crate) fn is_button(key: KeyCode) -> bool {
     let code = key.code();
     // BTN_MISC (он же BTN_0) … BTN_GEAR_UP; с KEY_OK снова идут клавиши.
     (KeyCode::BTN_0.code()..KeyCode::KEY_OK.code()).contains(&code)
@@ -112,7 +112,7 @@ pub fn is_button(key: KeyCode) -> bool {
 }
 
 /// `KEY_LEFTCTRL+KEY_V` или `leftctrl+v` → коды клавиш.
-pub fn parse_keys(spec: &str) -> Result<Vec<KeyCode>> {
+pub(crate) fn parse_keys(spec: &str) -> Result<Vec<KeyCode>> {
     spec.split('+')
         .map(|part| {
             let upper = part.trim().to_uppercase();

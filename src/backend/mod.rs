@@ -11,11 +11,11 @@ mod kde;
 mod sway;
 mod x11;
 
-pub use auto::Auto;
-pub use gnome::Gnome;
+pub(crate) use auto::Auto;
+pub(crate) use gnome::Gnome;
 pub use hotkey::Hotkey;
 pub use hyprland::Hyprland;
-pub use kde::Kde;
+pub(crate) use kde::Kde;
 pub use sway::Sway;
 pub use x11::XkbLayout;
 
@@ -41,7 +41,7 @@ pub fn make(cfg: &Config) -> Box<dyn Backend> {
 }
 
 /// Нужен ли новый переключатель: в конфиге изменилось то, что читает `make`.
-pub fn settings_changed(old: &Config, new: &Config) -> bool {
+pub(crate) fn settings_changed(old: &Config, new: &Config) -> bool {
     old.backend != new.backend
         || old.switch_hotkey != new.switch_hotkey
         || old.hotkey_layouts != new.hotkey_layouts

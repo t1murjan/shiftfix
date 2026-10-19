@@ -18,11 +18,12 @@ use evdev::{BusType, KeyCode, PropType, RelativeAxisCode};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
-pub use registry::{Event, Registry, ScanStats};
+pub use registry::Event;
+pub(crate) use registry::Registry;
 
 /// Имя виртуальной клавиатуры службы (`daemon/uinput.rs`): по нему служба не
 /// слушает саму себя.
-pub const OWN_KEYBOARD: &str = "shiftfix virtual keyboard";
+pub(crate) const OWN_KEYBOARD: &str = "shiftfix virtual keyboard";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -133,7 +134,7 @@ const LETTERS: [KeyCode; 26] = [
 ];
 
 /// Роль по возможностям устройства.
-pub fn classify(caps: &Caps) -> Role {
+pub(crate) fn classify(caps: &Caps) -> Role {
     let has = |k: KeyCode| caps.keys.contains(&k);
     let letters = LETTERS.iter().filter(|&&k| has(k)).count();
     if letters >= 20 && has(KeyCode::KEY_SPACE) {
@@ -155,7 +156,7 @@ pub fn classify(caps: &Caps) -> Role {
 }
 
 /// Устойчивое имя устройства для конфига: «vendor:product имя».
-pub fn device_key(vendor: u16, product: u16, name: &str) -> String {
+pub(crate) fn device_key(vendor: u16, product: u16, name: &str) -> String {
     format!("{vendor:04x}:{product:04x} {name}")
 }
 

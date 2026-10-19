@@ -71,7 +71,7 @@ pub fn rgba(size: u32, active: bool) -> Vec<u8> {
 }
 
 /// ARGB32 в сетевом порядке байт — формат StatusNotifierItem.
-pub fn argb(size: u32, active: bool) -> Vec<u8> {
+pub(crate) fn argb(size: u32, active: bool) -> Vec<u8> {
     let pixels = rgba(size, active);
     let (pixels, _) = pixels.as_chunks::<4>();
     pixels

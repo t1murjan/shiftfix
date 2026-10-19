@@ -46,7 +46,7 @@ enum Source {
 
 /// Какой источник выделения сейчас работает (его выставляет поток слежения).
 #[derive(Clone, Default)]
-pub struct Active(Arc<AtomicU8>);
+pub(crate) struct Active(Arc<AtomicU8>);
 
 impl Active {
     fn set(&self, source: Source) {
@@ -63,7 +63,7 @@ impl Active {
 }
 
 /// Чтение и вставка через тот источник, за которым сейчас следим.
-pub struct AutoSelection {
+pub(crate) struct AutoSelection {
     active: Active,
     wayland: WlClipboard,
     x11: XClipboard,
@@ -88,7 +88,7 @@ impl Selection for AutoSelection {
 }
 
 /// `None`, если исправление выделения выключено в настройках.
-pub fn make(cfg: &Config, active: &Active) -> Option<Box<dyn Selection>> {
+pub(crate) fn make(cfg: &Config, active: &Active) -> Option<Box<dyn Selection>> {
     cfg.selection.then(|| {
         Box::new(AutoSelection {
             active: active.clone(),
@@ -174,7 +174,7 @@ fn choose(f: &Facts) -> Choice {
 /// Поток слежения за выделением. Когда значение выброшено (исправление
 /// выделения выключили), поток останавливается — при следующем изменении
 /// выделения или следующей проверке сеанса.
-pub struct Watcher {
+pub(crate) struct Watcher {
     stop: Arc<AtomicBool>,
     active: Active,
 }
@@ -187,7 +187,7 @@ impl Drop for Watcher {
 }
 
 /// `send` — куда отдавать события; `false` от неё — получателя больше нет.
-pub fn spawn_watcher(
+pub(crate) fn spawn_watcher(
     send: impl Fn(Event) -> bool + Send + 'static,
     active: Active,
 ) -> Option<Watcher> {

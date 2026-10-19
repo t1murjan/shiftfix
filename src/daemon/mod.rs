@@ -31,7 +31,7 @@ use tray::TrayIcon;
 use uinput::Injector;
 
 /// Событие для главного цикла службы.
-pub enum Msg {
+pub(crate) enum Msg {
     /// От устройств ввода (`devices`).
     Input(Event),
     /// От слежения за выделением (`selection`).
@@ -56,7 +56,7 @@ fn monotonic() -> f64 {
 }
 
 /// Два экземпляра исправляли бы одно слово дважды.
-pub fn lock_file(path: &Path) -> Result<File> {
+pub(crate) fn lock_file(path: &Path) -> Result<File> {
     lock::try_lock(path)
         .with_context(|| format!("не открывается {}", path.display()))?
         .context("shiftfix уже запущен (если это служба: systemctl --user stop shiftfix)")

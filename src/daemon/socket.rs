@@ -17,7 +17,7 @@ use super::Msg;
 use crate::ipc::{self, Request, Response};
 
 /// Сторож сокета: удаляет файл в Drop.
-pub struct Socket(PathBuf);
+pub(crate) struct Socket(PathBuf);
 
 impl Drop for Socket {
     fn drop(&mut self) {

@@ -17,9 +17,10 @@ use std::time::Duration;
 
 use log::debug;
 
-pub use convert::{Tables, convert_text, detect_source, next_with_table, plan_strokes};
-pub use layout::{Layout, builtin, code_from_long_name, norm_layout};
-pub use xkb::{from_names, from_text};
+pub(crate) use convert::{convert_text, detect_source, next_with_table, plan_strokes};
+pub use layout::Layout;
+pub(crate) use layout::{builtin, code_from_long_name, norm_layout};
+pub use xkb::from_names;
 
 use crate::sys::env;
 use crate::sys::wayland::connect;
@@ -41,7 +42,7 @@ impl Keymap {
 }
 
 /// Следить за keymap: при смене списка раскладок композитор пришлёт новую.
-pub fn spawn_watcher(on_change: impl Fn(Keymap) + Send + 'static) {
+pub(crate) fn spawn_watcher(on_change: impl Fn(Keymap) + Send + 'static) {
     let spawned = thread::Builder::new().name("keymap".into()).spawn(move || {
         loop {
             if let Some(conn) = connect() {

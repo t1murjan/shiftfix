@@ -17,7 +17,7 @@ pub const TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Команда с переменными сессии: wl-paste, xclip, hyprctl, swaymsg и GUI найдут
 /// композитор, даже если сама служба запустилась раньше сеанса.
-pub fn session_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+pub(crate) fn session_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     let mut cmd = Command::new(program);
     if std::env::var_os("XDG_RUNTIME_DIR").is_none() {
         cmd.env("XDG_RUNTIME_DIR", runtime_dir());
@@ -138,7 +138,7 @@ pub fn run(cmd: &str, args: &[&str], timeout: Duration) -> Result<Output> {
 }
 
 /// Запустить, а при ненулевом коде вернуть ошибку с текстом stderr.
-pub fn run_text(cmd: &str, args: &[&str]) -> Result<String> {
+pub(crate) fn run_text(cmd: &str, args: &[&str]) -> Result<String> {
     let out = run(cmd, args, TIMEOUT)?;
     out.check(&format!("{cmd} {}", args.join(" ")))?;
     Ok(out.text())
@@ -146,7 +146,7 @@ pub fn run_text(cmd: &str, args: &[&str]) -> Result<String> {
 
 /// Передать данные на stdin. Вывод не перехватывается: wl-copy уходит в фон
 /// и держал бы наши каналы открытыми.
-pub fn feed(cmd: &str, args: &[&str], input: &[u8]) -> Result<()> {
+pub(crate) fn feed(cmd: &str, args: &[&str], input: &[u8]) -> Result<()> {
     let mut child = session_command(cmd)
         .args(args)
         .stdin(Stdio::piped())

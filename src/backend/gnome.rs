@@ -74,7 +74,7 @@ fn parse_accel(accel: &str) -> Option<(Vec<KeyCode>, KeyCode)> {
 
 /// GNOME: источники ввода из gsettings, переключение — сочетанием из настроек
 /// GNOME (обычно Super+Space) с проверкой, что раскладка правда сменилась.
-pub struct Gnome {
+pub(crate) struct Gnome {
     gsettings: String,
     /// Сочетание из конфига на случай, если в GNOME его не прочитать.
     fallback: Vec<KeyCode>,

@@ -28,7 +28,8 @@ use anyhow::{Context, Result, bail};
 use evdev::KeyCode;
 use log::{debug, error, info, warn};
 
-pub use ports::{Backend, Hooks, Keys, Selection};
+pub(crate) use ports::Hooks;
+pub use ports::{Backend, Keys, Selection};
 pub use report::{Action, ActionKind, LayoutInfo};
 
 use crate::config::{Config, SelectionMethod};
@@ -38,7 +39,7 @@ use buffer::Buffer;
 use taps::Taps;
 
 /// Вставку длиннее нельзя «прокрутить» повторным ⇧⇧.
-pub const SEGMENT_MAX: usize = 200;
+pub(crate) const SEGMENT_MAX: usize = 200;
 /// Касание тачпада короче этого считаем кликом (тап).
 const TOUCH_TAP_MAX: f64 = 0.3;
 /// Столько секунд после нашей вставки события PRIMARY не учитываются.
@@ -51,7 +52,7 @@ struct Held {
     modifier: bool,
 }
 
-pub struct Engine {
+pub(crate) struct Engine {
     cfg: Config,
     backend: Box<dyn Backend>,
     keys: Box<dyn Keys>,
@@ -114,21 +115,21 @@ impl Engine {
         self.enabled
     }
 
-    pub fn selection_enabled(&self) -> bool {
+    pub(crate) fn selection_enabled(&self) -> bool {
         self.selection.is_some()
     }
 
-    pub fn set_selection(&mut self, selection: Option<Box<dyn Selection>>) {
+    pub(crate) fn set_selection(&mut self, selection: Option<Box<dyn Selection>>) {
         self.selection = selection;
         self.selection_valid = false;
     }
 
-    pub fn set_config(&mut self, cfg: Config) {
+    pub(crate) fn set_config(&mut self, cfg: Config) {
         self.keys.configure(&cfg);
         self.cfg = cfg;
     }
 
-    pub fn set_backend(&mut self, backend: Box<dyn Backend>) {
+    pub(crate) fn set_backend(&mut self, backend: Box<dyn Backend>) {
         self.backend = backend;
         self.codes.clear(); // список прежнего переключателя
         self.info_cache = None;
@@ -136,7 +137,7 @@ impl Engine {
         self.reset("сменился переключатель раскладки");
     }
 
-    pub fn set_keymap(&mut self, keymap: Keymap) {
+    pub(crate) fn set_keymap(&mut self, keymap: Keymap) {
         self.keymap = keymap;
         self.info_cache = None;
     }
@@ -178,7 +179,7 @@ impl Engine {
         }
     }
 
-    pub fn touch(&mut self, device: &str, value: i32, ts: f64) {
+    pub(crate) fn touch(&mut self, device: &str, value: i32, ts: f64) {
         match value {
             1 => {
                 self.touch_down.insert(device.to_owned(), ts);
@@ -196,19 +197,19 @@ impl Engine {
         }
     }
 
-    pub fn primary_changed(&mut self, size: usize) {
+    pub(crate) fn primary_changed(&mut self, size: usize) {
         if self.enabled && (self.hooks.clock)() >= self.selection_ignore_until {
             self.selection_valid = size > 0;
         }
     }
 
     /// После потери событий: зажатые клавиши берутся у ядра, буфер забывается.
-    pub fn resync(&mut self, held: HashSet<KeyCode>) {
+    pub(crate) fn resync(&mut self, held: HashSet<KeyCode>) {
         self.down = held;
         self.forget("пересинхронизация");
     }
 
-    pub fn set_enabled(&mut self, flag: bool) {
+    pub(crate) fn set_enabled(&mut self, flag: bool) {
         self.enabled = flag;
         self.selection_valid = false;
         self.forget(if flag {
@@ -336,7 +337,7 @@ impl Engine {
 
     // Исправление.
 
-    pub fn trigger(&mut self) {
+    pub(crate) fn trigger(&mut self) {
         if let Some(reason) = (self.hooks.guard)() {
             info!("⇧⇧ пропущен: {reason}");
             self.selection_valid = false;

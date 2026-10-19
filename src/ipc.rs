@@ -31,7 +31,7 @@ const _: () = assert!(
 /// Самая длинная строка запроса; длиннее — «непонятный запрос».
 pub(crate) const MAX_REQUEST: u64 = 64 * 1024;
 
-pub fn socket_path() -> PathBuf {
+pub(crate) fn socket_path() -> PathBuf {
     crate::sys::paths::runtime_dir().join("shiftfix.sock")
 }
 

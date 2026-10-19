@@ -74,13 +74,13 @@ pub enum Event {
 
 /// Итог обхода /dev/input: сколько устройств открылось и сколько — нет прав.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct ScanStats {
+pub(crate) struct ScanStats {
     pub opened: usize,
     pub denied: usize,
 }
 
 /// Все устройства ввода и потоки их чтения.
-pub struct Registry {
+pub(crate) struct Registry {
     entries: Mutex<HashMap<PathBuf, Entry>>,
     /// Проход из потока hotplug и apply() не пересекаются: иначе оба увидят,
     /// что записи нет, и оба откроют устройство, или новое устройство получит
@@ -217,7 +217,7 @@ impl Registry {
     }
 
     /// Поток, который раз в 2 с ищет новые устройства и забывает отключённые.
-    pub fn spawn_hotplug(self: &Arc<Self>) -> std::io::Result<()> {
+    pub(crate) fn spawn_hotplug(self: &Arc<Self>) -> std::io::Result<()> {
         let registry = Arc::clone(self);
         thread::Builder::new()
             .name("hotplug".into())
@@ -286,12 +286,12 @@ impl Registry {
             .collect()
     }
 
-    pub fn keyboard_count(&self) -> usize {
+    pub(crate) fn keyboard_count(&self) -> usize {
         self.with_role(Role::Keyboard).len()
     }
 
     /// Клавиши, зажатые сейчас (по данным ядра).
-    pub fn held_keys(&self) -> HashSet<KeyCode> {
+    pub(crate) fn held_keys(&self) -> HashSet<KeyCode> {
         self.with_role(Role::Keyboard)
             .iter()
             .filter_map(|p| RawDevice::open(p).and_then(|d| d.get_key_state()).ok())
@@ -299,7 +299,7 @@ impl Registry {
             .collect()
     }
 
-    pub fn caps_led(&self) -> bool {
+    pub(crate) fn caps_led(&self) -> bool {
         self.with_role(Role::Keyboard).iter().any(|p| {
             RawDevice::open(p)
                 .and_then(|d| d.get_led_state())

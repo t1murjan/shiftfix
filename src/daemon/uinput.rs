@@ -18,7 +18,7 @@ const VENDOR: u16 = 0x0fac;
 const PRODUCT: u16 = 0x5f5f;
 
 /// Куда пишутся события: устройство uinput, в тестах — запись.
-pub trait Device {
+pub(crate) trait Device {
     fn write(&mut self, event: InputEvent) -> io::Result<()>;
 }
 
@@ -28,7 +28,7 @@ impl Device for VirtualDevice {
     }
 }
 
-pub struct Injector<D = VirtualDevice> {
+pub(crate) struct Injector<D = VirtualDevice> {
     dev: D,
     delay: Duration,
     /// Нажатые и ещё не отпущенные клавиши, по порядку нажатия.

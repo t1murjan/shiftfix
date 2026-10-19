@@ -31,7 +31,7 @@ fn set_x_authority(path: Option<PathBuf>) {
     *X_AUTHORITY.lock().unwrap_or_else(|e| e.into_inner()) = path;
 }
 
-pub fn x_authority() -> Option<PathBuf> {
+pub(crate) fn x_authority() -> Option<PathBuf> {
     X_AUTHORITY
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -188,7 +188,7 @@ pub fn connect() -> Result<XConn> {
 /// Свойство `_XKB_RULES_NAMES` корневого окна: из чего X-сервер собрал keymap.
 /// Раскладки и варианты — через запятую: `us,ru` и `,phonetic`.
 #[derive(Debug, Default, PartialEq)]
-pub struct RulesNames {
+pub(crate) struct RulesNames {
     pub rules: String,
     pub model: String,
     pub layout: String,
@@ -213,7 +213,7 @@ impl RulesNames {
     }
 }
 
-pub fn rules_names(x: &XConn) -> Result<RulesNames> {
+pub(crate) fn rules_names(x: &XConn) -> Result<RulesNames> {
     let atom = x
         .conn
         .intern_atom(false, b"_XKB_RULES_NAMES")?

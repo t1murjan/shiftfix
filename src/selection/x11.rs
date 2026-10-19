@@ -16,7 +16,7 @@ use crate::engine::{Keys, Selection};
 use crate::sys::proc::{TIMEOUT, feed, run};
 use crate::sys::x11::connect;
 
-pub struct XClipboard {
+pub(crate) struct XClipboard {
     paste: Paste,
     xclip: String,
 }

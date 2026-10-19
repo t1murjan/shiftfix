@@ -7,7 +7,7 @@ use crate::keymap::norm_layout;
 use crate::sys::dbus::{Bus, Client};
 
 /// KWin (Plasma 6) и kded (Plasma 5): `org.kde.keyboard /Layouts`.
-pub struct Kde {
+pub(crate) struct Kde {
     client: Client,
 }
 

@@ -56,7 +56,7 @@ fn manager_env() -> HashMap<String, String> {
 }
 
 /// Переменная сеанса: своя или из окружения systemd.
-pub fn session_var(name: &str) -> Option<String> {
+pub(crate) fn session_var(name: &str) -> Option<String> {
     non_empty(name).or_else(|| manager_env().get(name).filter(|v| !v.is_empty()).cloned())
 }
 
@@ -93,7 +93,7 @@ fn names_in(dir: &Path) -> Vec<String> {
 }
 
 /// Путь к сокету Wayland по `WAYLAND_DISPLAY`.
-pub fn wayland_path(display: &str) -> PathBuf {
+pub(crate) fn wayland_path(display: &str) -> PathBuf {
     if display.starts_with('/') {
         display.into()
     } else {
@@ -117,7 +117,7 @@ pub fn wayland_display() -> Option<String> {
 }
 
 /// Подпись запущенного Hyprland (каталог с его сокетом).
-pub fn hyprland_signature() -> Option<String> {
+pub(crate) fn hyprland_signature() -> Option<String> {
     static SLOT: Slot<Option<String>> = Mutex::new(None);
     cached(&SLOT, || {
         let bases = [runtime_dir().join("hypr"), PathBuf::from("/tmp/hypr")];
@@ -145,7 +145,7 @@ pub fn hyprland_signature() -> Option<String> {
 }
 
 /// Живой сокет IPC Sway.
-pub fn sway_socket() -> Option<String> {
+pub(crate) fn sway_socket() -> Option<String> {
     static SLOT: Slot<Option<String>> = Mutex::new(None);
     cached(&SLOT, || {
         let dir = runtime_dir();
@@ -161,12 +161,12 @@ pub fn sway_socket() -> Option<String> {
 }
 
 /// Сокет X-сервера с этим номером.
-pub fn x11_socket(number: u32) -> String {
+pub(crate) fn x11_socket(number: u32) -> String {
     format!("/tmp/.X11-unix/X{number}")
 }
 
 /// Номер дисплея из `:0`, `:1.0`, `unix/:0`.
-pub fn x11_number(display: &str) -> Option<u32> {
+pub(crate) fn x11_number(display: &str) -> Option<u32> {
     let rest = display.rsplit_once(':')?.1;
     rest.split('.').next()?.parse().ok()
 }

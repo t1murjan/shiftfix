@@ -58,7 +58,7 @@ impl Engine {
     }
 
     /// Раскладки и текущая раскладка — для GUI.
-    pub fn layout_info(&mut self) -> LayoutInfo {
+    pub(crate) fn layout_info(&mut self) -> LayoutInfo {
         let now = (self.hooks.clock)();
         if let Some((at, info)) = &self.info_cache
             && now - at < LAYOUT_INFO_TTL

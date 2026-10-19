@@ -7,11 +7,11 @@ use super::Layout;
 use crate::keys::Stroke;
 
 /// Таблицы, выстроенные по индексам раскладок; `None` — для раскладки таблицы нет.
-pub type Tables = [Option<Arc<Layout>>];
+pub(crate) type Tables = [Option<Arc<Layout>>];
 
 /// Раскладка, в которой набран текст: больше всего её «собственных» букв;
 /// при равенстве — текущая.
-pub fn detect_source(text: &str, tables: &Tables, current: Option<usize>) -> Option<usize> {
+pub(crate) fn detect_source(text: &str, tables: &Tables, current: Option<usize>) -> Option<usize> {
     let mut best: Option<((usize, bool), usize)> = None;
     for (i, table) in tables.iter().enumerate() {
         let Some(layout) = table else { continue };
@@ -27,7 +27,7 @@ pub fn detect_source(text: &str, tables: &Tables, current: Option<usize>) -> Opt
 }
 
 /// Следующая после `src` раскладка с таблицей, которая отличается от исходной.
-pub fn next_with_table(src: usize, tables: &Tables) -> Option<usize> {
+pub(crate) fn next_with_table(src: usize, tables: &Tables) -> Option<usize> {
     let source = tables.get(src)?.as_ref()?;
     (1..tables.len())
         .map(|step| (src + step) % tables.len())
@@ -35,7 +35,7 @@ pub fn next_with_table(src: usize, tables: &Tables) -> Option<usize> {
 }
 
 /// Тот же текст, как если бы те же клавиши нажали в раскладке `tgt`.
-pub fn convert_text(text: &str, src: &Layout, tgt: &Layout) -> String {
+pub(crate) fn convert_text(text: &str, src: &Layout, tgt: &Layout) -> String {
     text.chars()
         .map(|ch| {
             src.key_for(ch)
@@ -47,7 +47,7 @@ pub fn convert_text(text: &str, src: &Layout, tgt: &Layout) -> String {
 
 /// Нажатия, которые в раскладке `tgt` наберут `convert_text()`; `None`, если так не выйдет
 /// (перевод строки, табуляция, «», эмодзи…).
-pub fn plan_strokes(
+pub(crate) fn plan_strokes(
     text: &str,
     src: &Layout,
     tgt: &Layout,

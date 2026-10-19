@@ -37,7 +37,7 @@ pub trait Selection {
 }
 
 /// О чём ещё движок спрашивает службу.
-pub struct Hooks {
+pub(crate) struct Hooks {
     /// Горит ли CapsLock.
     pub caps_on: Box<dyn FnMut() -> bool>,
     /// Монотонное время, секунды.
