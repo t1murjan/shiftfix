@@ -56,6 +56,12 @@ fn monotonic() -> f64 {
     START.elapsed().as_secs_f64()
 }
 
+/// Блокировка одного экземпляра службы. Её же ждёт окно, когда перезапускает
+/// службу без systemd.
+pub fn lock_path() -> PathBuf {
+    paths::runtime_dir().join("shiftfix.lock")
+}
+
 /// Два экземпляра исправляли бы одно слово дважды.
 pub(crate) fn lock_file(path: &Path) -> Result<File> {
     lock::try_lock(path)
@@ -79,7 +85,7 @@ struct Daemon {
 }
 
 pub fn run(path: PathBuf, cfg: Config) -> Result<()> {
-    let _lock = lock_file(&paths::runtime_dir().join("shiftfix.lock"))?;
+    let _lock = lock_file(&lock_path())?;
     let injector = Injector::new(cfg.key_delay)?;
     let (tx, rx) = mpsc::channel();
 
