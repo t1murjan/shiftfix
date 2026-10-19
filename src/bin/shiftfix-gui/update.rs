@@ -129,12 +129,22 @@ fn upstream_version(dir: &Path) -> Result<String, String> {
     package_version(&cargo_toml).ok_or_else(|| "в Cargo.toml из upstream нет версии".to_owned())
 }
 
-/// `git -C dir args`: вывод или первая строка ошибки.
+/// `git -C dir args`: вывод или первая строка ошибки. Пароль git не спрашивает:
+/// без этого `fetch` из закрытого репозитория открывал бы окно ввода пароля
+/// (ksshaskpass в KDE) при каждом запуске окна — пусть лучше честно не удастся.
 fn git(dir: &Path, args: &[&str], timeout: Duration) -> Result<String, String> {
     let dir = dir.to_string_lossy();
-    let mut full = vec!["-C", &dir];
+    let mut full = vec![
+        "GIT_TERMINAL_PROMPT=0",
+        "GIT_ASKPASS=true",
+        "SSH_ASKPASS=true",
+        "GIT_SSH_COMMAND=ssh -o BatchMode=yes",
+        "git",
+        "-C",
+        &dir,
+    ];
     full.extend_from_slice(args);
-    let out = proc::run("git", &full, timeout).map_err(|err| format!("{err:#}"))?;
+    let out = proc::run("env", &full, timeout).map_err(|err| format!("{err:#}"))?;
     if !out.ok {
         let first = out.stderr.lines().next().unwrap_or("ошибка");
         return Err(first.to_owned());
