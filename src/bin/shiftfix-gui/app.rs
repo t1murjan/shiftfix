@@ -19,6 +19,7 @@ use crate::link::{Check, Link, ServiceAction, Snapshot};
 use crate::pages;
 use crate::theme::{self, Palette};
 use crate::toast::{Toast, ToastKind, Toasts};
+use crate::update::{self, Update};
 use crate::widgets::{self, bold};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,6 +97,8 @@ pub struct App {
     pub settings: SettingsEdit,
     pub try_text: String,
     pub check: Check,
+    /// Новая версия в папке с исходниками и запуск обновления.
+    pub update: Update,
     logo: TextureHandle,
     /// Тема окна: портал, применённая палитра, отложенная запись.
     pub theme: theme::ThemeState,
@@ -126,6 +129,8 @@ impl App {
             log::warn!("[theme]: неизвестная палитра «{id}» — вместо неё Breeze");
         }
         settings.set_theme(theme);
+        let update = Update::default();
+        update.check(ctx);
         App {
             page,
             link,
@@ -135,6 +140,7 @@ impl App {
             settings,
             try_text: String::new(),
             check: Check::default(),
+            update,
             logo,
             about_focus: false,
             raised,
@@ -251,6 +257,20 @@ impl App {
     pub fn service(&mut self, action: ServiceAction) {
         let id = self.toasts.start_action();
         self.link.service(action, id);
+    }
+
+    /// «Обновить»: git pull и install.sh в терминале, в папке с исходниками.
+    pub fn run_update(&mut self) {
+        let Some(source) = self.update.state().source else {
+            return;
+        };
+        match update::open_terminal(&source) {
+            Ok(terminal) => self.toast(
+                ToastKind::Success,
+                format!("Обновление идёт в терминале ({terminal})"),
+            ),
+            Err(err) => self.toast(ToastKind::Error, err),
+        }
     }
 
     // ─── отрисовка ───

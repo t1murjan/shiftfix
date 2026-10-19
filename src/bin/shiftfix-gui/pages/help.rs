@@ -7,6 +7,7 @@ use crate::app::{App, Page, VERSION};
 use crate::format::{shown_path, versions_differ};
 use crate::link::ServiceAction;
 use crate::theme::Palette;
+use crate::update::{self, Outcome};
 use crate::widgets::{self, bold, card, card_title, keycap, page_header};
 
 fn number(ui: &mut Ui, p: &Palette, n: usize) {
@@ -306,7 +307,7 @@ fn commands(ui: &mut Ui, p: &Palette) {
         weak(
             ui,
             p,
-            "Соберёт, заменит программу и запустит службу снова, если она работала. Настройки и выбор автозапуска не трогает.",
+            "Соберёт, заменит программу и запустит службу снова, если она работала. Настройки и выбор автозапуска не трогает. То же самое, вместе с git pull, делает кнопка «Обновить» в «О программе».",
         );
         ui.add_space(6.0);
         ui.label(bold("Удаление", 15.0).color(p.text));
@@ -324,11 +325,13 @@ fn commands(ui: &mut Ui, p: &Palette) {
     });
 }
 
-/// «О программе»: версии окна и службы, конфиг, ссылка на проект.
+/// «О программе»: версии окна и службы, конфиг, исходники, ссылка на проект,
+/// проверка новой версии и обновление.
 fn about(app: &mut App, ui: &mut Ui, p: &Palette) {
     card(ui, p, |ui| {
         card_title(ui, p, icons::INFO, "О программе");
         let service = app.status().map(|s| (s.version.clone(), s.pid));
+        let update = app.update.state();
         Grid::new("about")
             .num_columns(2)
             .spacing(vec2(18.0, 6.0))
@@ -352,6 +355,19 @@ fn about(app: &mut App, ui: &mut Ui, p: &Palette) {
                         .monospace()
                         .color(p.text),
                 );
+                ui.end_row();
+
+                ui.label(RichText::new("Исходники").color(p.weak));
+                match &update.source {
+                    // Длинный путь обрезается, целиком он — в подсказке.
+                    Some(dir) => {
+                        let path = shown_path(dir);
+                        let text = RichText::new(&path).monospace().color(p.text);
+                        ui.add(eframe::egui::Label::new(text).truncate())
+                            .on_hover_text(path)
+                    }
+                    None => ui.label(RichText::new("—").color(p.weak)),
+                };
                 ui.end_row();
 
                 let url = env!("CARGO_PKG_REPOSITORY");
@@ -380,5 +396,62 @@ fn about(app: &mut App, ui: &mut Ui, p: &Palette) {
                 app.service(ServiceAction::Restart);
             }
         }
+        ui.add_space(10.0);
+        update_status(ui, p, &update);
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let check = ui.add_enabled_ui(!update.running, |ui| {
+                widgets::button(ui, p, icons::ARROWS_CLOCKWISE, "Проверить", false)
+            });
+            if check.inner.clicked() {
+                app.update.check(ui.ctx());
+            }
+            let newer = matches!(update.outcome, Some(Outcome::Newer(_)));
+            let run = ui.add_enabled_ui(update.source.is_some(), |ui| {
+                widgets::button(ui, p, icons::DOWNLOAD_SIMPLE, "Обновить", newer)
+            });
+            if run.inner.on_hover_text(update::BUTTON_HINT).clicked() {
+                app.run_update();
+            }
+        });
     });
+}
+
+/// Итог проверки новой версии одной строкой.
+fn update_status(ui: &mut Ui, p: &Palette, update: &update::State) {
+    let (glyph, color, text) = if update.source.is_none() {
+        (
+            icons::WARNING,
+            p.warning,
+            "Папка с исходниками неизвестна: обновите вручную (git pull и ./install.sh); \
+             после этого кнопка заработает."
+                .to_owned(),
+        )
+    } else if update.running {
+        (
+            icons::HOURGLASS,
+            p.weak,
+            "Проверяю, есть ли новая версия…".to_owned(),
+        )
+    } else {
+        match &update.outcome {
+            Some(Outcome::Newer(version)) => (
+                icons::ARROW_CIRCLE_UP,
+                p.accent,
+                format!("Доступна версия {version}"),
+            ),
+            Some(Outcome::Latest) => (
+                icons::CHECK_CIRCLE,
+                p.positive,
+                "Установлена последняя версия".to_owned(),
+            ),
+            Some(Outcome::Failed(reason)) => (
+                icons::WARNING,
+                p.warning,
+                format!("Не удалось проверить: {reason}"),
+            ),
+            None => return,
+        }
+    };
+    widgets::notice(ui, glyph, color, &text);
 }
