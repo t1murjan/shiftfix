@@ -1,7 +1,6 @@
 {
   "version": "0.4.0",
   "pid": 4242,
-  "uptime_secs": 5,
   "enabled": true,
   "layouts": {
     "backend": "KDE",

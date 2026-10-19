@@ -198,6 +198,17 @@ mod tests {
     }
 
     #[test]
+    fn install_stand_status_matches() {
+        // Поддельная служба стенда tests/install отвечает на status этим
+        // файлом. Поле, которого нет в Status или которое Status не
+        // вернёт, значит, что подделка разошлась со службой.
+        let fake: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/install/fake_status.json")).unwrap();
+        let status: Status = serde_json::from_value(fake.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&status).unwrap(), fake);
+    }
+
+    #[test]
     fn closed_connection_is_reported() {
         let dir = TempDir::new("ipc");
         let path = dir.join("shiftfix.sock");

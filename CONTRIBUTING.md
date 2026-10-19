@@ -47,7 +47,7 @@ sleep 7 && import -window root shot.png    # окно поднимается 6�
 
 Без сессионной шины DBus окно пишет «портал настроек недоступен — тёмная тема» — это нормально.
 
-Ответ поддельной службы на `status` лежит в `tests/install/fake_status.json` в формате `ipc::Status`; версию и путь к конфигу (`$XDG_CONFIG_HOME` или `~/.config`) она подставляет сама. Поменялся `ipc::Status` — поправьте и этот файл.
+Ответ поддельной службы на `status` лежит в `tests/install/fake_status.json` в формате `ipc::Status`; версию и путь к конфигу (`$XDG_CONFIG_HOME` или `~/.config`) она подставляет сама. Поменялся `ipc::Status` — поправьте и этот файл: тест `ipc::tests::install_stand_status_matches` проверяет, что файл разбирается в `Status` без потерь.
 
 ## Стенд для install.sh и uninstall.sh
 
