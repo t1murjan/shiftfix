@@ -22,7 +22,7 @@
 ## Команды
 
 ```sh
-cargo test                       # тест на Xvfb сам поднимает :97 (нужны Xvfb, setxkbmap, xclip)
+cargo test                       # тест на Xvfb сам берёт свободный дисплей (нужны Xvfb, setxkbmap, xclip)
 cargo clippy --all-targets
 shellcheck -x install.sh uninstall.sh scripts/common.sh tests/install/run.sh tests/install/fakes/*
 cargo run --bin shiftfix -- --check
