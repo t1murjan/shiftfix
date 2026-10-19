@@ -2,7 +2,6 @@
 //! или XWayland — слежение через XFixes, чтение и вставка через xclip.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Sender;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -13,7 +12,6 @@ use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, CreateWindowAux, Win
 
 use super::clipboard::{Clipboard, Paste, UTF8};
 use crate::config::Config;
-use crate::daemon::Msg;
 use crate::engine::{Keys, Selection};
 use crate::sys::proc::{TIMEOUT, feed, run};
 use crate::sys::x11::connect;
@@ -91,7 +89,7 @@ impl Selection for XClipboard {
 
 /// Следить за PRIMARY, пока жив X-сервер. `Ok(())` — служба завершается
 /// или слежение остановлено (`stop`).
-pub fn watch(tx: &Sender<Msg>, stop: &AtomicBool) -> Result<()> {
+pub fn watch(send: &dyn Fn(super::Event) -> bool, stop: &AtomicBool) -> Result<()> {
     let x = connect()?;
     let conn = &x.conn;
     conn.xfixes_query_version(5, 0)?.reply()?;
@@ -118,7 +116,7 @@ pub fn watch(tx: &Sender<Msg>, stop: &AtomicBool) -> Result<()> {
             | SelectionEventMask::SELECTION_CLIENT_CLOSE,
     )?;
     conn.flush()?;
-    if tx.send(Msg::Selection(Ok("X11"))).is_err() {
+    if !send(super::Event::Watch(Ok("X11"))) {
         return Ok(());
     }
     loop {
@@ -128,9 +126,7 @@ pub fn watch(tx: &Sender<Msg>, stop: &AtomicBool) -> Result<()> {
         }
         if let Event::XfixesSelectionNotify(ev) = event
             && ev.selection == primary
-            && tx
-                .send(Msg::Primary(usize::from(ev.owner != x11rb::NONE)))
-                .is_err()
+            && !send(super::Event::Primary(usize::from(ev.owner != x11rb::NONE)))
         {
             return Ok(());
         }
