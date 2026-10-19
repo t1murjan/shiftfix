@@ -43,12 +43,13 @@ init_paths() {
     UDEV_TEXT='KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"'
     MODULES=/etc/modules-load.d/shiftfix-uinput.conf
     MODULES_TEXT=uinput
-    # Как в службе (env.rs): из консоли или по ssh XDG_RUNTIME_DIR бывает не задан —
-    # тогда systemctl --user не видит службу, хотя она запущена.
+    # Каталог — как paths::runtime_dir (src/sys/paths.rs). Из консоли или по ssh
+    # XDG_RUNTIME_DIR бывает не задан — тогда systemctl --user не видит службу, хотя
+    # она запущена. Нет и /run/user/UID — свой каталог во временном, его создаёт take_lock.
     if [[ -z ${XDG_RUNTIME_DIR:-} && -d /run/user/$MY_UID ]]; then
         export XDG_RUNTIME_DIR="/run/user/$MY_UID"
     fi
-    RUNTIME="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+    RUNTIME="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}/shiftfix-$MY_UID}"
     # Блокировки и сокеты службы и окна (имена — в src/) и блокировка install.sh.
     DAEMON_LOCK="$RUNTIME/shiftfix.lock"
     DAEMON_SOCK="$RUNTIME/shiftfix.sock"
@@ -133,7 +134,13 @@ refresh_menu_caches() {
 # живут дольше скрипта, — 9>&-. Файл блокировки не удаляется: второй скрипт
 # создал бы новый и не заметил, что старый ещё занят.
 take_lock() {
-    if have flock && { exec 9>"$INSTALL_LOCK"; } 2>/dev/null; then
+    # Своего каталога во временном (см. init_paths) может ещё не быть. Если каталог
+    # с этим именем создал другой пользователь, файл блокировки в нём может оказаться
+    # ссылкой на наш файл — тогда без блокировки, как без flock. Файл открывается без
+    # усечения (>>), как у службы.
+    if [[ ! -d $RUNTIME ]]; then mkdir -m 700 "$RUNTIME" 2>/dev/null || true; fi
+    [[ -d $RUNTIME && -O $RUNTIME ]] || return 0
+    if have flock && { exec 9>>"$INSTALL_LOCK"; } 2>/dev/null; then
         if ! flock -n 9; then
             echo "install.sh или uninstall.sh уже запущен в другом терминале — дождитесь его." >&2
             exit 1
