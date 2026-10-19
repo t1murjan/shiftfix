@@ -1,15 +1,15 @@
 //! Главная: состояние, переключатель, раскладки, поле для пробы, последние исправления.
 
 use eframe::egui::{
-    self, Align, Align2, Color32, CornerRadius, FontId, Layout, Pos2, RichText, Sense, Stroke,
-    StrokeKind, TextEdit, Ui, UiBuilder, vec2,
+    self, Align, Align2, Color32, CornerRadius, FontId, Layout, Pos2, Rect, RichText, Sense,
+    Stroke, StrokeKind, TextEdit, Ui, UiBuilder, vec2,
 };
 use egui_phosphor::regular as icons;
 use shiftfix::devices::Role;
 use shiftfix::engine::ActionKind;
-use shiftfix::ipc::Request;
+use shiftfix::ipc::{Request, Status};
 
-use crate::app::{App, Page, State};
+use crate::app::{App, Page, State, state_label};
 use crate::format::clock;
 use crate::link::ServiceAction;
 use crate::theme::{self, Palette};
@@ -40,8 +40,46 @@ fn hero(app: &mut App, ui: &mut Ui, p: &Palette) {
     // «Чернила» заголовка: чёрные или белые — что лучше видно на этом градиенте.
     // Из них же — полупрозрачные круги, стрелки, кнопки и переключатель.
     let ink = theme::best_on(from, to);
+    // Переключатель паузы — пока служба отвечает; без него текст шире.
+    let show_toggle = matches!(state, State::Working | State::Paused);
+    hero_backdrop(ui, rect, (from, to), ink, show_toggle);
+
+    let inner = rect.shrink2(vec2(30.0, 24.0));
+    let mut ui = ui.new_child(
+        UiBuilder::new()
+            .max_rect(inner)
+            .layout(Layout::left_to_right(Align::Center)),
+    );
+    let (title, _) = state_label(state, p);
+    let text = hero_text(app, state);
+    ui.vertical(|ui| {
+        ui.set_max_width(inner.width() - if show_toggle { 250.0 } else { 170.0 });
+        ui.label(bold(title, 30.0).color(ink));
+        ui.add_space(2.0);
+        let soft = ink.gamma_multiply_u8(225);
+        ui.add(egui::Label::new(RichText::new(text).size(15.0).color(soft)).wrap());
+        ui.add_space(8.0);
+        ui.horizontal(|ui| hero_actions(app, ui, state, ink));
+    });
+    if show_toggle {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let mut on = state == State::Working;
+            if hero_toggle(ui, ink, p.accent, &mut on).changed() {
+                app.link.send(Request::SetEnabled { enabled: on }, None);
+            }
+        });
+    }
+}
+
+/// Фон заголовка: градиент, мягкие круги для объёма и две стрелки Shift.
+fn hero_backdrop(
+    ui: &Ui,
+    rect: Rect,
+    (from, to): (Color32, Color32),
+    ink: Color32,
+    show_toggle: bool,
+) {
     widgets::gradient_rect(ui, rect, 20.0, from, to);
-    // Мягкие круги для объёма.
     let painter = ui.painter().with_clip_rect(rect);
     painter.circle_filled(
         Pos2::new(rect.right() - 170.0, rect.top() + 18.0),
@@ -53,7 +91,6 @@ fn hero(app: &mut App, ui: &mut Ui, p: &Palette) {
         52.0,
         ink.gamma_multiply_u8(12),
     );
-    let show_toggle = matches!(state, State::Working | State::Paused);
     let decor_x = rect.right() - if show_toggle { 196.0 } else { 120.0 };
     for (dx, alpha) in [(-16.0f32, 80u8), (16.0, 52)] {
         painter.text(
@@ -64,63 +101,42 @@ fn hero(app: &mut App, ui: &mut Ui, p: &Palette) {
             ink.gamma_multiply_u8(alpha),
         );
     }
+}
 
-    let inner = rect.shrink2(vec2(30.0, 24.0));
-    let mut ui = ui.new_child(
-        UiBuilder::new()
-            .max_rect(inner)
-            .layout(Layout::left_to_right(Align::Center)),
-    );
-    let soft = ink.gamma_multiply_u8(225);
-    let (title, text) = match state {
-        State::Working => (
-            "Работает",
-            "Дважды нажмите Shift — последнее слово или выделенный текст перейдут в другую раскладку.".to_owned(),
-        ),
-        State::Paused => ("На паузе", "Исправление выключено. Включите переключатель справа или щёлкните колесом по значку в трее.".to_owned()),
-        State::Stopped => (
-            "Служба остановлена",
-            app.snap
-                .last_error
-                .clone()
-                .unwrap_or_else(|| "Запустите службу, чтобы двойной Shift заработал.".into()),
-        ),
-        State::NotInstalled => (
-            "Служба не установлена",
-            "Установите службу — она будет запускаться вместе с сеансом.".into(),
-        ),
-    };
-    ui.vertical(|ui| {
-        ui.set_max_width(inner.width() - if show_toggle { 250.0 } else { 170.0 });
-        ui.label(bold(title, 30.0).color(ink));
-        ui.add_space(2.0);
-        ui.add(egui::Label::new(RichText::new(text).size(15.0).color(soft)).wrap());
-        ui.add_space(8.0);
-        ui.horizontal(|ui| match state {
-            State::Stopped => {
-                if hero_button(ui, ink, icons::PLAY, "Запустить").clicked() {
-                    app.service(ServiceAction::Start);
-                }
-                if hero_button(ui, ink, icons::SCROLL, "Журнал").clicked() {
-                    app.page = Page::Log;
-                }
+/// Пояснение под заголовком: что сейчас происходит и что делать.
+fn hero_text(app: &App, state: State) -> String {
+    match state {
+        State::Working => "Дважды нажмите Shift — последнее слово или выделенный текст перейдут в другую раскладку.".into(),
+        State::Paused => "Исправление выключено. Включите переключатель справа или щёлкните колесом по значку в трее.".into(),
+        State::Stopped => app
+            .snap
+            .last_error
+            .clone()
+            .unwrap_or_else(|| "Запустите службу, чтобы двойной Shift заработал.".into()),
+        State::NotInstalled => {
+            "Установите службу — она будет запускаться вместе с сеансом.".into()
+        }
+    }
+}
+
+/// Кнопки под пояснением, когда служба не работает.
+fn hero_actions(app: &mut App, ui: &mut Ui, state: State, ink: Color32) {
+    match state {
+        State::Stopped => {
+            if hero_button(ui, ink, icons::PLAY, "Запустить").clicked() {
+                app.service(ServiceAction::Start);
             }
-            State::NotInstalled => {
-                if hero_button(ui, ink, icons::DOWNLOAD_SIMPLE, "Установить и запустить").clicked()
-                {
-                    app.service(ServiceAction::Install);
-                }
+            if hero_button(ui, ink, icons::SCROLL, "Журнал").clicked() {
+                app.page = Page::Log;
             }
-            State::Working | State::Paused => {}
-        });
-    });
-    if show_toggle {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let mut on = state == State::Working;
-            if hero_toggle(ui, ink, p.accent, &mut on).changed() {
-                app.link.send(Request::SetEnabled { enabled: on }, None);
+        }
+        State::NotInstalled => {
+            if hero_button(ui, ink, icons::DOWNLOAD_SIMPLE, "Установить и запустить").clicked()
+            {
+                app.service(ServiceAction::Install);
             }
-        });
+        }
+        State::Working | State::Paused => {}
     }
 }
 
@@ -175,7 +191,15 @@ fn hero_toggle(ui: &mut Ui, ink: Color32, accent: Color32, on: &mut bool) -> egu
         .on_hover_text("Включить или поставить на паузу")
 }
 
-fn stat_card(ui: &mut Ui, p: &Palette, icon: &str, title: &str, add: impl FnOnce(&mut Ui)) {
+/// Карточка-показатель; пока служба не отвечает — прочерк вместо `add`.
+fn stat_card(
+    ui: &mut Ui,
+    p: &Palette,
+    icon: &str,
+    title: &str,
+    status: Option<&Status>,
+    add: fn(&mut Ui, &Palette, &Status),
+) {
     card(ui, p, |ui| {
         ui.set_min_height(92.0);
         ui.horizontal(|ui| {
@@ -183,7 +207,12 @@ fn stat_card(ui: &mut Ui, p: &Palette, icon: &str, title: &str, add: impl FnOnce
             ui.label(RichText::new(title).size(13.0).color(p.weak));
         });
         ui.add_space(4.0);
-        add(ui);
+        match status {
+            Some(status) => add(ui, p, status),
+            None => {
+                ui.label(RichText::new("—").size(20.0).color(p.weak));
+            }
+        }
     });
 }
 
@@ -198,100 +227,89 @@ fn chip(ui: &mut Ui, p: &Palette, text: &str, active: bool) {
         .galley(rect.center() - galley.size() / 2.0, galley, color);
 }
 
-fn stats(app: &mut App, ui: &mut Ui, p: &Palette) {
-    let status = app.status().cloned();
+fn stats(app: &App, ui: &mut Ui, p: &Palette) {
+    let status = app.status();
     ui.columns(3, |cols| {
         stat_card(
             &mut cols[0],
             p,
             icons::TRANSLATE,
             "Раскладки",
-            |ui| match &status {
-                Some(s) if !s.layouts.codes.is_empty() => {
-                    ui.horizontal_wrapped(|ui| {
-                        for (i, code) in s.layouts.codes.iter().enumerate() {
-                            chip(ui, p, code, s.layouts.current == Some(i));
-                        }
-                    });
-                    ui.label(
-                        RichText::new(format!("переключает {}", s.layouts.backend))
-                            .size(12.5)
-                            .color(p.weak),
-                    );
-                }
-                Some(s) => {
-                    ui.label(RichText::new("не удалось узнать").color(p.warning));
-                    if let Some(err) = &s.layouts.error {
-                        ui.label(RichText::new(err).size(12.0).color(p.weak));
-                    }
-                }
-                None => {
-                    ui.label(RichText::new("—").size(20.0).color(p.weak));
-                }
-            },
+            status,
+            layouts_stat,
         );
         stat_card(
             &mut cols[1],
             p,
             icons::KEYBOARD,
             "Устройства",
-            |ui| match &status {
-                Some(s) => {
-                    let count = |roles: &[Role]| {
-                        s.devices.iter().filter(|d| roles.contains(&d.role)).count()
-                    };
-                    let keyboards = count(&[Role::Keyboard]);
-                    let pointers =
-                        count(&[Role::Mouse, Role::Touchpad, Role::Touchscreen, Role::Tablet]);
-                    let color = if keyboards == 0 { p.negative } else { p.text };
-                    ui.label(
-                        bold(format!("{keyboards} клав. · {pointers} указ."), 18.0).color(color),
-                    );
-                    let note = if keyboards == 0 {
-                        "клавиатура не найдена — см. «Устройства»"
-                    } else {
-                        "клавиатуры и указатели"
-                    };
-                    ui.label(RichText::new(note).size(12.5).color(p.weak));
-                }
-                None => {
-                    ui.label(RichText::new("—").size(20.0).color(p.weak));
-                }
-            },
+            status,
+            devices_stat,
         );
         stat_card(
             &mut cols[2],
             p,
             icons::SELECTION,
             "Выделенный текст",
-            |ui| match &status {
-                Some(s) if s.selection => {
-                    ui.label(bold("Исправляется", 18.0).color(p.positive));
-                    let tables = if s.layouts.from_keymap {
-                        "таблицы из вашей keymap"
-                    } else {
-                        "встроенные таблицы us/ru"
-                    };
-                    let note = match &s.selection_via {
-                        Some(via) => format!("через {via} · {tables}"),
-                        None => tables.to_owned(),
-                    };
-                    ui.label(RichText::new(note).size(12.5).color(p.weak));
-                }
-                Some(s) => {
-                    ui.label(bold("Недоступно", 18.0).color(p.warning));
-                    if let Some(note) = &s.selection_note {
-                        ui.add(
-                            egui::Label::new(RichText::new(note).size(12.0).color(p.weak)).wrap(),
-                        );
-                    }
-                }
-                None => {
-                    ui.label(RichText::new("—").size(20.0).color(p.weak));
-                }
-            },
+            status,
+            selection_stat,
         );
     });
+}
+
+fn layouts_stat(ui: &mut Ui, p: &Palette, s: &Status) {
+    if s.layouts.codes.is_empty() {
+        ui.label(RichText::new("не удалось узнать").color(p.warning));
+        if let Some(err) = &s.layouts.error {
+            ui.label(RichText::new(err).size(12.0).color(p.weak));
+        }
+        return;
+    }
+    ui.horizontal_wrapped(|ui| {
+        for (i, code) in s.layouts.codes.iter().enumerate() {
+            chip(ui, p, code, s.layouts.current == Some(i));
+        }
+    });
+    ui.label(
+        RichText::new(format!("переключает {}", s.layouts.backend))
+            .size(12.5)
+            .color(p.weak),
+    );
+}
+
+fn devices_stat(ui: &mut Ui, p: &Palette, s: &Status) {
+    let count = |roles: &[Role]| s.devices.iter().filter(|d| roles.contains(&d.role)).count();
+    let keyboards = count(&[Role::Keyboard]);
+    let pointers = count(&[Role::Mouse, Role::Touchpad, Role::Touchscreen, Role::Tablet]);
+    let color = if keyboards == 0 { p.negative } else { p.text };
+    ui.label(bold(format!("{keyboards} клав. · {pointers} указ."), 18.0).color(color));
+    let note = if keyboards == 0 {
+        "клавиатура не найдена — см. «Устройства»"
+    } else {
+        "клавиатуры и указатели"
+    };
+    ui.label(RichText::new(note).size(12.5).color(p.weak));
+}
+
+fn selection_stat(ui: &mut Ui, p: &Palette, s: &Status) {
+    if !s.selection {
+        ui.label(bold("Недоступно", 18.0).color(p.warning));
+        if let Some(note) = &s.selection_note {
+            ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.weak)).wrap());
+        }
+        return;
+    }
+    ui.label(bold("Исправляется", 18.0).color(p.positive));
+    let tables = if s.layouts.from_keymap {
+        "таблицы из вашей keymap"
+    } else {
+        "встроенные таблицы us/ru"
+    };
+    let note = match &s.selection_via {
+        Some(via) => format!("через {via} · {tables}"),
+        None => tables.to_owned(),
+    };
+    ui.label(RichText::new(note).size(12.5).color(p.weak));
 }
 
 fn tray_waiting(ui: &mut Ui, p: &Palette) {
