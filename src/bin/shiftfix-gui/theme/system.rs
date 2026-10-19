@@ -20,8 +20,8 @@ pub struct System {
 }
 
 /// Пока портал не ответил (или недоступен), цвета — как без портала:
-/// тёмная тема и свой акцент. Чем это состояние отличается от «недоступен»,
-/// окно смотрит в самом `PortalState`.
+/// тёмная тема и свой акцент. Чем «ещё не ответил» отличается от
+/// «недоступен», окно узнаёт из `SystemNote`.
 impl From<&PortalState> for System {
     fn from(state: &PortalState) -> System {
         let PortalState::Ready(a) = state else {

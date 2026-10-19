@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use shiftfix::config::{ThemeMode, ThemeSettings};
 
-use super::{Palette, System, SystemWatch, Variant, apply_palette, resolve, save_due};
+use super::system::system_accent_blocked;
+use super::{Palette, System, SystemNote, SystemWatch, Variant, apply_palette, resolve, save_due};
 use crate::portal::PortalState;
 
 /// Тема пишется в файл не сразу: пипетка меняет цвет каждый кадр.
@@ -21,9 +22,9 @@ pub struct ThemeState {
     /// Поток портала: тема и акцент системы.
     watch: SystemWatch,
     /// Ответ портала: «ещё не ответил» и «недоступен» — для подсказок в окне.
-    pub portal: PortalState,
+    portal: PortalState,
     /// Что сообщила система о теме и акценте (из `portal`).
-    pub system: System,
+    system: System,
     /// Палитра, уже применённая к egui.
     applied: Option<Palette>,
     /// Когда записать изменённую тему.
@@ -31,7 +32,7 @@ pub struct ThemeState {
     /// О неудачной записи темы уже сказали.
     save_failed: bool,
     /// Вкладка варианта в карточке «Оформление»; `None` — вариант на экране.
-    pub tab: Option<Variant>,
+    tab: Option<Variant>,
 }
 
 impl ThemeState {
@@ -65,6 +66,39 @@ impl ThemeState {
     pub fn mode_chosen(&mut self) {
         self.forced = None;
         self.tab = None;
+    }
+
+    /// Что сообщила система о теме и акценте.
+    pub fn system(&self) -> &System {
+        &self.system
+    }
+
+    /// Строка о теме системы в карточке «Оформление».
+    pub fn note(&self) -> SystemNote {
+        SystemNote::of(&self.portal)
+    }
+
+    /// Почему портал недоступен (подсказка к строке); `None` — доступен или
+    /// ещё не ответил.
+    pub fn unavailable_reason(&self) -> Option<&str> {
+        match &self.portal {
+            PortalState::Unavailable(why) => Some(why),
+            _ => None,
+        }
+    }
+
+    /// Почему «Акцент как в системе» нельзя включить; `None` — можно.
+    pub fn system_accent_blocked(&self) -> Option<&'static str> {
+        system_accent_blocked(&self.portal)
+    }
+
+    /// Вкладка варианта в карточке «Оформление»; `None` — вариант на экране.
+    pub fn tab(&self) -> Option<Variant> {
+        self.tab
+    }
+
+    pub fn set_tab(&mut self, v: Variant) {
+        self.tab = Some(v);
     }
 
     /// Тема изменилась: записать её чуть позже.
