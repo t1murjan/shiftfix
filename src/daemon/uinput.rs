@@ -45,7 +45,7 @@ impl Injector {
         let dev = VirtualDevice::builder()
             .and_then(|b| b.name(OWN_KEYBOARD).input_id(id).with_keys(&keys))
             .and_then(evdev::uinput::VirtualDeviceBuilder::build)
-            .context("нет доступа к /dev/uinput — нужно udev-правило из install.sh")?;
+            .context("/dev/uinput недоступен — нужно udev-правило из install.sh")?;
         thread::sleep(Duration::from_millis(300)); // композитору нужно время, чтобы подхватить устройство
         Ok(Injector {
             dev,

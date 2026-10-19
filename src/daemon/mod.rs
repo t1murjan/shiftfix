@@ -153,8 +153,8 @@ fn first_scan(registry: &Arc<Registry>) -> Result<()> {
         // смотрим не на число открытых устройств, а на закрытые правами.
         if denied > 0 {
             bail!(
-                "нет доступа к {} устройствам в /dev/input — добавь себя в группу input \
-                 (sudo usermod -aG input $USER) и перезайди в систему",
+                "нет доступа к {} устройствам в /dev/input — добавьте себя в группу input \
+                 (sudo usermod -aG input $USER) и перезагрузитесь",
                 denied
             );
         }

@@ -88,10 +88,10 @@ fn input_devices(report: &mut Report, cfg: &Config) {
         report.ok(format!("клавиатур: {keyboards}"));
     } else if unreadable > 0 {
         report
-            .bad("нет доступа к /dev/input — sudo usermod -aG input $USER, затем перезагрузиться");
+            .bad("нет доступа к /dev/input — sudo usermod -aG input $USER, затем перезагрузитесь");
     } else {
         report.bad(
-            "клавиатуры не найдены — назначь роль вручную в shiftfix-gui, вкладка «Устройства»",
+            "клавиатуры не найдены — назначьте роль вручную в shiftfix-gui, вкладка «Устройства»",
         );
     }
 }
