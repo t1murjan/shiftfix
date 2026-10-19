@@ -8,11 +8,10 @@ use eframe::egui::{self, Color32};
 
 use crate::portal::{self, PortalState, Scheme};
 
-/// Что сообщила система (XDG Desktop Portal). По умолчанию — портала нет.
+/// Что сообщила система (XDG Desktop Portal). По умолчанию — ничего:
+/// портал не ответил, недоступен или не знает этих ключей.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct System {
-    /// Портал ответил.
-    pub available: bool,
     /// color-scheme: `Some(true)` — тёмная, `Some(false)` — светлая,
     /// `None` — предпочтения нет.
     pub dark: Option<bool>,
@@ -29,7 +28,6 @@ impl From<&PortalState> for System {
             return System::default();
         };
         System {
-            available: true,
             dark: a.scheme.and_then(|scheme| match scheme {
                 Scheme::Dark => Some(true),
                 Scheme::Light => Some(false),

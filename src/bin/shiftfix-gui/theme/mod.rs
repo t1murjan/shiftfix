@@ -91,7 +91,7 @@ pub fn unknown_palettes(t: &ThemeSettings) -> Vec<&str> {
 /// Действует ли сейчас акцент системы: только в режиме «как в системе»,
 /// с `system_accent` и если система его сообщает.
 pub fn system_accent_active(t: &ThemeSettings, sys: &System, mode: ThemeMode) -> bool {
-    mode == ThemeMode::System && t.system_accent && sys.available && sys.accent.is_some()
+    mode == ThemeMode::System && t.system_accent && sys.accent.is_some()
 }
 
 /// Итоговые цвета окна. `forced` — режим из `--theme`, он перекрывает `t.mode`.
@@ -102,7 +102,7 @@ pub fn resolve(t: &ThemeSettings, sys: &System, forced: Option<ThemeMode>) -> Pa
     let dark = match mode {
         ThemeMode::Light => false,
         ThemeMode::Dark => true,
-        ThemeMode::System => !sys.available || sys.dark.unwrap_or(true),
+        ThemeMode::System => sys.dark.unwrap_or(true),
     };
     variant_palette(t, sys, mode, Variant::of(dark))
 }
