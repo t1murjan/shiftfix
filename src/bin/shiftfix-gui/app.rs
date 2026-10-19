@@ -248,6 +248,28 @@ impl App {
     // ─── отрисовка ───
 
     fn sidebar(&mut self, ui: &mut Ui, p: &Palette) {
+        self.brand(ui, p);
+        ui.add_space(22.0);
+        for page in Page::ALL {
+            if nav_item(ui, p, page.icon(), page.title(), self.page == page).clicked() {
+                self.page = page;
+            }
+            ui.add_space(2.0);
+        }
+        // Низ панели раскладывается снизу вверх: режим темы, над ним версия
+        // и состояние службы.
+        ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
+            self.theme_buttons(ui, p);
+            ui.add_space(6.0);
+            self.version_link(ui, p);
+            ui.add_space(4.0);
+            let (text, color) = state_label(self.state(), p);
+            widgets::pill(ui, text, color, color.gamma_multiply(0.14));
+        });
+    }
+
+    /// Значок и название программы над вкладками.
+    fn brand(&self, ui: &mut Ui, p: &Palette) {
         ui.horizontal(|ui| {
             ui.add(Image::from_texture(SizedTexture::new(
                 self.logo.id(),
@@ -263,69 +285,65 @@ impl App {
                 );
             });
         });
-        ui.add_space(22.0);
-        for page in Page::ALL {
-            if nav_item(ui, p, page.icon(), page.title(), self.page == page).clicked() {
-                self.page = page;
-            }
-            ui.add_space(2.0);
-        }
-        ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-            ui.horizontal(|ui| {
-                let current = self.theme_mode();
-                for (mode, icon, hint) in [
-                    (ThemeMode::System, icons::CIRCLE_HALF, "Тема как в системе"),
-                    (ThemeMode::Light, icons::SUN, "Светлая тема"),
-                    (ThemeMode::Dark, icons::MOON, "Тёмная тема"),
-                ] {
-                    let selected = current == mode;
-                    let text =
-                        widgets::icon(icon, 16.0).color(if selected { p.accent } else { p.weak });
-                    let button = egui::Button::new(text)
-                        .fill(if selected {
-                            p.accent.gamma_multiply(0.16)
-                        } else {
-                            Color32::TRANSPARENT
-                        })
-                        .stroke(Stroke::NONE)
-                        .corner_radius(CornerRadius::same(8))
-                        .min_size(vec2(34.0, 30.0));
-                    if ui.add(button).on_hover_text(hint).clicked() {
-                        self.set_mode(mode);
-                    }
+    }
+
+    /// Режим темы — тремя значками.
+    fn theme_buttons(&mut self, ui: &mut Ui, p: &Palette) {
+        ui.horizontal(|ui| {
+            let current = self.theme_mode();
+            for (mode, icon, hint) in [
+                (ThemeMode::System, icons::CIRCLE_HALF, "Тема как в системе"),
+                (ThemeMode::Light, icons::SUN, "Светлая тема"),
+                (ThemeMode::Dark, icons::MOON, "Тёмная тема"),
+            ] {
+                let selected = current == mode;
+                let text =
+                    widgets::icon(icon, 16.0).color(if selected { p.accent } else { p.weak });
+                let button = egui::Button::new(text)
+                    .fill(if selected {
+                        p.accent.gamma_multiply(0.16)
+                    } else {
+                        Color32::TRANSPARENT
+                    })
+                    .stroke(Stroke::NONE)
+                    .corner_radius(CornerRadius::same(8))
+                    .min_size(vec2(34.0, 30.0));
+                if ui.add(button).on_hover_text(hint).clicked() {
+                    self.set_mode(mode);
                 }
-            });
-            ui.add_space(6.0);
-            let version = self.status().map_or_else(
-                || format!("версия {VERSION}"),
-                |s| format!("служба {} · pid {}", s.version, s.pid),
-            );
-            let differ = self
-                .status()
-                .is_some_and(|s| versions_differ(VERSION, &s.version));
-            let (color, hint) = if differ {
-                (
-                    p.warning,
-                    "Версии окна и службы различаются — подробнее в «О программе»",
-                )
-            } else {
-                (p.weak, "О программе")
-            };
-            let label = egui::Label::new(RichText::new(version).size(12.0).color(color))
-                .sense(Sense::click());
-            let clicked = ui
-                .add(label)
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text(hint)
-                .clicked();
-            if clicked {
-                self.page = Page::Help;
-                self.about_focus = true;
             }
-            ui.add_space(4.0);
-            let (text, color) = state_label(self.state(), p);
-            widgets::pill(ui, text, color, color.gamma_multiply(0.14));
         });
+    }
+
+    /// Версия службы (или окна, пока служба не отвечает); щелчок открывает
+    /// «О программе». Версии различаются — подсвечена.
+    fn version_link(&mut self, ui: &mut Ui, p: &Palette) {
+        let version = self.status().map_or_else(
+            || format!("версия {VERSION}"),
+            |s| format!("служба {} · pid {}", s.version, s.pid),
+        );
+        let differ = self
+            .status()
+            .is_some_and(|s| versions_differ(VERSION, &s.version));
+        let (color, hint) = if differ {
+            (
+                p.warning,
+                "Версии окна и службы различаются — подробнее в «О программе»",
+            )
+        } else {
+            (p.weak, "О программе")
+        };
+        let label =
+            egui::Label::new(RichText::new(version).size(12.0).color(color)).sense(Sense::click());
+        let clicked = ui
+            .add(label)
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(hint)
+            .clicked();
+        if clicked {
+            self.page = Page::Help;
+            self.about_focus = true;
+        }
     }
 }
 
