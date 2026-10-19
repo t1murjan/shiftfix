@@ -141,21 +141,21 @@ pub fn run(path: PathBuf, cfg: Config) -> Result<()> {
 /// Первый обход /dev/input. Ошибка — если клавиатуры, скорее всего, есть, но
 /// закрыты правами.
 fn first_scan(registry: &Arc<Registry>) -> Result<()> {
-    let mut stats = registry.scan();
-    if registry.keyboard_count() == 0 && stats.denied > 0 {
+    let mut denied = registry.scan();
+    if registry.keyboard_count() == 0 && denied > 0 {
         // Узел, который udev только что создал, бывает недоступен долю секунды.
         thread::sleep(Duration::from_secs(1));
-        stats = registry.scan();
+        denied = registry.scan();
     }
     if registry.keyboard_count() == 0 {
         // Часть устройств закрыта — клавиатуры, скорее всего, среди них. Открыться
         // могут и чужие (джойстики systemd отдаёт пользователю сам), поэтому
-        // смотрим не на opened, а на denied.
-        if stats.denied > 0 {
+        // смотрим не на число открытых устройств, а на закрытые правами.
+        if denied > 0 {
             bail!(
                 "нет доступа к {} устройствам в /dev/input — добавь себя в группу input \
                  (sudo usermod -aG input $USER) и перезайди в систему",
-                stats.denied
+                denied
             );
         }
         // Bluetooth- и беспроводные клавиатуры подключаются и после входа.

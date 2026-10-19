@@ -72,13 +72,6 @@ pub enum Event {
     },
 }
 
-/// Итог обхода /dev/input: сколько устройств открылось и сколько — нет прав.
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct ScanStats {
-    pub opened: usize,
-    pub denied: usize,
-}
-
 /// Все устройства ввода и потоки их чтения.
 pub(crate) struct Registry {
     entries: Mutex<HashMap<PathBuf, Entry>>,
@@ -120,36 +113,33 @@ impl Registry {
             .max(1)
     }
 
-    /// Найти новые устройства, забыть отключённые.
-    pub fn scan(self: &Arc<Self>) -> ScanStats {
+    /// Найти новые устройства, забыть отключённые. Возвращает, сколько
+    /// устройств не открылось из-за прав.
+    pub fn scan(self: &Arc<Self>) -> usize {
         let _scanning = self.scanning.lock().expect("scan");
         self.scan_locked()
     }
 
     /// Проход по /dev/input; `scanning` уже взят.
-    fn scan_locked(self: &Arc<Self>) -> ScanStats {
+    fn scan_locked(self: &Arc<Self>) -> usize {
         let nodes = event_nodes();
         self.entries().retain(|path, e| e.still_valid(path));
-        let mut stats = ScanStats::default();
+        let mut denied = 0;
         for path in nodes {
             if self.entries().contains_key(&path) {
-                stats.opened += 1;
                 continue;
             }
             let Ok(meta) = fs::metadata(&path) else {
                 continue;
             };
             match RawDevice::open(&path) {
-                Ok(dev) => {
-                    stats.opened += 1;
-                    self.add(path, (meta.ctime(), meta.ctime_nsec()), dev);
-                }
+                Ok(dev) => self.add(path, (meta.ctime(), meta.ctime_nsec()), dev),
                 // Нет прав (или udev ещё не выставил группу новому узлу) — попробуем позже.
-                Err(err) if err.kind() == ErrorKind::PermissionDenied => stats.denied += 1,
+                Err(err) if err.kind() == ErrorKind::PermissionDenied => denied += 1,
                 Err(_) => {}
             }
         }
-        stats
+        denied
     }
 
     fn add(self: &Arc<Self>, path: PathBuf, stamp: (i64, i64), dev: RawDevice) {
