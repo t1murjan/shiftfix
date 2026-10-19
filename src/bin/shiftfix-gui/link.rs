@@ -15,7 +15,7 @@ use shiftfix::devices::{self, DeviceInfo};
 use shiftfix::ipc::{self, Request, Status};
 use shiftfix::service;
 use shiftfix::sys::env;
-use shiftfix::sys::proc;
+use shiftfix::sys::{lock, proc};
 
 use crate::toast::{Toast, ToastKind};
 
@@ -337,7 +337,10 @@ fn run_without_systemd(action: ServiceAction) -> Result<String> {
         ServiceAction::Start | ServiceAction::Restart => {
             if matches!(action, ServiceAction::Restart) {
                 let _ = ipc::request(&Request::Quit);
-                thread::sleep(Duration::from_millis(500));
+                // Тот же файл блокировки, что берёт служба (daemon::run): пока
+                // прежняя его держит, новая сразу выйдет с «уже запущен».
+                let lock = env::runtime_dir().join("shiftfix.lock");
+                wait_for_unlock(&lock, Duration::from_secs(5))?;
             }
             proc::spawn_detached(daemon_binary(), &[])?;
             Ok("Служба запущена".into())
@@ -358,6 +361,19 @@ fn run_without_systemd(action: ServiceAction) -> Result<String> {
             Ok("Автозапуск выключен".into())
         }
     }
+}
+
+/// Ждать, пока блокировку `path` отпустят.
+fn wait_for_unlock(path: &Path, timeout: Duration) -> Result<()> {
+    let deadline = Instant::now() + timeout;
+    // Взятая блокировка тут же отпускается: файл закрывается в конце выражения.
+    while lock::try_lock(path)?.is_none() {
+        if Instant::now() >= deadline {
+            bail!("прежняя служба не остановилась за {} с", timeout.as_secs());
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    Ok(())
 }
 
 /// Проверка системы (`shiftfix --check`) в фоне.
@@ -440,5 +456,23 @@ mod tests {
             parse_journal(r#"{"MESSAGE":"выход","PRIORITY":"6"}"#).1,
             None
         );
+    }
+
+    #[test]
+    fn restart_waits_for_old_service_lock() {
+        let path =
+            std::env::temp_dir().join(format!("shiftfix-gui-test-{}.lock", std::process::id()));
+        let held = lock::try_lock(&path).unwrap().expect("блокировка свободна");
+        assert!(wait_for_unlock(&path, Duration::from_millis(100)).is_err());
+
+        let start = Instant::now();
+        let release = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(200));
+            drop(held);
+        });
+        wait_for_unlock(&path, Duration::from_secs(5)).unwrap();
+        assert!(start.elapsed() >= Duration::from_millis(200));
+        release.join().unwrap();
+        let _ = fs::remove_file(&path);
     }
 }
