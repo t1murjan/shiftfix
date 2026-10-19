@@ -301,13 +301,16 @@ const GRUVBOX: PaletteDef = PaletteDef {
 /// перебирают этот список. Первая — запасная для неизвестного имени.
 pub const PALETTES: &[PaletteDef] = &[BREEZE, NORD, CATPPUCCIN, GRUVBOX];
 
-/// Палитра по имени из конфига; неизвестное имя — Breeze.
+/// Палитра по имени из конфига; неизвестное имя — Breeze (о нём при запуске
+/// окна предупреждает `unknown_palettes`).
 pub fn find(id: &str) -> &'static PaletteDef {
+    lookup(id).unwrap_or(&PALETTES[0])
+}
+
+/// Палитра по имени из конфига; `None` — такой нет.
+pub fn lookup(id: &str) -> Option<&'static PaletteDef> {
     let id = id.trim();
-    PALETTES
-        .iter()
-        .find(|def| def.id.eq_ignore_ascii_case(id))
-        .unwrap_or(&PALETTES[0])
+    PALETTES.iter().find(|def| def.id.eq_ignore_ascii_case(id))
 }
 
 #[cfg(test)]
