@@ -5,7 +5,7 @@ use egui_phosphor::regular as icons;
 
 use crate::app::App;
 use crate::format::clock;
-use crate::link::{self, ServiceAction};
+use crate::link::ServiceAction;
 use crate::theme::Palette;
 use crate::toast::ToastKind;
 use crate::widgets::{self, card, card_title, page_header};
@@ -21,23 +21,20 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
 
     card(ui, p, |ui| {
         ui.horizontal_wrapped(|ui| {
-            let label = if app.checking {
+            let running = app.check.running();
+            let label = if running {
                 "Проверяю…"
             } else {
                 "Проверить систему"
             };
             if ui
-                .add_enabled_ui(!app.checking, |ui| {
+                .add_enabled_ui(!running, |ui| {
                     widgets::button(ui, p, icons::STETHOSCOPE, label, true)
                 })
                 .inner
                 .clicked()
             {
-                app.checking = true;
-                if let Ok(mut slot) = app.check_output.lock() {
-                    *slot = None;
-                }
-                link::run_check(app.check_output.clone(), ui.ctx().clone());
+                app.check.start(ui.ctx());
             }
             if app.status().is_some() {
                 if widgets::button(
@@ -79,9 +76,7 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
     });
     ui.add_space(12.0);
 
-    let output = app.check_output.lock().ok().and_then(|o| o.clone());
-    if let Some(text) = output {
-        app.checking = false;
+    if let Some(text) = app.check.output() {
         card(ui, p, |ui| {
             card_title(ui, p, icons::LIST_CHECKS, "Проверка системы");
             for line in text.lines() {

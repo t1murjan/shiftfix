@@ -360,28 +360,61 @@ fn run_without_systemd(action: ServiceAction) -> Result<String> {
     }
 }
 
-/// `shiftfix --check` в фоне.
-pub fn run_check(out: Arc<Mutex<Option<String>>>, ctx: egui::Context) {
-    thread::spawn(move || {
-        let text = match proc::run(
-            &daemon_binary().to_string_lossy(),
-            &["--check"],
-            Duration::from_secs(20),
-        ) {
-            Ok(o) => {
-                let mut text = o.text();
-                if !o.stderr.is_empty() {
-                    text.push_str(&o.stderr);
+/// Проверка системы (`shiftfix --check`) в фоне.
+#[derive(Clone, Default)]
+pub struct Check(Arc<Mutex<CheckState>>);
+
+#[derive(Default)]
+enum CheckState {
+    #[default]
+    NotRun,
+    Running,
+    Done(String),
+}
+
+impl Check {
+    pub fn start(&self, ctx: &egui::Context) {
+        self.set(CheckState::Running);
+        let (check, ctx) = (self.clone(), ctx.clone());
+        thread::spawn(move || {
+            let text = match proc::run(
+                &daemon_binary().to_string_lossy(),
+                &["--check"],
+                Duration::from_secs(20),
+            ) {
+                Ok(o) => {
+                    let mut text = o.text();
+                    if !o.stderr.is_empty() {
+                        text.push_str(&o.stderr);
+                    }
+                    text
                 }
-                text
-            }
-            Err(err) => format!("Не удалось запустить проверку: {err:#}"),
-        };
-        if let Ok(mut slot) = out.lock() {
-            *slot = Some(text);
+                Err(err) => format!("Не удалось запустить проверку: {err:#}"),
+            };
+            check.set(CheckState::Done(text));
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn running(&self) -> bool {
+        self.0
+            .lock()
+            .is_ok_and(|s| matches!(*s, CheckState::Running))
+    }
+
+    /// Вывод последней проверки; `None` — ещё не запускали или она идёт.
+    pub fn output(&self) -> Option<String> {
+        match &*self.0.lock().ok()? {
+            CheckState::Done(text) => Some(text.clone()),
+            _ => None,
         }
-        ctx.request_repaint();
-    });
+    }
+
+    fn set(&self, state: CheckState) {
+        if let Ok(mut s) = self.0.lock() {
+            *s = state;
+        }
+    }
 }
 
 #[cfg(test)]

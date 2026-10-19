@@ -2,7 +2,6 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 
 use eframe::egui::{
     self, Align, Align2, Color32, CornerRadius, Frame, Image, Layout, Margin, RichText, ScrollArea,
@@ -15,7 +14,7 @@ use shiftfix::ipc::{Request, Status};
 
 use crate::edit::SettingsEdit;
 use crate::format::versions_differ;
-use crate::link::{Link, ServiceAction, Snapshot};
+use crate::link::{Check, Link, ServiceAction, Snapshot};
 use crate::pages;
 use crate::theme::{self, Palette};
 use crate::toast::{Toast, ToastKind, Toasts};
@@ -91,8 +90,7 @@ pub struct App {
     /// Правка config.toml окна: отсюда читаются настройки и тема, сюда же пишутся.
     pub settings: SettingsEdit,
     pub try_text: String,
-    pub check_output: Arc<Mutex<Option<String>>>,
-    pub checking: bool,
+    pub check: Check,
     logo: TextureHandle,
     /// Тема окна: портал, применённая палитра, отложенная запись.
     pub theme: theme::ThemeState,
@@ -125,8 +123,7 @@ impl App {
             theme: theme::ThemeState::new(settings.path().to_owned(), forced_mode, watch),
             settings,
             try_text: String::new(),
-            check_output: Arc::default(),
-            checking: false,
+            check: Check::default(),
             logo,
             about_focus: false,
         }
