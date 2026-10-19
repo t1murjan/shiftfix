@@ -104,3 +104,9 @@ systemctl --user stop shiftfix; shiftfix --debug
 ## Новая версия
 
 Версия одна — в `Cargo.toml`. Поднимая её, выполните `cargo update -w --offline`: иначе `cargo build --locked` в `install.sh` упадёт. Что вошло — в [CHANGELOG.md](CHANGELOG.md).
+
+Как выпустить:
+
+1. Поднять версию в `Cargo.toml` и выполнить `cargo update -w --offline`.
+2. В [CHANGELOG.md](CHANGELOG.md) переименовать «Не выпущено» в `## X.Y.Z — дата` и над подразделами написать короткое описание: абзац и несколько пунктов о главном. Это описание станет текстом релиза на GitHub.
+3. После мерджа в `main` поставить тег и отправить его: `git tag vX.Y.Z && git push origin vX.Y.Z`. Задача `release` (`.github/workflows/release.yml`) проверит, что тег совпадает с версией в `Cargo.toml`, и создаст релиз «shiftfix X.Y.Z» с этим описанием и ссылкой на полный список изменений.
