@@ -229,16 +229,18 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
                 "Через запятую, например: us, ru",
                 220.0,
                 |ui| {
-                    let mut text = s.hotkey_layouts.join(", ");
+                    // Поле показывает набранный текст, пока он даёт тот же
+                    // список: иначе запятая в конце пропадала бы на следующем
+                    // кадре и раскладку в конец было не дописать.
+                    let id = egui::Id::new("hotkey_layouts_draft");
+                    let draft: Option<String> = ui.data(|d| d.get_temp(id));
+                    let mut text = layouts_text(draft, &s.hotkey_layouts);
                     if ui
                         .add(egui::TextEdit::singleline(&mut text).desired_width(200.0))
                         .changed()
                     {
-                        s.hotkey_layouts = text
-                            .split(',')
-                            .map(|l| l.trim().to_owned())
-                            .filter(|l| !l.is_empty())
-                            .collect();
+                        s.hotkey_layouts = parse_layouts(&text);
+                        ui.data_mut(|d| d.insert_temp(id, text));
                     }
                 },
             );
@@ -338,4 +340,37 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             }
         });
     });
+}
+
+/// «us, ru» → `["us", "ru"]`; пустые между запятыми пропускаются.
+fn parse_layouts(text: &str) -> Vec<String> {
+    text.split(',')
+        .map(|l| l.trim().to_owned())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+/// Текст поля раскладок: черновик, если он ещё описывает `layouts`
+/// (их не сменили «Отменить» или «По умолчанию»), иначе — из списка.
+fn layouts_text(draft: Option<String>, layouts: &[String]) -> String {
+    draft
+        .filter(|d| parse_layouts(d) == layouts)
+        .unwrap_or_else(|| layouts.join(", "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn layouts_field_keeps_trailing_comma() {
+        let layouts = parse_layouts("us, ru,");
+        assert_eq!(layouts, ["us", "ru"]);
+        // Запятая в конце остаётся, можно дописать раскладку.
+        assert_eq!(layouts_text(Some("us, ru,".into()), &layouts), "us, ru,");
+        // Список сменили не в поле — поле показывает его.
+        let reverted = vec!["us".to_owned()];
+        assert_eq!(layouts_text(Some("us, ru,".into()), &reverted), "us");
+        assert_eq!(layouts_text(None, &layouts), "us, ru");
+    }
 }
