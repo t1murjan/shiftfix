@@ -204,14 +204,23 @@ fn describe(err: &zbus::Error) -> String {
     }
 }
 
-/// Оба ключа оформления. Ошибка — портал недоступен.
+/// Оба ключа оформления. Ошибка чтения color-scheme — портал недоступен;
+/// accent-color — только без акцента системы: тема уже прочитана и важнее.
 fn read_all(proxy: &Proxy<'_>) -> zbus::Result<Appearance> {
     let mut legacy = false;
     let mut appearance = Appearance::default();
-    for key in [SCHEME_KEY, ACCENT_KEY] {
-        if let Some(value) = read_key(proxy, &mut legacy, key)? {
-            appearance.set(key, &value);
+    if let Some(value) = read_key(proxy, &mut legacy, SCHEME_KEY)? {
+        appearance.set(SCHEME_KEY, &value);
+    }
+    match read_key(proxy, &mut legacy, ACCENT_KEY) {
+        Ok(Some(value)) => {
+            appearance.set(ACCENT_KEY, &value);
         }
+        Ok(None) => {}
+        Err(err) => log::warn!(
+            "портал настроек: {ACCENT_KEY} не прочитан ({}) — без акцента системы",
+            describe(&err)
+        ),
     }
     Ok(appearance)
 }
@@ -443,6 +452,7 @@ mod tests {
         #[zbus(error)]
         ZBus(zbus::Error),
         NotFound(String),
+        Failed(String),
     }
 
     /// Значения поддельного портала.
@@ -450,10 +460,15 @@ mod tests {
     struct Values {
         scheme: Option<u32>,
         accent: Option<(f64, f64, f64)>,
+        /// Чтение accent-color кончается ошибкой (не NotFound).
+        accent_fails: bool,
     }
 
     impl Values {
         fn get(&self, namespace: &str, key: &str) -> Result<Value<'static>, PortalError> {
+            if self.accent_fails && (namespace, key) == (NS, ACCENT_KEY) {
+                return Err(PortalError::Failed("accent-color сломан".into()));
+            }
             let value = match (namespace, key) {
                 (NS, SCHEME_KEY) => self.scheme.map(Value::U32),
                 (NS, ACCENT_KEY) => self.accent.map(|(r, g, b)| accent_value(r, g, b)),
@@ -552,6 +567,7 @@ mod tests {
         let server = bus.serve(FakeSettings(Values {
             scheme: Some(1),
             accent: Some((1.0, 0.5, 0.0)),
+            ..Values::default()
         }));
         let rx = bus.watch();
         assert_eq!(
@@ -604,7 +620,7 @@ mod tests {
         // Только Read (ответ завёрнут дважды) и без accent-color (NotFound).
         let _server = bus.serve(OldSettings(Values {
             scheme: Some(2),
-            accent: None,
+            ..Values::default()
         }));
         let rx = bus.watch();
         assert_eq!(
@@ -622,6 +638,24 @@ mod tests {
         let _server = bus.serve(FakeSettings(Values::default()));
         let rx = bus.watch();
         assert_eq!(rx.recv_timeout(WAIT).unwrap(), ready(None, None));
+    }
+
+    #[test]
+    fn broken_accent_keeps_scheme() {
+        let Some(bus) = Bus::start() else {
+            return skip("нет dbus-daemon");
+        };
+        // Ошибка accent-color — только без акцента, тема системы остаётся.
+        let _server = bus.serve(FakeSettings(Values {
+            scheme: Some(2),
+            accent_fails: true,
+            ..Values::default()
+        }));
+        let rx = bus.watch();
+        assert_eq!(
+            rx.recv_timeout(WAIT).unwrap(),
+            ready(Some(Scheme::Light), None)
+        );
     }
 
     #[test]
