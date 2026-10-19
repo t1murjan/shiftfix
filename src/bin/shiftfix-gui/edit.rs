@@ -92,10 +92,15 @@ impl SettingsEdit {
     }
 
     /// Записать правки с экрана — только изменённые параметры: правки файла
-    /// руками в остальных остаются.
+    /// руками в остальных остаются и после записи видны на экране.
     pub fn save(&mut self) -> Result<()> {
         self.read()?;
         self.current.save_changes(&self.saved, &self.path)?;
+        // Тема — с экрана, как в `reload`: окно пишет её в файл с задержкой.
+        if let Ok(on_disk) = Settings::load(&self.path) {
+            let theme = std::mem::take(&mut self.current.theme);
+            self.current = Settings { theme, ..on_disk };
+        }
         self.saved = self.current.clone();
         Ok(())
     }
@@ -249,9 +254,20 @@ mod tests {
         edit.set_role("1:2 Pad", Some(Role::Mouse)).unwrap();
         assert!(fs::read_to_string(&path).unwrap().starts_with(by_hand));
 
+        // Тему окно пишет в файл позже: «Сохранить» её с экрана не убирает.
+        edit.set_theme(ThemeSettings {
+            dark_accent: "#123456".into(),
+            ..ThemeSettings::default()
+        });
         edit.current.key_delay_ms = 9;
         edit.save().unwrap();
         assert!(!edit.dirty());
+        // На экране — правки руками, а не значения, прочитанные до них.
+        assert_eq!(
+            (edit.current.double_tap_ms, edit.current.max_word_len),
+            (360, 20)
+        );
+        assert_eq!(edit.current.theme.dark_accent, "#123456");
         let on_disk = Settings::load(&path).unwrap();
         assert_eq!(
             (
