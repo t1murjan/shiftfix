@@ -166,6 +166,10 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             app.set_theme(|t| theme::set_own_accent(t, variant, own_on));
             forget_hex_drafts(ui);
         }
+        // Дальше — уже с акцентом, который только что записал переключатель:
+        // со старым пустым поле на кадр показало бы «неверный цвет».
+        let t = app.settings.current.theme.clone();
+        let own = variant.accent(&t);
 
         let shown = theme::variant_palette(&t, &app.theme.system, mode, variant);
         let mut message = None;
