@@ -107,8 +107,8 @@ impl SystemWatch {
 pub enum SystemNote {
     /// Портал ещё не ответил.
     Waiting,
-    /// Портала нет: тёмная.
-    Unavailable,
+    /// Портала нет или он не знает color-scheme: тёмная.
+    NotReported,
     /// Портал есть, но тема в системе не выбрана: тёмная.
     NoPreference,
     Dark,
@@ -119,11 +119,12 @@ impl SystemNote {
     pub fn of(portal: &PortalState) -> SystemNote {
         match portal {
             PortalState::Pending => SystemNote::Waiting,
-            PortalState::Unavailable(_) => SystemNote::Unavailable,
+            PortalState::Unavailable(_) => SystemNote::NotReported,
             PortalState::Ready(a) => match a.scheme {
                 Some(Scheme::Dark) => SystemNote::Dark,
                 Some(Scheme::Light) => SystemNote::Light,
-                Some(Scheme::NoPreference) | None => SystemNote::NoPreference,
+                Some(Scheme::NoPreference) => SystemNote::NoPreference,
+                None => SystemNote::NotReported,
             },
         }
     }
@@ -131,7 +132,7 @@ impl SystemNote {
     pub fn text(self) -> &'static str {
         match self {
             SystemNote::Waiting => "Ждём ответа системы…",
-            SystemNote::Unavailable => "Система не сообщает тему — используется тёмная.",
+            SystemNote::NotReported => "Система не сообщает тему — используется тёмная.",
             SystemNote::NoPreference => "В системе тема не выбрана — используется тёмная.",
             SystemNote::Dark => "Сейчас в системе тёмная тема.",
             SystemNote::Light => "Сейчас в системе светлая тема.",
@@ -140,7 +141,7 @@ impl SystemNote {
 
     /// Тема выбрана не системой, а запасная.
     pub fn fallback(self) -> bool {
-        matches!(self, SystemNote::Unavailable | SystemNote::NoPreference)
+        matches!(self, SystemNote::NotReported | SystemNote::NoPreference)
     }
 }
 
@@ -169,10 +170,11 @@ mod tests {
             (PortalState::Pending, SystemNote::Waiting, None),
             (
                 PortalState::Unavailable("нет шины".into()),
-                SystemNote::Unavailable,
+                SystemNote::NotReported,
                 Some(()),
             ),
-            (ready(None, None), SystemNote::NoPreference, Some(())),
+            // Портал есть, но color-scheme не знает: тему система не сообщает.
+            (ready(None, None), SystemNote::NotReported, Some(())),
             (
                 ready(Some(Scheme::NoPreference), Some([1, 2, 3])),
                 SystemNote::NoPreference,
@@ -194,11 +196,11 @@ mod tests {
             );
         }
         // Запасная тёмная — только когда система тему не сообщила.
-        assert!(SystemNote::Unavailable.fallback());
+        assert!(SystemNote::NotReported.fallback());
         assert!(SystemNote::NoPreference.fallback());
         for note in [SystemNote::Waiting, SystemNote::Dark, SystemNote::Light] {
             assert!(!note.fallback(), "{note:?}");
         }
-        assert!(SystemNote::Unavailable.text().contains("тёмная"));
+        assert!(SystemNote::NotReported.text().contains("тёмная"));
     }
 }
