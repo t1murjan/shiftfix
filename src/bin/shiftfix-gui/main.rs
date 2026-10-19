@@ -22,6 +22,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Duration;
 
+use anyhow::{Result, bail};
 use eframe::egui;
 use shiftfix::config::ThemeMode;
 use shiftfix::sys::{lock, paths, proc};
@@ -122,50 +123,63 @@ fn listen_for_raise(ctx: egui::Context) -> Receiver<app::Page> {
     raised
 }
 
-fn main() -> eframe::Result {
-    shiftfix::logbuf::init(false);
-    let mut page = None;
-    let mut forced_theme = None;
-    let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next() {
+#[derive(Debug, PartialEq, Eq)]
+enum Command {
+    /// Открыть окно: вкладка из `--page`, режим оформления из `--theme`.
+    Run {
+        page: Option<app::Page>,
+        theme: Option<ThemeMode>,
+    },
+    Help,
+    Version,
+}
+
+/// Параметры без имени программы.
+fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command> {
+    let mut it = args.into_iter();
+    let (mut page, mut theme) = (None, None);
+    while let Some(arg) = it.next() {
         match arg.as_str() {
             "--page" => {
-                let name = args.next().unwrap_or_default();
-                match app::Page::parse(name.trim()) {
-                    Some(p) => page = Some(p),
-                    None => {
-                        eprintln!("shiftfix-gui: нет вкладки «{name}»\n\n{USAGE}");
-                        std::process::exit(2);
-                    }
-                }
+                let name = it.next().unwrap_or_default();
+                let Some(p) = app::Page::parse(name.trim()) else {
+                    bail!("нет вкладки «{name}»");
+                };
+                page = Some(p);
             }
-            "--theme" => match args
-                .next()
-                .as_deref()
-                .map(str::trim)
-                .and_then(ThemeMode::parse)
-            {
-                Some(t) => forced_theme = Some(t),
-                None => {
-                    eprintln!("{USAGE}");
-                    std::process::exit(2);
-                }
-            },
-            "-h" | "--help" => {
-                print!("{USAGE}");
-                return Ok(());
+            "--theme" => {
+                let name = it.next().unwrap_or_default();
+                let Some(t) = ThemeMode::parse(name.trim()) else {
+                    bail!("нет темы «{name}»");
+                };
+                theme = Some(t);
             }
-            // До блокировки и окна: работает и при открытом окне, и без графики.
-            "-V" | "--version" => {
-                println!("shiftfix-gui {}", app::VERSION);
-                return Ok(());
-            }
-            other => {
-                eprintln!("shiftfix-gui: неизвестный параметр {other}\n\n{USAGE}");
-                std::process::exit(2);
-            }
+            "-h" | "--help" => return Ok(Command::Help),
+            "-V" | "--version" => return Ok(Command::Version),
+            other => bail!("неизвестный параметр {other}"),
         }
     }
+    Ok(Command::Run { page, theme })
+}
+
+fn main() -> eframe::Result {
+    shiftfix::logbuf::init(false);
+    let (page, forced_theme) = match parse_args(std::env::args().skip(1)) {
+        Ok(Command::Run { page, theme }) => (page, theme),
+        Ok(Command::Help) => {
+            print!("{USAGE}");
+            return Ok(());
+        }
+        // До блокировки и окна: работает и при открытом окне, и без графики.
+        Ok(Command::Version) => {
+            println!("shiftfix-gui {}", app::VERSION);
+            return Ok(());
+        }
+        Err(err) => {
+            eprintln!("shiftfix-gui: {err}\n\n{USAGE}");
+            std::process::exit(2);
+        }
+    };
 
     // winit паникует, а не возвращает ошибку, когда нет нужной библиотеки
     // (например, libxkbcommon-x11): об этом тоже надо сказать.
@@ -243,6 +257,48 @@ fn main() -> eframe::Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse(args: &[&str]) -> Result<Command> {
+        parse_args(args.iter().map(|arg| arg.to_string()))
+    }
+
+    fn error(args: &[&str]) -> String {
+        parse(args).expect_err("ожидалась ошибка").to_string()
+    }
+
+    #[test]
+    fn arguments() {
+        let run = |page, theme| Command::Run { page, theme };
+        assert_eq!(parse(&[]).unwrap(), run(None, None));
+        assert_eq!(
+            parse(&["--page", "help", "--theme", "light"]).unwrap(),
+            run(Some(app::Page::Help), Some(ThemeMode::Light))
+        );
+        assert_eq!(
+            parse(&["--theme", " dark "]).unwrap(),
+            run(None, Some(ThemeMode::Dark))
+        );
+        for (arg, command) in [
+            ("-h", Command::Help),
+            ("--help", Command::Help),
+            ("-V", Command::Version),
+            ("--version", Command::Version),
+        ] {
+            assert_eq!(parse(&["--page", "log", arg]).unwrap(), command, "{arg}");
+        }
+    }
+
+    #[test]
+    fn mistakes() {
+        assert_eq!(error(&["--page", "nope"]), "нет вкладки «nope»");
+        assert_eq!(error(&["--page"]), "нет вкладки «»");
+        assert_eq!(error(&["--theme", "x"]), "нет темы «x»");
+        assert_eq!(error(&["--bogus"]), "неизвестный параметр --bogus");
+        assert_eq!(
+            error(&["--bogus", "--help"]),
+            "неизвестный параметр --bogus"
+        );
+    }
 
     #[test]
     fn raise_carries_page() {
