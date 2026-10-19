@@ -16,6 +16,8 @@ use std::time::Instant;
 
 use shiftfix::config::{ThemeMode, ThemeSettings};
 
+use palettes::lookup;
+
 pub use color::{
     HexCommit, accent_readable, best_on, format_hex, hex_commit, knob_on, on_accent, parse_hex,
 };
@@ -74,6 +76,16 @@ impl Variant {
             Variant::Dark => &mut t.dark_accent,
         }
     }
+}
+
+/// Имена палитр из `[theme]`, которых нет среди встроенных: вместо них окно
+/// показывает Breeze, а при запуске пишет о них в журнал.
+pub fn unknown_palettes(t: &ThemeSettings) -> Vec<&str> {
+    [Variant::Light, Variant::Dark]
+        .into_iter()
+        .map(|v| v.palette_id(t))
+        .filter(|id| lookup(id).is_none())
+        .collect()
 }
 
 /// Действует ли сейчас акцент системы: только в режиме «как в системе»,

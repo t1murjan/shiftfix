@@ -122,6 +122,9 @@ impl App {
         let link = Link::start(ctx, toast_tx, settings.path().to_owned());
         let mut theme = settings.current.theme.clone();
         theme::migrate_legacy(settings.path(), &mut theme);
+        for id in theme::unknown_palettes(&theme) {
+            log::warn!("[theme]: неизвестная палитра «{id}» — вместо неё Breeze");
+        }
         settings.set_theme(theme);
         App {
             page,

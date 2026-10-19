@@ -351,3 +351,19 @@ fn forced_overrides_mode() {
     );
     assert_eq!(resolve(&t, &light, None), find("nord").dark);
 }
+
+#[test]
+fn unknown_palette_names() {
+    assert!(unknown_palettes(&ThemeSettings::default()).is_empty());
+    let t = ThemeSettings {
+        light_palette: "solarized".into(),
+        dark_palette: " Nord ".into(),
+        ..ThemeSettings::default()
+    };
+    // Имя без учёта регистра и пробелов по краям — как в `find`.
+    assert_eq!(unknown_palettes(&t), ["solarized"]);
+    assert_eq!(
+        resolve(&t, &System::default(), Some(ThemeMode::Light)),
+        find("breeze").light
+    );
+}
