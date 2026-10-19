@@ -244,6 +244,8 @@ fn devices(app: &mut App, ui: &mut Ui, p: &Palette) {
     });
 }
 
+// «Если не работает» и «Стоит знать» почти дословно повторены в README
+// («Если не работает», «Ограничения»): правьте их вместе.
 fn troubleshooting(app: &mut App, ui: &mut Ui, p: &Palette) {
     card(ui, p, |ui| {
         card_title(ui, p, icons::WRENCH, "Если не работает");

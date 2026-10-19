@@ -40,10 +40,17 @@ export XDG_RUNTIME_DIR=/tmp/sfg DISPLAY=:96 WAYLAND_DISPLAY= XDG_CONFIG_HOME=/tm
 mkdir -m 700 -p $XDG_RUNTIME_DIR $XDG_CONFIG_HOME/shiftfix
 ./target/debug/shiftfix --print-config > $XDG_CONFIG_HOME/shiftfix/config.toml
 Xvfb :96 -screen 0 1100x800x24 -nolisten tcp -noreset &
-python3 -I tests/install/fake_daemon.py $XDG_RUNTIME_DIR 0.4.0 &
-./target/debug/shiftfix-gui --page settings --theme light &
+version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)   # версия из Cargo.toml
+python3 -I tests/install/fake_daemon.py $XDG_RUNTIME_DIR "$version" &
+./target/debug/shiftfix-gui --page settings --theme light &   # или --page help, --theme dark
 sleep 7 && import -window root shot.png    # окно поднимается 6–8 секунд
 ```
+
+`import` — из ImageMagick. Вкладки: `home`, `devices`, `settings`, `help`, `log`.
+
+Автоматической проверки страниц окна нет: правку окна проверяют глазами по снимку экрана, до и после, в обеих темах.
+
+Тексты вкладки «Инструкция» («Если не работает», «Стоит знать») повторены в README («Если не работает», «Ограничения») — правьте их вместе.
 
 Без сессионной шины DBus окно пишет «портал настроек недоступен — тёмная тема» — это нормально.
 
@@ -79,6 +86,12 @@ diff -r /tmp/journal-before /tmp/journal-after
 shiftfix --check
 shiftfix --status
 journalctl --user -u shiftfix -n 100
+```
+
+Подробный журнал — служба в терминале с `--debug` (Ctrl+C — остановить, потом `systemctl --user start shiftfix`):
+
+```sh
+systemctl --user stop shiftfix; shiftfix --debug
 ```
 
 ## Коммиты
