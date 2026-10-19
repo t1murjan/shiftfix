@@ -182,3 +182,30 @@ pub fn install_fonts(ctx: &egui::Context) {
     fonts.families.insert(FontFamily::Name(BOLD.into()), bold);
     ctx.set_fonts(fonts);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::PALETTES;
+
+    #[test]
+    fn visuals_from_palette() {
+        let ctx = egui::Context::default();
+        for p in PALETTES.iter().flat_map(|def| [&def.light, &def.dark]) {
+            let v = visuals(p);
+            // Иначе курсор синий от egui, а рамка поля в фокусе — не акцентом.
+            assert_eq!(v.text_cursor.stroke.color, p.text);
+            assert_eq!(v.selection.stroke.color, p.accent);
+            // Стиль — обеим темам egui: какой из них egui ни возьмёт, цвета палитры.
+            apply_palette(&ctx, p);
+            assert_eq!(ctx.style_of(Theme::Light).visuals, v);
+            assert_eq!(ctx.style_of(Theme::Dark).visuals, v);
+            let preference = if p.dark {
+                ThemePreference::Dark
+            } else {
+                ThemePreference::Light
+            };
+            assert_eq!(ctx.options(|o| o.theme_preference), preference);
+        }
+    }
+}
