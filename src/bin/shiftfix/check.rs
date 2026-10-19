@@ -4,13 +4,14 @@ use std::fmt::Display;
 use std::fs;
 use std::process::ExitCode;
 
+use anyhow::Result;
 use shiftfix::config::Config;
 use shiftfix::devices::{self, Role};
 use shiftfix::selection::{self, Choice};
 use shiftfix::sys::session::Logind;
 use shiftfix::sys::x11;
 use shiftfix::sys::{env, paths, proc};
-use shiftfix::{backend, keymap};
+use shiftfix::{backend, keymap, service};
 
 /// Строки отчёта и счётчик проблем.
 #[derive(Default)]
@@ -37,19 +38,34 @@ impl Report {
     }
 }
 
-pub fn run(cfg: &Config) -> ExitCode {
+/// `loaded` — конфиг или ошибка его чтения. С ошибкой она идёт в отчёт
+/// первой, а остальное проверяется с настройками по умолчанию: так видны
+/// сразу все проблемы, а не по одной за запуск.
+pub fn run(loaded: Result<Config>) -> ExitCode {
     let mut report = Report::default();
-    input_devices(&mut report, cfg);
+    let config_failed = loaded.is_err();
+    let cfg = loaded.unwrap_or_else(|err| {
+        report.section("Конфиг");
+        // Ошибка разбора TOML — в несколько строк: отступ, как у строк отчёта.
+        report.bad(format!("{err:#}").trim_end().replace('\n', "\n    "));
+        report.note("остальное проверено с настройками по умолчанию");
+        Config::default()
+    });
+    input_devices(&mut report, &cfg);
     uinput(&mut report);
-    layouts(&mut report, cfg);
+    layouts(&mut report, &cfg);
     session(&mut report);
-    selection(&mut report, cfg);
+    selection(&mut report, &cfg);
 
     if report.problems == 0 {
         println!("\nВсё готово.");
-        ExitCode::SUCCESS
+        return ExitCode::SUCCESS;
+    }
+    println!("\nПроблем: {}.", report.problems);
+    if config_failed {
+        // Код при ошибке конфига — прежний, как у службы: на него могут опираться скрипты.
+        ExitCode::from(service::EXIT_SETUP)
     } else {
-        println!("\nПроблем: {}.", report.problems);
         ExitCode::FAILURE
     }
 }

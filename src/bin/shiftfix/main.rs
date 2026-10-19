@@ -132,16 +132,17 @@ fn main() -> ExitCode {
     }
     logbuf::init(args.debug);
     let path = args.config.unwrap_or_else(config::default_path);
-    let cfg = match Config::load(&path) {
+    let loaded = Config::load(&path);
+    if args.command == Command::Check {
+        return check::run(loaded);
+    }
+    let cfg = match loaded {
         Ok(cfg) => cfg,
         Err(err) => {
             error!("config: {err:#}");
             return ExitCode::from(service::EXIT_SETUP);
         }
     };
-    if args.command == Command::Check {
-        return check::run(&cfg);
-    }
     match shiftfix::daemon::run(path, cfg) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {

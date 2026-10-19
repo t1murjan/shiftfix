@@ -107,7 +107,6 @@ fn closed_stderr_is_not_fatal() {
     let (reader, writer) = std::io::pipe().unwrap();
     drop(reader); // запись в stderr — EPIPE
     let status = Command::new(env!("CARGO_BIN_EXE_shiftfix"))
-        .arg("--check")
         .arg("--config")
         .arg(&config)
         .env("XDG_RUNTIME_DIR", &dir)
@@ -118,4 +117,31 @@ fn closed_stderr_is_not_fatal() {
         .unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
     assert_eq!(status.code(), Some(shiftfix::service::EXIT_SETUP.into()));
+}
+
+/// `--check` с ошибкой в конфиге сообщает её первой и проверяет остальное с
+/// настройками по умолчанию; код выхода — прежний, как у службы.
+#[test]
+fn check_reports_config_error_and_checks_the_rest() {
+    let dir = std::env::temp_dir().join(format!("shiftfix-cli-check-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config = dir.join("config.toml");
+    std::fs::write(&config, "key_delay_ms = \"x\"\n").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_shiftfix"))
+        .arg("--check")
+        .arg("--config")
+        .arg(&config)
+        .env("XDG_RUNTIME_DIR", &dir)
+        .output()
+        .unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(text.starts_with("Конфиг\n  ✗ "), "{text}");
+    assert!(text.contains("key_delay_ms"), "{text}");
+    assert!(text.contains("\nУстройства ввода\n"), "{text}");
+    assert!(text.contains("\nПроблем: "), "{text}");
+    assert_eq!(
+        out.status.code(),
+        Some(shiftfix::service::EXIT_SETUP.into())
+    );
 }
