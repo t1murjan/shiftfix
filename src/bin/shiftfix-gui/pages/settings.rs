@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Align, Layout, RichText, Slider, Ui};
 use egui_phosphor::regular as icons;
-use shiftfix::config::{BackendKind, Config, SelectionMethod};
+use shiftfix::config::{BackendKind, Config, SelectionMethod, Settings};
 
 use crate::app::App;
 use crate::format::shown_path;
@@ -66,6 +66,26 @@ fn combo(ui: &mut Ui, id: &str, value: &mut String, options: &[(&str, &str)]) ->
 const LOCKED: &str = "Пока в файле ошибка, окно его не меняет: исправьте её и перечитайте файл.";
 
 pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
+    header(app, ui, p);
+    double_shift(ui, p, &mut app.settings.current);
+    ui.add_space(12.0);
+    typing(ui, p, &mut app.settings.current);
+    ui.add_space(12.0);
+    selection(ui, p, &mut app.settings.current);
+    ui.add_space(12.0);
+    layout_switch(ui, p, &mut app.settings.current);
+    ui.add_space(12.0);
+    super::appearance::show(app, ui, p);
+    ui.add_space(12.0);
+    interface(ui, p, &mut app.settings.current);
+    ui.add_space(12.0);
+    autostart(app, ui, p);
+    ui.add_space(18.0);
+    save_bar(app, ui, p);
+}
+
+/// Заголовок и предупреждения: служба читает другой файл, в файле ошибка.
+fn header(app: &mut App, ui: &mut Ui, p: &Palette) {
     let shown = shown_path(app.settings.path());
     page_header(
         ui,
@@ -94,8 +114,9 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
         }
         ui.add_space(8.0);
     }
-    let s = &mut app.settings.current;
+}
 
+fn double_shift(ui: &mut Ui, p: &Palette, s: &mut Settings) {
     card(ui, p, |ui| {
         card_title(ui, p, icons::ARROW_FAT_LINES_UP, "Двойной Shift");
         slider_row(
@@ -115,8 +136,9 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             "Shift, зажатый дольше, считается модификатором, а не нажатием.",
         );
     });
-    ui.add_space(12.0);
+}
 
+fn typing(ui: &mut Ui, p: &Palette, s: &mut Settings) {
     card(ui, p, |ui| {
         card_title(ui, p, icons::KEYBOARD, "Набор");
         slider_row(
@@ -146,8 +168,9 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             },
         );
     });
-    ui.add_space(12.0);
+}
 
+fn selection(ui: &mut Ui, p: &Palette, s: &mut Settings) {
     card(ui, p, |ui| {
         card_title(ui, p, icons::SELECTION, "Выделенный текст");
         toggle_row(
@@ -188,8 +211,9 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             );
         });
     });
-    ui.add_space(12.0);
+}
 
+fn layout_switch(ui: &mut Ui, p: &Palette, s: &mut Settings) {
     card(ui, p, |ui| {
         card_title(ui, p, icons::TRANSLATE, "Переключение раскладки");
         setting_row(
@@ -238,12 +262,9 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             );
         }
     });
-    ui.add_space(12.0);
+}
 
-    super::appearance::show(app, ui, p);
-    ui.add_space(12.0);
-
-    let s = &mut app.settings.current;
+fn interface(ui: &mut Ui, p: &Palette, s: &mut Settings) {
     card(ui, p, |ui| {
         card_title(ui, p, icons::BELL, "Интерфейс");
         toggle_row(
@@ -261,8 +282,9 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             "Сообщать о паузе и возобновлении.",
         );
     });
-    ui.add_space(12.0);
+}
 
+fn autostart(app: &mut App, ui: &mut Ui, p: &Palette) {
     let service = app.snap.service.clone();
     card(ui, p, |ui| {
         card_title(ui, p, icons::POWER, "Автозапуск");
@@ -289,8 +311,10 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             });
         }
     });
-    ui.add_space(18.0);
+}
 
+/// «Сохранить», «Отменить», «По умолчанию» и ошибка в значениях.
+fn save_bar(app: &mut App, ui: &mut Ui, p: &Palette) {
     let dirty = app.settings.dirty();
     ui.horizontal(|ui| {
         let valid = Config::from_settings(&app.settings.current);
