@@ -8,10 +8,7 @@ use eframe::egui::{
     Rect, Response, RichText, Sense, Shape, Stroke, StrokeKind, Ui, Vec2, vec2,
 };
 
-use crate::theme::{self, BOLD, Palette};
-
-/// Семейство шрифта с иконками Phosphor.
-pub const ICONS: &str = "phosphor";
+use crate::theme::{self, BOLD, ICONS, Palette};
 
 pub fn icon_font(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(ICONS.into()))

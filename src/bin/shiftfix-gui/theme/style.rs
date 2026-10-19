@@ -14,6 +14,9 @@ use super::Palette;
 /// Семейство жирного шрифта (заголовки).
 pub const BOLD: &str = "bold";
 
+/// Семейство шрифта с иконками Phosphor.
+pub const ICONS: &str = "phosphor";
+
 /// Стиль виджетов egui из палитры.
 pub fn visuals(p: &Palette) -> Visuals {
     let mut v = if p.dark {
@@ -156,13 +159,14 @@ pub fn install_fonts(ctx: &egui::Context) {
     }
     // Иконки Phosphor — отдельным семейством: у части шрифтов (Inter и др.) есть свои
     // глифы в той же области Private Use, а у Phosphor — пустые латинские буквы.
+    // "phosphor" ниже — имя данных шрифта, под которым его кладёт egui_phosphor.
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
     if let Some(list) = fonts.families.get_mut(&FontFamily::Proportional) {
         list.retain(|name| name != "phosphor");
     }
     fonts
         .families
-        .insert(FontFamily::Name("phosphor".into()), vec!["phosphor".into()]);
+        .insert(FontFamily::Name(ICONS.into()), vec!["phosphor".into()]);
 
     let mut bold = fonts
         .families

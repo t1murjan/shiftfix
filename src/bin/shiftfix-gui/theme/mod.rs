@@ -24,7 +24,7 @@ pub use color::{
 pub use legacy::migrate_legacy;
 pub use palettes::{PALETTES, Palette, PaletteDef, find};
 pub use state::ThemeState;
-pub use style::{BOLD, apply_palette, apply_style, install_fonts};
+pub use style::{BOLD, ICONS, apply_palette, apply_style, install_fonts};
 pub use system::{System, SystemNote, SystemWatch};
 
 /// Вариант палитры: у каждого свои палитра и акцент в `[theme]`.
