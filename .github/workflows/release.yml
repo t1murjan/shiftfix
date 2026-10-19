@@ -1,0 +1,47 @@
+# Релиз на GitHub по тегу vX.Y.Z (как выпустить — CONTRIBUTING.md, «Новая версия»).
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Тег совпадает с версией в Cargo.toml
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if ! grep -qx "version = \"$version\"" Cargo.toml; then
+            echo "::error::тег $GITHUB_REF_NAME, а в Cargo.toml другая версия"
+            exit 1
+          fi
+
+      # Текст релиза — начало раздела версии в CHANGELOG.md, до первого
+      # подраздела (###): короткое описание. Полный список — по ссылке.
+      - name: Описание из CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v head="## $version " '
+            index($0, head) == 1 { inside = 1; next }
+            inside && /^##/ { exit }
+            inside && NF { printf "%s", gap; print; gap = ""; started = 1; next }
+            inside && started { gap = gap "\n" }
+          ' CHANGELOG.md > notes.md
+          if [[ ! -s notes.md ]]; then
+            echo "::error::в CHANGELOG.md нет раздела «## $version — дата» с описанием"
+            exit 1
+          fi
+          printf '\nПолный список изменений — [CHANGELOG.md](%s/%s/blob/%s/CHANGELOG.md).\n' \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" >> notes.md
+
+      - name: Релиз
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --title "shiftfix ${GITHUB_REF_NAME#v}" --notes-file notes.md
