@@ -30,7 +30,9 @@ pub trait Backend {
     fn layouts(&mut self) -> Result<Vec<String>>;
     /// `None` — текущая раскладка неизвестна (переключение хоткеем).
     fn current(&mut self) -> Result<Option<usize>>;
+    /// Включить раскладку `index`.
     fn set(&mut self, index: usize, keys: &mut dyn Keys) -> Result<()>;
+    /// Следующая раскладка по кругу (когда текущая неизвестна).
     fn toggle(&mut self, keys: &mut dyn Keys) -> Result<()>;
 }
 

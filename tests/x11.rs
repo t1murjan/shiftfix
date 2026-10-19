@@ -146,7 +146,7 @@ fn reports_primary(display: &str) {
     };
     assert!(
         matches!(next(), selection::Event::Watch(Ok("X11"))),
-        "ждали Watch(Ok(\"X11\")), keymap выделение больше не присылает"
+        "первым событием ждали Watch(Ok(\"X11\"))"
     );
     let mut xclip = Command::new("xclip")
         .args(["-selection", "primary", "-i"])

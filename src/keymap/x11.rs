@@ -10,7 +10,8 @@ use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _, Eve
 use super::{Keymap, xkb};
 use crate::sys::x11::{XConn, connect, rules_names};
 
-/// Раскладки сеанса X11 из `_XKB_RULES_NAMES` (`None` — нет libxkbcommon).
+/// Раскладки сеанса X11 из `_XKB_RULES_NAMES` (`None` — свойство не прочитать
+/// или нет libxkbcommon).
 pub fn fetch(x: &XConn) -> Option<Keymap> {
     let names = rules_names(x).ok()?;
     let keymap = xkb::from_names(&names.layout, &names.variant, &names.options);
