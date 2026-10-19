@@ -57,6 +57,14 @@ fn bullet(ui: &mut Ui, p: &Palette, s: &str) {
     });
 }
 
+/// Команда и что она делает.
+fn command(ui: &mut Ui, p: &Palette, cmd: &str, what: &str) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(cmd).monospace().color(p.text));
+        ui.label(RichText::new(format!("— {what}")).color(p.weak));
+    });
+}
+
 /// Пример «было → стало».
 fn example(ui: &mut Ui, p: &Palette, before: &str, after: &str) {
     ui.horizontal(|ui| {
@@ -93,7 +101,29 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
         "Инструкция",
         "Как пользоваться shiftfix и что делать, если что-то не работает",
     );
+    short(ui, p);
+    ui.add_space(12.0);
+    last_word(ui, p);
+    ui.add_space(12.0);
+    selection(ui, p);
+    ui.add_space(12.0);
+    pause(app, ui, p);
+    ui.add_space(12.0);
+    devices(app, ui, p);
+    ui.add_space(12.0);
+    troubleshooting(app, ui, p);
+    ui.add_space(12.0);
+    good_to_know(ui, p);
+    ui.add_space(12.0);
+    commands(ui, p);
+    ui.add_space(12.0);
+    let about_card = ui.scope(|ui| about(app, ui, p)).response;
+    if std::mem::take(&mut app.about_focus) {
+        about_card.scroll_to_me(Some(Align::TOP));
+    }
+}
 
+fn short(ui: &mut Ui, p: &Palette) {
     card(ui, p, |ui| {
         card_title(ui, p, icons::LIGHTNING, "Коротко");
         text(
@@ -105,8 +135,9 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
         example(ui, p, "ghbdtn", "привет");
         example(ui, p, "руддщ", "hello");
     });
-    ui.add_space(12.0);
+}
 
+fn last_word(ui: &mut Ui, p: &Palette) {
     card(ui, p, |ui| {
         card_title(ui, p, icons::TEXT_AA, "Исправить последнее слово");
         step_text(
@@ -137,8 +168,9 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             "Слово запоминается с момента последнего клика, стрелки или Enter. Вернулись курсором в середину текста — выделите слово (см. ниже).",
         );
     });
-    ui.add_space(12.0);
+}
 
+fn selection(ui: &mut Ui, p: &Palette) {
     card(ui, p, |ui| {
         card_title(ui, p, icons::SELECTION, "Исправить выделенный текст");
         step(ui, p, 1, |ui| {
@@ -168,28 +200,26 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             "Работает в приложениях, которые публикуют выделение (PRIMARY): Qt и KDE, GTK, Firefox, Chromium. В терминале выделение не заменяется набором. В KDE, Hyprland и Sway выделение берётся через wl-clipboard, в GNOME и X11 — через xclip.",
         );
     });
-    ui.add_space(12.0);
+}
 
+fn pause(app: &mut App, ui: &mut Ui, p: &Palette) {
     card(ui, p, |ui| {
         card_title(ui, p, icons::PAUSE, "Пауза — например, в играх");
-        bullet(ui, p, "Переключатель на главной странице.");
-        bullet(
-            ui,
-            p,
+        for line in [
+            "Переключатель на главной странице.",
             "Значок в трее: щелчок колесом мыши или пункт меню «Исправлять раскладку».",
-        );
-        bullet(
-            ui,
-            p,
             "Команда shiftfix --toggle — её удобно повесить на горячую клавишу в настройках системы.",
-        );
+        ] {
+            bullet(ui, p, line);
+        }
         ui.add_space(4.0);
         if widgets::button(ui, p, icons::HOUSE, "На главную", false).clicked() {
             app.page = Page::Home;
         }
     });
-    ui.add_space(12.0);
+}
 
+fn devices(app: &mut App, ui: &mut Ui, p: &Palette) {
     card(ui, p, |ui| {
         card_title(ui, p, icons::KEYBOARD, "Устройства");
         text(
@@ -212,83 +242,45 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             app.page = Page::Devices;
         }
     });
-    ui.add_space(12.0);
+}
 
+fn troubleshooting(app: &mut App, ui: &mut Ui, p: &Palette) {
     card(ui, p, |ui| {
         card_title(ui, p, icons::WRENCH, "Если не работает");
-        step_text(
-            ui,
-            p,
-            1,
+        let steps = [
             "Откройте «Журнал» и нажмите «Проверить систему» — проверка подскажет, чего не хватает.",
-        );
-        step_text(
-            ui,
-            p,
-            2,
             "Нет клавиатур или «нет доступа к /dev/input» — вы не в группе input. После install.sh нужна перезагрузка.",
-        );
-        step_text(
-            ui,
-            p,
-            3,
             "«/dev/uinput недоступен» — не применилось udev-правило из install.sh; перезагрузка помогает.",
-        );
-        step_text(
-            ui,
-            p,
-            4,
             "Слово исправляется, а выделение — нет: поставьте пакеты wl-clipboard и xclip (в GNOME и X11 нужен xclip).",
-        );
-        step_text(
-            ui,
-            p,
-            5,
             "Теряются буквы при исправлении — увеличьте «Задержку между нажатиями» в настройках.",
-        );
-        step_text(
-            ui,
-            p,
-            6,
             "Двойной Shift срабатывает сам — уменьшите «Паузу между нажатиями».",
-        );
+        ];
+        for (i, line) in steps.into_iter().enumerate() {
+            step_text(ui, p, i + 1, line);
+        }
         if widgets::button(ui, p, icons::STETHOSCOPE, "Открыть «Журнал»", false).clicked()
         {
             app.page = Page::Log;
         }
     });
-    ui.add_space(12.0);
+}
 
+fn good_to_know(ui: &mut Ui, p: &Palette) {
     card(ui, p, |ui| {
         card_title(ui, p, icons::WARNING, "Стоит знать");
-        bullet(
-            ui,
-            p,
+        for line in [
             "В IDE от JetBrains двойной Shift открывает «Search Everywhere» — отключите его там, если мешает.",
-        );
-        bullet(
-            ui,
-            p,
             "Чтобы читать клавиатуру, нужна группа input: она даёт это право любой программе пользователя. shiftfix набранное не сохраняет и не пишет в журнал — только длины слов.",
-        );
-        bullet(
-            ui,
-            p,
             "Вставка выделения проходит через буфер обмена: Klipper может запомнить её в истории. Прежнее содержимое буфера возвращается — и текст, и скопированные файлы. Если в буфере лежал пароль из менеджера паролей, он не возвращается: буфер очищается.",
-        );
-        bullet(
-            ui,
-            p,
             "GNOME: раскладка переключается через источники ввода GNOME (сочетание «Переключиться на следующий источник ввода», по умолчанию Super+Space, должно быть задано), выделение — через XWayland и xclip. Без XWayland выделение не исправляется.",
-        );
-        bullet(
-            ui,
-            p,
             "Sway: задавайте раскладки для всех клавиатур — input type:keyboard { xkb_layout us,ru }. Слово перенабирается через виртуальную клавиатуру shiftfix, и без этих раскладок она напечатает его в своей.",
-        );
+        ] {
+            bullet(ui, p, line);
+        }
     });
-    ui.add_space(12.0);
+}
 
+fn commands(ui: &mut Ui, p: &Palette) {
     card(ui, p, |ui| {
         card_title(ui, p, icons::TERMINAL_WINDOW, "Команды");
         for (cmd, what) in [
@@ -298,17 +290,11 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
             ("journalctl --user -u shiftfix -f", "журнал в терминале"),
             ("systemctl --user restart shiftfix", "перезапустить службу"),
         ] {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(cmd).monospace().color(p.text));
-                ui.label(RichText::new(format!("— {what}")).color(p.weak));
-            });
+            command(ui, p, cmd, what);
         }
         ui.add_space(6.0);
         ui.label(bold("Обновление", 15.0).color(p.text));
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("./install.sh").monospace().color(p.text));
-            ui.label(RichText::new("— в папке с новой версией").color(p.weak));
-        });
+        command(ui, p, "./install.sh", "в папке с новой версией");
         weak(
             ui,
             p,
@@ -316,22 +302,18 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
         );
         ui.add_space(6.0);
         ui.label(bold("Удаление", 15.0).color(p.text));
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("./uninstall.sh").monospace().color(p.text));
-            ui.label(RichText::new("— в папке, откуда ставили (рядом с install.sh)").color(p.weak));
-        });
+        command(
+            ui,
+            p,
+            "./uninstall.sh",
+            "в папке, откуда ставили (рядом с install.sh)",
+        );
         weak(
             ui,
             p,
             "Остановит службу и удалит программу, ярлык, автозапуск, правило udev и членство в группе input. Настройки останутся; удалить и их: ./uninstall.sh --purge. Сначала покажет список и спросит.",
         );
     });
-    ui.add_space(12.0);
-
-    let about_card = ui.scope(|ui| about(app, ui, p)).response;
-    if std::mem::take(&mut app.about_focus) {
-        about_card.scroll_to_me(Some(Align::TOP));
-    }
 }
 
 /// «О программе»: версии окна и службы, конфиг, ссылка на проект.
