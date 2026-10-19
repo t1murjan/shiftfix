@@ -58,15 +58,19 @@ impl Page {
         }
     }
 
-    pub fn parse(name: &str) -> Option<Page> {
-        match name {
-            "home" => Some(Page::Home),
-            "devices" => Some(Page::Devices),
-            "settings" => Some(Page::Settings),
-            "help" => Some(Page::Help),
-            "log" => Some(Page::Log),
-            _ => None,
+    /// Имя для `--page` (его же передаёт трей).
+    pub fn name(self) -> &'static str {
+        match self {
+            Page::Home => "home",
+            Page::Devices => "devices",
+            Page::Settings => "settings",
+            Page::Help => "help",
+            Page::Log => "log",
         }
+    }
+
+    pub fn parse(name: &str) -> Option<Page> {
+        Page::ALL.into_iter().find(|p| p.name() == name)
     }
 }
 
@@ -418,5 +422,21 @@ impl eframe::App for App {
         if self.theme.unsaved() {
             self.save_theme();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn page_names_round_trip_and_are_in_usage() {
+        for page in Page::ALL {
+            assert_eq!(Page::parse(page.name()), Some(page));
+            assert!(crate::USAGE.contains(page.name()), "{}", page.name());
+        }
+        // Так открывает «Инструкцию» пункт меню в трее.
+        assert_eq!(Page::parse("help"), Some(Page::Help));
+        assert_eq!(Page::parse("Home"), None);
     }
 }

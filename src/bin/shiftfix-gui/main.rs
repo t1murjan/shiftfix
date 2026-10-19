@@ -92,13 +92,16 @@ fn main() -> eframe::Result {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--page" => match args.next().as_deref().and_then(app::Page::parse) {
-                Some(p) => page = p,
-                None => {
-                    eprintln!("{USAGE}");
-                    std::process::exit(2);
+            "--page" => {
+                let name = args.next().unwrap_or_default();
+                match app::Page::parse(name.trim()) {
+                    Some(p) => page = p,
+                    None => {
+                        eprintln!("shiftfix-gui: нет вкладки «{name}»\n\n{USAGE}");
+                        std::process::exit(2);
+                    }
                 }
-            },
+            }
             "--theme" => match args
                 .next()
                 .as_deref()
