@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::mpsc::Receiver;
 
 use eframe::egui::{
     self, Align, Align2, Color32, CornerRadius, Frame, Image, Layout, Margin, RichText, ScrollArea,
@@ -100,12 +101,15 @@ pub struct App {
     pub theme: theme::ThemeState,
     /// Прокрутить «Инструкцию» к блоку «О программе» (клик по версии).
     pub about_focus: bool,
+    /// Вкладки из `--page` повторных запусков, пока окно открыто.
+    raised: Receiver<Page>,
 }
 
 impl App {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         page: Page,
+        raised: Receiver<Page>,
         forced_mode: Option<ThemeMode>,
         watch: theme::SystemWatch,
     ) -> App {
@@ -130,6 +134,7 @@ impl App {
             check: Check::default(),
             logo,
             about_focus: false,
+            raised,
         }
     }
 
@@ -392,6 +397,9 @@ fn nav_item(ui: &mut Ui, p: &Palette, icon: &str, title: &str, selected: bool) -
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        if let Some(page) = self.raised.try_iter().last() {
+            self.page = page;
+        }
         self.snap = self.link.snapshot();
         self.link.show_devices(self.page == Page::Devices);
         self.toasts.receive();

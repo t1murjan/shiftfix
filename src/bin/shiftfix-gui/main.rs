@@ -18,6 +18,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Duration;
 
@@ -52,42 +53,71 @@ fn raise_socket() -> PathBuf {
     paths::runtime_dir().join("shiftfix-gui.sock")
 }
 
-/// Попросить уже открытое окно показаться; `false` — оно не ответило.
-fn raise_existing() -> bool {
+/// Просьба показаться: `show` и, если вкладку назвали в `--page`, её имя.
+fn raise_line(page: Option<app::Page>) -> String {
+    match page {
+        Some(page) => format!("show {}\n", page.name()),
+        None => "show\n".to_owned(),
+    }
+}
+
+/// Разбор просьбы из сокета: `None` — это не она, `Some(None)` — показаться,
+/// не меняя вкладку. Незнакомая вкладка (от другой версии) — тоже просто показаться.
+fn parse_raise(line: &str) -> Option<Option<app::Page>> {
+    let mut words = line.split_whitespace();
+    if words.next() != Some("show") {
+        return None;
+    }
+    Some(words.next().and_then(app::Page::parse))
+}
+
+/// Попросить уже открытое окно показаться и открыть вкладку `page`;
+/// `false` — оно не ответило.
+fn raise_existing(page: Option<app::Page>) -> bool {
     UnixStream::connect(raise_socket())
-        .and_then(|mut stream| stream.write_all(b"show\n"))
+        .and_then(|mut stream| stream.write_all(raise_line(page).as_bytes()))
         .is_ok()
 }
 
 /// Показывать окно, когда его открывают ещё раз (значок в трее, ярлык в меню).
-fn listen_for_raise(ctx: egui::Context) {
+/// Вкладки, которые при этом просят открыть, приходят в возвращённый канал.
+fn listen_for_raise(ctx: egui::Context) -> Receiver<app::Page> {
+    let (pages, raised) = mpsc::channel();
     let path = raise_socket();
     let _ = fs::remove_file(&path); // блокировка у нас — старый сокет ничей
     let Ok(listener) = UnixListener::bind(&path) else {
-        return;
+        return raised;
     };
     let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
     let spawned = thread::Builder::new().name("raise".into()).spawn(move || {
         for stream in listener.incoming().flatten() {
             let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
             let mut line = String::new();
-            if BufReader::new(stream).read_line(&mut line).is_ok() && line.trim() == "show" {
-                // В Wayland композитор может вместо этого подсветить окно на панели.
-                let root = egui::ViewportId::ROOT;
-                ctx.send_viewport_cmd_to(root, egui::ViewportCommand::Minimized(false));
-                ctx.send_viewport_cmd_to(root, egui::ViewportCommand::Focus);
-                ctx.request_repaint();
+            if BufReader::new(stream).read_line(&mut line).is_err() {
+                continue;
             }
+            let Some(page) = parse_raise(&line) else {
+                continue;
+            };
+            if let Some(page) = page {
+                let _ = pages.send(page);
+            }
+            // В Wayland композитор может вместо этого подсветить окно на панели.
+            let root = egui::ViewportId::ROOT;
+            ctx.send_viewport_cmd_to(root, egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd_to(root, egui::ViewportCommand::Focus);
+            ctx.request_repaint();
         }
     });
     if let Err(err) = spawned {
         eprintln!("shiftfix-gui: {err}");
     }
+    raised
 }
 
 fn main() -> eframe::Result {
     shiftfix::logbuf::init(false);
-    let mut page = app::Page::Home;
+    let mut page = None;
     let mut forced_theme = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -95,7 +125,7 @@ fn main() -> eframe::Result {
             "--page" => {
                 let name = args.next().unwrap_or_default();
                 match app::Page::parse(name.trim()) {
-                    Some(p) => page = p,
+                    Some(p) => page = Some(p),
                     None => {
                         eprintln!("shiftfix-gui: нет вкладки «{name}»\n\n{USAGE}");
                         std::process::exit(2);
@@ -147,7 +177,7 @@ fn main() -> eframe::Result {
     let _lock = match lock::try_lock(&paths::runtime_dir().join("shiftfix-gui.lock")) {
         Ok(Some(file)) => Some(file),
         Ok(None) => {
-            if !raise_existing() {
+            if !raise_existing(page) {
                 report("окно shiftfix уже открыто", false);
             }
             return Ok(());
@@ -177,15 +207,39 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             SHOWN.store(true, Ordering::Relaxed);
-            listen_for_raise(cc.egui_ctx.clone());
+            let raised = listen_for_raise(cc.egui_ctx.clone());
             theme::install_fonts(&cc.egui_ctx);
             theme::apply_style(&cc.egui_ctx);
             system.attach(&cc.egui_ctx);
-            Ok(Box::new(app::App::new(cc, page, forced_theme, system)))
+            let page = page.unwrap_or(app::Page::Home);
+            Ok(Box::new(app::App::new(
+                cc,
+                page,
+                raised,
+                forced_theme,
+                system,
+            )))
         }),
     );
     if let Err(err) = &result {
         report(&format!("окно не открылось: {err}"), true);
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raise_carries_page() {
+        for page in app::Page::ALL {
+            assert_eq!(parse_raise(&raise_line(Some(page))), Some(Some(page)));
+        }
+        assert_eq!(parse_raise(&raise_line(None)), Some(None));
+        // Вкладка из другой версии окна — показаться, вкладку не трогать.
+        assert_eq!(parse_raise("show nope\n"), Some(None));
+        assert_eq!(parse_raise("hide\n"), None);
+        assert_eq!(parse_raise(""), None);
+    }
 }
