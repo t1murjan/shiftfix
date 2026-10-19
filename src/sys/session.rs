@@ -42,7 +42,7 @@ impl Logind {
 }
 
 /// Почему исправлять нельзя; `None` — можно.
-pub fn blocked(logind: &mut Logind) -> Option<String> {
+pub(crate) fn blocked(logind: &mut Logind) -> Option<String> {
     if !env::graphical_session() {
         return Some("нет графического сеанса".into());
     }

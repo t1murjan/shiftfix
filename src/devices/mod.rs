@@ -18,7 +18,7 @@ use evdev::{BusType, KeyCode, PropType, RelativeAxisCode};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
-pub use registry::Event;
+pub(crate) use registry::Event;
 pub(crate) use registry::Registry;
 
 /// Имя виртуальной клавиатуры службы (`daemon/uinput.rs`): по нему служба не
@@ -97,7 +97,7 @@ impl Role {
 
 /// То, что важно для классификации.
 #[derive(Clone, Debug, Default)]
-pub struct Caps {
+pub(crate) struct Caps {
     pub keys: HashSet<KeyCode>,
     pub relative: bool,
     pub direct: bool,

@@ -10,7 +10,7 @@
 //! может стартовать раньше сеанса или пережить его перезапуск.
 
 mod clipboard;
-pub mod wayland;
+pub(crate) mod wayland;
 pub mod x11;
 
 use std::sync::Arc;

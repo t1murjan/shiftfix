@@ -22,10 +22,10 @@ mod x11;
 
 pub(crate) use auto::Auto;
 pub(crate) use gnome::Gnome;
-pub use hotkey::Hotkey;
-pub use hyprland::Hyprland;
+pub(crate) use hotkey::Hotkey;
+pub(crate) use hyprland::Hyprland;
 pub(crate) use kde::Kde;
-pub use sway::Sway;
+pub(crate) use sway::Sway;
 pub use x11::XkbLayout;
 
 use anyhow::{Context, Result};

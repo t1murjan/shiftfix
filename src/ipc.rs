@@ -15,7 +15,7 @@ use crate::engine::{Action, LayoutInfo};
 use crate::logbuf::LogLine;
 
 /// Сколько клиент — команды `shiftfix` и окно — ждёт ответа службы.
-pub const TIMEOUT: Duration = Duration::from_secs(3);
+pub(crate) const TIMEOUT: Duration = Duration::from_secs(3);
 /// Сколько запрос может ждать очереди в главном цикле службы: тот бывает
 /// занят — печатает исправление. Опоздавший запрос не выполняется: сервер
 /// скоро перестанет ждать ответа, и выполненный запрос клиент увидел бы как
