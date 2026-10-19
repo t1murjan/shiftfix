@@ -45,7 +45,12 @@ impl log::Log for Logger {
                 log::Level::Info => 6,
                 _ => 7,
             };
-            writeln!(io::stderr().lock(), "<{priority}>{text}")
+            // journald делит поток на записи по строкам, и приоритет нужен каждой:
+            // без него строки продолжения многострочной ошибки (разбор TOML)
+            // попадут в журнал как info.
+            let mut err = io::stderr().lock();
+            text.lines()
+                .try_for_each(|line| writeln!(err, "<{priority}>{line}"))
         } else {
             writeln!(io::stderr().lock(), "{}: {text}", record.level())
         };

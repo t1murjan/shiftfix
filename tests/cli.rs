@@ -1,5 +1,6 @@
 //! CLI службы глазами install.sh.
 
+use std::os::unix::fs::MetadataExt;
 use std::process::{Command, Stdio};
 
 /// install.sh создаёт конфиг из `--print-config`: это должен быть ровно
@@ -63,6 +64,35 @@ fn gui_version_without_window() {
         String::from_utf8(out.stdout).unwrap(),
         format!("shiftfix {version}\n")
     );
+}
+
+/// Под systemd stderr службы — журнал: приоритет у каждой строки, и у
+/// многострочной ошибки разбора TOML тоже. По нему окно находит причину
+/// остановки службы (`parse_journal` в shiftfix-gui).
+#[test]
+fn journal_gets_priority_on_every_line() {
+    let dir = std::env::temp_dir().join(format!("shiftfix-cli-journal-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config = dir.join("config.toml");
+    std::fs::write(&config, "key_delay_ms = \"x\"\n").unwrap();
+    // Журнал служба узнаёт по JOURNAL_STREAM: устройство и inode её stderr.
+    let log = dir.join("journal");
+    let stderr = std::fs::File::create(&log).unwrap();
+    let meta = stderr.metadata().unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_shiftfix"))
+        .arg("--config")
+        .arg(&config)
+        .env("XDG_RUNTIME_DIR", &dir)
+        .env("JOURNAL_STREAM", format!("{}:{}", meta.dev(), meta.ino()))
+        .stderr(stderr)
+        .status()
+        .unwrap();
+    let journal = std::fs::read_to_string(&log).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(status.code(), Some(shiftfix::service::EXIT_SETUP.into()));
+    assert!(journal.starts_with("<3>config: "), "{journal}");
+    assert!(journal.lines().count() > 1, "{journal}");
+    assert!(journal.lines().all(|l| l.starts_with("<3>")), "{journal}");
 }
 
 /// Служба, запущенная из терминала, после его закрытия не может писать в
