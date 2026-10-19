@@ -47,6 +47,12 @@ impl Variant {
         }
     }
 
+    /// Цвета палитры, выбранной для варианта в `[theme]` (неизвестная —
+    /// Breeze), без своего акцента.
+    pub fn chosen(self, t: &ThemeSettings) -> &'static Palette {
+        self.of_def(find(self.palette_id(t)))
+    }
+
     /// Имя палитры варианта (`light_palette` или `dark_palette`).
     pub fn palette_id(self, t: &ThemeSettings) -> &str {
         match self {
@@ -111,7 +117,7 @@ pub fn resolve(t: &ThemeSettings, sys: &System, forced: Option<ThemeMode>) -> Pa
 /// Акцент: системный (см. `system_accent_active`), иначе свой «#rrggbb»,
 /// иначе акцент палитры.
 pub fn variant_palette(t: &ThemeSettings, sys: &System, mode: ThemeMode, v: Variant) -> Palette {
-    let mut p = *v.of_def(find(v.palette_id(t)));
+    let mut p = *v.chosen(t);
     let system_accent = sys.accent.filter(|_| system_accent_active(t, sys, mode));
     if let Some(accent) = system_accent.or_else(|| parse_hex(v.accent(t))) {
         p.accent = accent;
@@ -134,7 +140,7 @@ pub fn reset_variant(t: &mut ThemeSettings, v: Variant) {
 /// акцента палитры: окно не меняется, пока цвет не выбран.
 pub fn set_own_accent(t: &mut ThemeSettings, v: Variant, on: bool) {
     let accent = if on {
-        format_hex(v.of_def(find(v.palette_id(t))).accent)
+        format_hex(v.chosen(t).accent)
     } else {
         String::new()
     };

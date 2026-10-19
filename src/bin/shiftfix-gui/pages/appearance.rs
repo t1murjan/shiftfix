@@ -169,7 +169,7 @@ fn own_accent(app: &mut App, ui: &mut Ui, p: &Palette, mode: ThemeMode, variant:
     let system_accent = theme::system_accent_active(&t, app.theme.system(), mode);
     let own = variant.accent(&t);
     let mut own_on = !own.trim().is_empty();
-    let base = variant.of_def(theme::find(variant.palette_id(&t))).accent;
+    let base = variant.chosen(&t).accent;
     let hint = if system_accent {
         "Сейчас действует акцент системы."
     } else {

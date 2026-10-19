@@ -78,6 +78,10 @@ fn variant_fields() {
     let def = find("nord");
     assert_eq!(Variant::Light.of_def(def), &def.light);
     assert_eq!(Variant::Dark.of_def(def), &def.dark);
+    assert_eq!(Variant::Light.chosen(&t), &def.light);
+    assert_eq!(Variant::Dark.chosen(&t), &find("catppuccin").dark);
+    t.light_palette = "solarized".into();
+    assert_eq!(Variant::Light.chosen(&t), &find("breeze").light);
 }
 
 #[test]
