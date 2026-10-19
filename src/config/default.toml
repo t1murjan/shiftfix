@@ -29,7 +29,10 @@ restore_clipboard = true
 
 # auto | kde | gnome | hyprland | sway | x11 | hotkey
 backend = "auto"
-# Только для backend = "hotkey": сочетание переключения раскладки и раскладки по порядку.
+# Для backend = "hotkey" и для "auto", пока окружение не определено: сочетание
+# переключения раскладки и раскладки по порядку. В GNOME сочетание берётся
+# отсюда, если его не удалось прочитать из настроек GNOME, — тогда оно должно
+# совпадать с сочетанием GNOME.
 switch_hotkey = "KEY_LEFTMETA+KEY_SPACE"
 hotkey_layouts = ["us", "ru"]
 
