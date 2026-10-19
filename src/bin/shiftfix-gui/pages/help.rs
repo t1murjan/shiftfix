@@ -375,15 +375,8 @@ fn about(app: &mut App, ui: &mut Ui, p: &Palette) {
             && versions_differ(VERSION, &version)
         {
             ui.add_space(8.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.label(widgets::icon(icons::WARNING, 16.0).color(p.warning));
-                ui.label(
-                    RichText::new(format!(
-                        "Служба {version}, окно {VERSION} — перезапустите службу."
-                    ))
-                    .color(p.warning),
-                );
-            });
+            let text = format!("Служба {version}, окно {VERSION} — перезапустите службу.");
+            widgets::notice(ui, icons::WARNING, p.warning, &text);
             ui.add_space(4.0);
             if widgets::button(
                 ui,

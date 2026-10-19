@@ -147,7 +147,7 @@ pub fn segment<T: Copy + PartialEq>(
                     let color = if selected { p.accent } else { p.text };
                     let button = egui::Button::new(icon_job(glyph, text, 14.0, color))
                         .fill(if selected {
-                            p.accent.gamma_multiply(if p.dark { 0.22 } else { 0.14 })
+                            selected_fill(p)
                         } else {
                             Color32::TRANSPARENT
                         })
@@ -291,25 +291,7 @@ pub fn palette_tile(
 
 /// Строка «подпись слева — переключатель справа».
 pub fn toggle_row(ui: &mut Ui, p: &Palette, on: &mut bool, title: &str, hint: &str) -> Response {
-    let mut response = None;
-    ui.horizontal(|ui| {
-        let left = (ui.available_width() - 80.0).max(180.0);
-        ui.allocate_ui_with_layout(
-            vec2(left, 0.0),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
-                ui.set_width(left);
-                ui.label(RichText::new(title).color(p.text));
-                if !hint.is_empty() {
-                    ui.add(egui::Label::new(RichText::new(hint).size(12.5).color(p.weak)).wrap());
-                }
-            },
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            response = Some(toggle(ui, on, 24.0, p));
-        });
-    });
-    response.expect("toggle shown")
+    labeled_row(ui, p, title, hint, 64.0, |ui| toggle(ui, on, 24.0, p))
 }
 
 /// Изображение клавиши: «Shift», «Ctrl».
@@ -446,6 +428,7 @@ pub fn empty_state(ui: &mut Ui, p: &Palette, icon: &str, text: &str) {
 }
 
 /// Строка настройки: название и пояснение слева, элемент управления справа.
+/// `right` — сколько места оставить элементу.
 pub fn setting_row(
     ui: &mut Ui,
     p: &Palette,
@@ -454,16 +437,43 @@ pub fn setting_row(
     right: f32,
     add: impl FnOnce(&mut Ui),
 ) {
+    labeled_row(ui, p, title, hint, right, add);
+    ui.add_space(4.0);
+}
+
+/// Общее у строк настроек: колонка с названием и пояснением, справа — `add`.
+fn labeled_row<R>(
+    ui: &mut Ui,
+    p: &Palette,
+    title: &str,
+    hint: &str,
+    right: f32,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
     ui.horizontal(|ui| {
         let left = (ui.available_width() - right - 16.0).max(180.0);
-        ui.allocate_ui_with_layout(egui::vec2(left, 0.0), Layout::top_down(Align::Min), |ui| {
+        ui.allocate_ui_with_layout(vec2(left, 0.0), Layout::top_down(Align::Min), |ui| {
             ui.set_width(left);
             ui.label(RichText::new(title).color(p.text));
             if !hint.is_empty() {
                 ui.add(egui::Label::new(RichText::new(hint).size(12.5).color(p.weak)).wrap());
             }
         });
-        ui.with_layout(Layout::right_to_left(Align::Center), add);
+        ui.with_layout(Layout::right_to_left(Align::Center), add)
+            .inner
+    })
+    .inner
+}
+
+/// Строка-предупреждение: значок и текст одного цвета, с переносом.
+pub fn notice(ui: &mut Ui, glyph: &str, color: Color32, text: &str) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(icon(glyph, 16.0).color(color));
+        ui.label(RichText::new(text).color(color));
     });
-    ui.add_space(4.0);
+}
+
+/// Фон выбранного пункта: вкладки в боковой панели, кнопки сегмента.
+pub fn selected_fill(p: &Palette) -> Color32 {
+    p.accent.gamma_multiply(if p.dark { 0.22 } else { 0.14 })
 }

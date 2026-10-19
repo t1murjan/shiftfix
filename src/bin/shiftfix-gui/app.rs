@@ -343,7 +343,7 @@ fn nav_item(ui: &mut Ui, p: &Palette, icon: &str, title: &str, selected: bool) -
     let t = ui.ctx().animate_bool_responsive(response.id, selected);
     if selected || response.hovered() {
         let fill = if selected {
-            p.accent.gamma_multiply(if p.dark { 0.22 } else { 0.14 })
+            widgets::selected_fill(p)
         } else {
             p.hover
         };

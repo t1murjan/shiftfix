@@ -54,22 +54,20 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
 
     let locked = app.settings.error().is_some();
     if locked {
-        ui.horizontal_wrapped(|ui| {
-            ui.label(widgets::icon(icons::WARNING, 16.0).color(p.negative));
-            ui.label(
-                RichText::new("В config.toml ошибка: пока её не исправят, роли не меняются. Подробности — на странице «Настройки».")
-                    .color(p.negative),
-            );
-        });
+        widgets::notice(
+            ui,
+            icons::WARNING,
+            p.negative,
+            "В config.toml ошибка: пока её не исправят, роли не меняются. Подробности — на странице «Настройки».",
+        );
         ui.add_space(8.0);
     } else if app.status().is_none() {
-        ui.horizontal_wrapped(|ui| {
-            ui.label(widgets::icon(icons::INFO, 16.0).color(p.warning));
-            ui.label(
-                RichText::new("Служба не запущена: активность не видна, но роли можно поменять — они применятся при запуске.")
-                    .color(p.warning),
-            );
-        });
+        widgets::notice(
+            ui,
+            icons::INFO,
+            p.warning,
+            "Служба не запущена: активность не видна, но роли можно поменять — они применятся при запуске.",
+        );
         ui.add_space(8.0);
     }
 
