@@ -1,6 +1,8 @@
-//! Один экземпляр окна: блокировка и сокет в XDG_RUNTIME_DIR. Второй запуск
-//! просит открытое окно показаться и открыть вкладку (строка `show` и имя
-//! вкладки).
+//! Один экземпляр окна и один — попапа: у каждого своя блокировка и свой
+//! сокет в XDG_RUNTIME_DIR. Второй запуск окна просит открытое окно
+//! показаться и открыть вкладку (строка `show` и имя вкладки), второй запуск
+//! попапа — закрыться (`close`): так щелчок по значку в трее и открывает, и
+//! закрывает попап.
 
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
@@ -14,10 +16,15 @@ use shiftfix::sys::{lock, paths};
 
 use crate::app::Page;
 
+/// Просьба к попапу закрыться.
+pub const CLOSE: &str = "close";
+
 #[derive(Clone, Copy)]
 pub enum Instance {
     /// Окно с вкладками (`shiftfix-gui`).
     Window,
+    /// Попап у значка в трее (`shiftfix-gui --popup`).
+    Popup,
 }
 
 /// Итог попытки запуститься единственным экземпляром.
@@ -34,6 +41,7 @@ impl Instance {
     fn path(self, extension: &str) -> PathBuf {
         let name = match self {
             Instance::Window => "shiftfix-gui",
+            Instance::Popup => "shiftfix-popup",
         };
         paths::runtime_dir().join(format!("{name}.{extension}"))
     }
@@ -120,7 +128,35 @@ pub fn parse_raise(line: &str) -> Option<Option<Page>> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc;
+
     use super::*;
+
+    #[test]
+    fn second_popup_closes_first() {
+        // Путь сокета — не длиннее 107 байт: при длинном TMPDIR — /tmp.
+        let base = Some(std::env::temp_dir())
+            .filter(|t| t.as_os_str().len() <= 60)
+            .unwrap_or_else(|| PathBuf::from("/tmp"));
+        let dir = base.join(format!("shiftfix-instance-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let (lock, socket) = (dir.join("popup.lock"), dir.join("popup.sock"));
+
+        // Первый попап: блокировка свободна, он слушает сокет.
+        let Start::First(Some(_held)) = start_at(&lock) else {
+            panic!("первый запуск не взял блокировку");
+        };
+        let (lines, received) = mpsc::channel();
+        listen_at(socket.clone(), move |line| {
+            let _ = lines.send(line.to_owned());
+        });
+        // Второй: блокировка занята — он просит первый закрыться.
+        assert!(matches!(start_at(&lock), Start::Second));
+        assert!(send_to(&socket, CLOSE));
+        let line = received.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(line, CLOSE);
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn raise_carries_page() {

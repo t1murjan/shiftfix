@@ -108,8 +108,9 @@ fn hero_backdrop(
     }
 }
 
-/// Пояснение под заголовком: что сейчас происходит и что делать.
-fn hero_text(app: &App, state: State) -> String {
+/// Пояснение под заголовком: что сейчас происходит и что делать. Оно же —
+/// в попапе, когда служба не работает.
+pub fn hero_text(app: &App, state: State) -> String {
     match state {
         State::Working => "Дважды нажмите Shift — последнее слово или выделенный текст перейдут в другую раскладку.".into(),
         State::Paused => "Исправление выключено. Включите переключатель справа или щёлкните колесом по значку в трее.".into(),
@@ -245,17 +246,6 @@ fn stat_card(
     });
 }
 
-fn chip(ui: &mut Ui, p: &Palette, text: &str, active: bool) {
-    let font = FontId::proportional(14.0);
-    let color = if active { p.on_accent } else { p.text };
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
-    let (rect, _) = ui.allocate_exact_size(galley.size() + vec2(18.0, 8.0), Sense::hover());
-    let fill = if active { p.accent } else { p.hover };
-    ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
-    ui.painter()
-        .galley(rect.center() - galley.size() / 2.0, galley, color);
-}
-
 fn stats(app: &App, ui: &mut Ui, p: &Palette) {
     let status = app.status();
     ui.columns(3, |cols| {
@@ -296,7 +286,7 @@ fn layouts_stat(ui: &mut Ui, p: &Palette, s: &Status) {
     }
     ui.horizontal_wrapped(|ui| {
         for (i, code) in s.layouts.codes.iter().enumerate() {
-            chip(ui, p, code, s.layouts.current == Some(i));
+            widgets::chip(ui, p, code, s.layouts.current == Some(i));
         }
     });
     ui.label(
@@ -306,10 +296,16 @@ fn layouts_stat(ui: &mut Ui, p: &Palette, s: &Status) {
     );
 }
 
-fn devices_stat(ui: &mut Ui, p: &Palette, s: &Status) {
+/// Сколько клавиатур и сколько указателей: мышей, тачпадов, экранов, перьев.
+pub fn device_counts(s: &Status) -> (usize, usize) {
     let count = |roles: &[Role]| s.devices.iter().filter(|d| roles.contains(&d.role)).count();
     let keyboards = count(&[Role::Keyboard]);
     let pointers = count(&[Role::Mouse, Role::Touchpad, Role::Touchscreen, Role::Tablet]);
+    (keyboards, pointers)
+}
+
+fn devices_stat(ui: &mut Ui, p: &Palette, s: &Status) {
+    let (keyboards, pointers) = device_counts(s);
     let color = if keyboards == 0 { p.negative } else { p.text };
     ui.label(bold(format!("{keyboards} клав. · {pointers} указ."), 18.0).color(color));
     let note = if keyboards == 0 {
@@ -396,11 +392,7 @@ fn recent(app: &mut App, ui: &mut Ui, p: &Palette) {
             return;
         }
         for action in actions.iter().rev().take(8) {
-            let (icon, what) = match action.kind {
-                ActionKind::Word => (icons::TEXT_AA, "Слово"),
-                ActionKind::Selection => (icons::SELECTION, "Выделение"),
-                ActionKind::Undo => (icons::ARROW_COUNTER_CLOCKWISE, "Возврат"),
-            };
+            let (icon, what) = action_kind(action.kind);
             ui.horizontal(|ui| {
                 ui.label(RichText::new(clock(action.time)).monospace().color(p.weak));
                 ui.label(widgets::icon(icon, 17.0).color(p.accent));
@@ -413,4 +405,13 @@ fn recent(app: &mut App, ui: &mut Ui, p: &Palette) {
             });
         }
     });
+}
+
+/// Значок и название исправления: «Слово», «Выделение», «Возврат».
+pub fn action_kind(kind: ActionKind) -> (&'static str, &'static str) {
+    match kind {
+        ActionKind::Word => (icons::TEXT_AA, "Слово"),
+        ActionKind::Selection => (icons::SELECTION, "Выделение"),
+        ActionKind::Undo => (icons::ARROW_COUNTER_CLOCKWISE, "Возврат"),
+    }
 }

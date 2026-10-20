@@ -1,5 +1,5 @@
-//! `shiftfix-gui` — графическая оболочка: состояние службы, устройства,
-//! настройки, инструкция и журнал.
+//! `shiftfix-gui` — графическая оболочка: окно (состояние службы, устройства,
+//! настройки, инструкция и журнал) и попап у значка в трее (`--popup`).
 
 mod app;
 mod edit;
@@ -7,6 +7,7 @@ mod format;
 mod instance;
 mod link;
 mod pages;
+mod popup;
 mod portal;
 mod theme;
 mod toast;
@@ -27,10 +28,14 @@ use instance::{Instance, Start};
 const USAGE: &str = "\
 shiftfix-gui — настройки и состояние shiftfix
 
-Использование: shiftfix-gui [--page home|devices|settings|help|log] [--theme system|light|dark]
+Использование:
+  shiftfix-gui [--page home|devices|settings|help|log] [--theme system|light|dark]
+  shiftfix-gui --popup [--at X,Y] [--theme system|light|dark]
 
   --page          открыть вкладку
   --theme         режим оформления только на этот запуск (в настройки не пишется)
+  --popup         попап у значка в трее; такой же запуск при открытом попапе закрывает его
+  --at X,Y        где щёлкнули по значку: в X11 попап встанет рядом
   -V, --version   версия
   -h, --help      эта справка
 ";
@@ -48,9 +53,15 @@ fn report(text: &str, critical: bool) {
 
 #[derive(Debug, PartialEq, Eq)]
 enum Command {
-    /// Открыть окно: вкладка из `--page`, режим оформления из `--theme`.
-    Run {
+    /// Окно: вкладка из `--page`, режим оформления из `--theme`.
+    Window {
         page: Option<app::Page>,
+        theme: Option<ThemeMode>,
+    },
+    /// Попап у значка в трее: где щёлкнули по значку (`--at X,Y`) и режим
+    /// оформления.
+    Popup {
+        at: Option<(i32, i32)>,
         theme: Option<ThemeMode>,
     },
     Help,
@@ -60,7 +71,8 @@ enum Command {
 /// Параметры без имени программы.
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command> {
     let mut it = args.into_iter();
-    let (mut page, mut theme) = (None, None);
+    let (mut page, mut theme, mut at) = (None, None, None);
+    let mut popup = false;
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--page" => {
@@ -77,18 +89,42 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command> {
                 };
                 theme = Some(t);
             }
+            "--popup" => popup = true,
+            "--at" => {
+                let point = it.next().unwrap_or_default();
+                let Some(xy) = parse_point(&point) else {
+                    bail!("--at: нужно X,Y, а не «{point}»");
+                };
+                at = Some(xy);
+            }
             "-h" | "--help" => return Ok(Command::Help),
             "-V" | "--version" => return Ok(Command::Version),
             other => bail!("неизвестный параметр {other}"),
         }
     }
-    Ok(Command::Run { page, theme })
+    if popup {
+        if page.is_some() {
+            bail!("у попапа нет вкладок: --page без --popup");
+        }
+        return Ok(Command::Popup { at, theme });
+    }
+    if at.is_some() {
+        bail!("--at — только с --popup");
+    }
+    Ok(Command::Window { page, theme })
+}
+
+/// «X,Y» — точка щелчка по значку в трее.
+fn parse_point(text: &str) -> Option<(i32, i32)> {
+    let (x, y) = text.split_once(',')?;
+    Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
 }
 
 fn main() -> eframe::Result {
     shiftfix::logbuf::init(false);
     match parse_args(std::env::args().skip(1)) {
-        Ok(Command::Run { page, theme }) => run_window(page, theme),
+        Ok(Command::Window { page, theme }) => run_window(page, theme),
+        Ok(Command::Popup { at, theme }) => popup::run(at, theme),
         Ok(Command::Help) => {
             print!("{USAGE}");
             Ok(())
@@ -213,7 +249,7 @@ mod tests {
 
     #[test]
     fn arguments() {
-        let run = |page, theme| Command::Run { page, theme };
+        let run = |page, theme| Command::Window { page, theme };
         assert_eq!(parse(&[]).unwrap(), run(None, None));
         assert_eq!(
             parse(&["--page", "help", "--theme", "light"]).unwrap(),
@@ -234,11 +270,41 @@ mod tests {
     }
 
     #[test]
+    fn popup_arguments() {
+        let popup = |at, theme| Command::Popup { at, theme };
+        assert_eq!(parse(&["--popup"]).unwrap(), popup(None, None));
+        assert_eq!(
+            parse(&["--popup", "--at", "1850,1050", "--theme", "dark"]).unwrap(),
+            popup(Some((1850, 1050)), Some(ThemeMode::Dark))
+        );
+        // Порядок любой; на нескольких мониторах координаты бывают отрицательными.
+        assert_eq!(
+            parse(&["--at", "-1280, 12", "--popup"]).unwrap(),
+            popup(Some((-1280, 12)), None)
+        );
+        assert_eq!(parse(&["--popup", "-V"]).unwrap(), Command::Version);
+    }
+
+    #[test]
     fn mistakes() {
         assert_eq!(error(&["--page", "nope"]), "нет вкладки «nope»");
         assert_eq!(error(&["--page"]), "нет вкладки «»");
         assert_eq!(error(&["--theme", "x"]), "нет темы «x»");
         assert_eq!(error(&["--bogus"]), "неизвестный параметр --bogus");
+        assert_eq!(
+            error(&["--popup", "--at", "10"]),
+            "--at: нужно X,Y, а не «10»"
+        );
+        assert_eq!(
+            error(&["--popup", "--at", "x,1"]),
+            "--at: нужно X,Y, а не «x,1»"
+        );
+        assert_eq!(error(&["--popup", "--at"]), "--at: нужно X,Y, а не «»");
+        assert_eq!(error(&["--at", "1,2"]), "--at — только с --popup");
+        assert_eq!(
+            error(&["--popup", "--page", "help"]),
+            "у попапа нет вкладок: --page без --popup"
+        );
         assert_eq!(
             error(&["--bogus", "--help"]),
             "неизвестный параметр --bogus"

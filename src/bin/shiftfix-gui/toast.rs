@@ -114,6 +114,8 @@ impl Toasts {
         if self.list.is_empty() {
             return;
         }
+        // Не шире окна (попап узкий): отступы от краёв по 20 и внутри по 16.
+        let width = 380.0_f32.min(ctx.content_rect().width() - 72.0);
         egui::Area::new(egui::Id::new("toasts"))
             .anchor(Align2::RIGHT_BOTTOM, vec2(-20.0, -20.0))
             .order(Order::Foreground)
@@ -144,7 +146,7 @@ impl Toasts {
                             color: Color32::from_black_alpha((60.0 * alpha) as u8),
                         })
                         .show(ui, |ui| {
-                            ui.set_max_width(380.0);
+                            ui.set_max_width(width);
                             ui.horizontal(|ui| {
                                 ui.label(
                                     widgets::icon(icon, 18.0).color(color.gamma_multiply(alpha)),

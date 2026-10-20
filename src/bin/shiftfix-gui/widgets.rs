@@ -329,6 +329,18 @@ pub fn pill(ui: &mut Ui, text: &str, color: Color32, fill: Color32) -> Response 
     response
 }
 
+/// Код раскладки в плашке; текущая раскладка (`active`) — на акценте.
+pub fn chip(ui: &mut Ui, p: &Palette, text: &str, active: bool) {
+    let font = FontId::proportional(14.0);
+    let color = if active { p.on_accent } else { p.text };
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
+    let (rect, _) = ui.allocate_exact_size(galley.size() + vec2(18.0, 8.0), Sense::hover());
+    let fill = if active { p.accent } else { p.hover };
+    ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, color);
+}
+
 /// Точка активности устройства: вспыхивает при событии и плавно гаснет.
 pub fn activity_dot(ui: &mut Ui, p: &Palette, idle_ms: Option<u64>) {
     let (rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());

@@ -177,13 +177,26 @@ impl App {
         }
     }
 
-    /// Цвета кадра: применить к egui, если тема изменилась, и вовремя записать её.
-    fn palette(&mut self, ctx: &egui::Context) -> Palette {
+    /// Начало кадра: снимок состояния службы, сообщения из фоновых потоков
+    /// и цвета (тема применяется к egui, если изменилась, и вовремя пишется).
+    pub fn begin_frame(&mut self, ctx: &egui::Context) -> Palette {
+        self.snap = self.link.snapshot();
+        self.toasts.receive();
         let p = self.theme.apply(ctx, &self.settings.current.theme);
         if self.theme.time_to_save(ctx) {
             self.save_theme();
         }
         p
+    }
+
+    /// Всплывающие сообщения поверх кадра.
+    pub fn show_toasts(&mut self, ctx: &egui::Context, p: &Palette) {
+        self.toasts.show(ctx, p);
+    }
+
+    /// Значок программы размером `size`.
+    pub fn logo(&self, size: f32) -> Image<'static> {
+        Image::from_texture(SizedTexture::new(self.logo.id(), vec2(size, size)))
     }
 
     /// Конфиг службы, если это не файл окна: службу запустили с `--config`.
@@ -299,10 +312,7 @@ impl App {
     /// Значок и название программы над вкладками.
     fn brand(&self, ui: &mut Ui, p: &Palette) {
         ui.horizontal(|ui| {
-            ui.add(Image::from_texture(SizedTexture::new(
-                self.logo.id(),
-                vec2(42.0, 42.0),
-            )));
+            ui.add(self.logo(42.0));
             ui.vertical(|ui| {
                 ui.add_space(2.0);
                 ui.label(bold("shiftfix", 21.0).color(p.text));
@@ -423,10 +433,8 @@ impl eframe::App for App {
         if let Some(page) = self.raised.try_iter().last() {
             self.page = page;
         }
-        self.snap = self.link.snapshot();
+        let p = self.begin_frame(ui.ctx());
         self.link.show_devices(self.page == Page::Devices);
-        self.toasts.receive();
-        let p = self.palette(ui.ctx());
         egui::Panel::left("nav")
             .exact_size(236.0)
             .resizable(false)
@@ -464,7 +472,7 @@ impl eframe::App for App {
                     });
             });
         let ctx = ui.ctx().clone();
-        self.toasts.show(&ctx, &p);
+        self.show_toasts(&ctx, &p);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
