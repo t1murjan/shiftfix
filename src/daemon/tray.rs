@@ -1,5 +1,6 @@
-//! Значок в системном трее (StatusNotifierItem): пауза, настройки, выход.
-//! Работает в Plasma, а также в Waybar и других панелях с поддержкой SNI.
+//! Значок в системном трее (StatusNotifierItem): щелчок — попап, колесо —
+//! пауза, в меню — пауза, окно, инструкция и выход. Работает в Plasma, а
+//! также в Waybar и других панелях с поддержкой SNI.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,22 +23,20 @@ struct ShiftTray {
     visible: Arc<AtomicBool>,
 }
 
-fn open_gui(page: Option<&str>) {
+/// Запустить `shiftfix-gui` с параметрами `gui_args`: без них — окно,
+/// `--page` — окно на вкладке, `--popup` — попап.
+fn open_gui(gui_args: &[&str]) {
     let gui = paths::sibling_binary("shiftfix-gui");
-    let page_args = match page {
-        Some(page) => vec!["--page", page],
-        None => Vec::new(),
-    };
     // Под systemd окно запускается в отдельном scope: иначе перезапуск службы
     // (например, кнопкой из этого же окна) закрыл бы и его.
     let in_service = std::env::var_os("INVOCATION_ID").is_some() && paths::in_path("systemd-run");
     let result = if in_service {
         let gui_path = gui.to_string_lossy();
         let mut args = vec!["--user", "--scope", "--quiet", "--collect", &gui_path];
-        args.extend(&page_args);
+        args.extend(gui_args);
         proc::spawn_detached("systemd-run", &args)
     } else {
-        proc::spawn_detached(&gui, &page_args)
+        proc::spawn_detached(&gui, gui_args)
     };
     if let Err(err) = result {
         warn!("не удалось открыть {}: {err:#}", gui.display());
@@ -99,8 +98,10 @@ impl Tray for ShiftTray {
         true // ждать панель, а не завершаться
     }
 
-    fn activate(&mut self, _x: i32, _y: i32) {
-        open_gui(None);
+    /// Щелчок по значку — попап у значка (`x`, `y` — где щёлкнули). Щелчок при
+    /// открытом попапе закрывает его: второй `--popup` просит первый закрыться.
+    fn activate(&mut self, x: i32, y: i32) {
+        open_gui(&["--popup", "--at", &format!("{x},{y}")]);
     }
 
     fn secondary_activate(&mut self, _x: i32, _y: i32) {
@@ -122,14 +123,14 @@ impl Tray for ShiftTray {
             StandardItem {
                 label: "Открыть shiftfix…".into(),
                 icon_name: "configure".into(),
-                activate: Box::new(|_: &mut Self| open_gui(None)),
+                activate: Box::new(|_: &mut Self| open_gui(&[])),
                 ..Default::default()
             }
             .into(),
             StandardItem {
                 label: "Инструкция".into(),
                 icon_name: "help-contents".into(),
-                activate: Box::new(|_: &mut Self| open_gui(Some("help"))),
+                activate: Box::new(|_: &mut Self| open_gui(&["--page", "help"])),
                 ..Default::default()
             }
             .into(),
