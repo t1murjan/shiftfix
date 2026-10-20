@@ -177,7 +177,8 @@ stop_running() {
 remove_files() {
     step "Файлы в домашнем каталоге"
     if ((${#to_remove[@]})); then rm -rf -- "${to_remove[@]}"; fi
-    rm -f -- "$DAEMON_SOCK" "$DAEMON_LOCK" "$GUI_LOCK" "$GUI_SOCK" "$POPUP_LOCK" "$POPUP_SOCK"
+    rm -f -- "$DAEMON_SOCK" "$DAEMON_LOCK" "$GUI_LOCK" "$GUI_SOCK" "$POPUP_LOCK" "$POPUP_SOCK" \
+        "$POPUP_CLOSED"
     if [[ -n $build ]]; then rm -rf -- "$build"; fi
     if user_systemd; then
         systemctl --user daemon-reload || true

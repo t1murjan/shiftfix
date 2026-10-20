@@ -5,11 +5,15 @@
 //!
 //! Попап один (`Instance::Popup`): второй запуск закрывает открытый — так
 //! щелчок по значку и открывает, и закрывает его. Сам попап закрывается по
-//! Esc и когда теряет фокус. Где он появится, в Wayland решает композитор
+//! Esc и когда теряет фокус; во втором случае он отмечает время закрытия, и
+//! `--popup` сразу после этого не открывается (см. `same_click`). Где он появится, в Wayland решает композитор
 //! (правила окна для KDE и Hyprland — в README, класс окна `shiftfix-popup`);
 //! в X11 попап встаёт у точки щелчка (`--at`).
 
+use std::fs::{self, File};
+use std::path::Path;
 use std::sync::mpsc;
+use std::time::{Duration, SystemTime};
 
 use eframe::egui::text::{LayoutJob, TextFormat};
 use eframe::egui::{
@@ -37,6 +41,11 @@ use crate::widgets::{self, bold};
 /// строки), и строка о новой версии.
 const SIZE: Vec2 = vec2(380.0, 460.0);
 
+/// Сколько после закрытия по потере фокуса новый `--popup` считается тем же
+/// щелчком по значку: служба запускает его чуть позже, чем панель забирает
+/// фокус.
+const SAME_CLICK: Duration = Duration::from_millis(500);
+
 /// Открыть попап; `at` — где щёлкнули по значку (`--at X,Y`).
 pub fn run(at: Option<(i32, i32)>, forced_theme: Option<ThemeMode>) -> eframe::Result {
     let _lock = match Instance::Popup.start() {
@@ -48,6 +57,12 @@ pub fn run(at: Option<(i32, i32)>, forced_theme: Option<ThemeMode>) -> eframe::R
             return Ok(());
         }
     };
+    // В KDE и waybar щелчок по значку сначала забирает у открытого попапа
+    // фокус — попап закрывается сам, — и только потом служба запускает новый
+    // `--popup`. Это тот же щелчок: открывать попап снова не надо.
+    if same_click(since_closed(&Instance::Popup.path("closed"))) {
+        return Ok(());
+    }
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("shiftfix")
         .with_app_id("shiftfix-popup")
@@ -73,6 +88,26 @@ pub fn run(at: Option<(i32, i32)>, forced_theme: Option<ThemeMode>) -> eframe::R
             had_focus: false,
         })
     })
+}
+
+/// Новый попап — тот же щелчок по значку, что закрыл прежний: тот потерял
+/// фокус `since_closed` назад (`None` — так не закрывался).
+fn same_click(since_closed: Option<Duration>) -> bool {
+    since_closed.is_some_and(|ago| ago < SAME_CLICK)
+}
+
+/// Отметить, что попап закрылся, потеряв фокус: время — mtime файла `mark`.
+fn mark_closed(mark: &Path) {
+    let marked = File::create(mark).and_then(|file| file.set_modified(SystemTime::now()));
+    if let Err(err) = marked {
+        log::warn!("{}: {err}", mark.display());
+    }
+}
+
+/// Сколько прошло с отметки `mark_closed`.
+fn since_closed(mark: &Path) -> Option<Duration> {
+    let closed = fs::metadata(mark).and_then(|m| m.modified()).ok()?;
+    SystemTime::now().duration_since(closed).ok()
 }
 
 /// Где поставить попап в X11: у точки щелчка `at`, целиком на экране.
@@ -124,7 +159,13 @@ impl Popup {
         if focused == Some(true) {
             self.had_focus = true;
         }
-        if escape || (self.had_focus && focused == Some(false)) {
+        let left = self.had_focus && focused == Some(false);
+        if left {
+            // Может быть, фокус забрал щелчок по значку — он сейчас запустит
+            // новый попап, который должен знать, что этот щелчок попап закрыл.
+            mark_closed(&Instance::Popup.path("closed"));
+        }
+        if escape || left {
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
     }
@@ -485,6 +526,35 @@ fn footer_button(ui: &mut Ui, p: &Palette, icon: &str, text: &str, enabled: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn click_that_closed_popup_does_not_reopen_it() {
+        assert!(!same_click(None), "попап не закрывался по потере фокуса");
+        assert!(same_click(Some(Duration::ZERO)));
+        assert!(same_click(Some(Duration::from_millis(200))));
+        assert!(same_click(Some(Duration::from_millis(499))));
+        assert!(!same_click(Some(Duration::from_millis(500))));
+        assert!(!same_click(Some(Duration::from_secs(5))));
+
+        let dir = std::env::temp_dir().join(format!("shiftfix-popup-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let mark = dir.join("closed");
+        assert_eq!(since_closed(&mark), None);
+        mark_closed(&mark);
+        assert!(same_click(since_closed(&mark)));
+        // Отметка старше полсекунды — новый щелчок, попап открывается.
+        let old = SystemTime::now() - Duration::from_secs(2);
+        File::options()
+            .write(true)
+            .open(&mark)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        assert!(!same_click(since_closed(&mark)));
+        mark_closed(&mark);
+        assert!(same_click(since_closed(&mark)), "отметка обновляется");
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn popup_stays_on_screen_near_the_click() {

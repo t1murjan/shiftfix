@@ -61,6 +61,7 @@ init_paths() {
     GUI_SOCK="$RUNTIME/shiftfix-gui.sock"
     POPUP_LOCK="$RUNTIME/shiftfix-popup.lock"
     POPUP_SOCK="$RUNTIME/shiftfix-popup.sock"
+    POPUP_CLOSED="$RUNTIME/shiftfix-popup.closed" # когда попап закрылся, потеряв фокус
     INSTALL_LOCK="$RUNTIME/shiftfix-install.lock"
 }
 
