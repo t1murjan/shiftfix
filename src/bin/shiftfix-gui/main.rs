@@ -1,7 +1,9 @@
 //! `shiftfix-gui` — графическая оболочка: окно (состояние службы, устройства,
-//! настройки, инструкция и журнал) и попап у значка в трее (`--popup`).
+//! настройки, инструкция и журнал), попап у значка в трее (`--popup`) и
+//! запуск из меню приложений без окна (`--background`).
 
 mod app;
+mod background;
 mod edit;
 mod format;
 mod instance;
@@ -31,11 +33,14 @@ shiftfix-gui — настройки и состояние shiftfix
 Использование:
   shiftfix-gui [--page home|devices|settings|help|log] [--theme system|light|dark]
   shiftfix-gui --popup [--at X,Y] [--theme system|light|dark]
+  shiftfix-gui --background
 
   --page          открыть вкладку
   --theme         режим оформления только на этот запуск (в настройки не пишется)
   --popup         попап у значка в трее; такой же запуск при открытом попапе закрывает его
   --at X,Y        где щёлкнули по значку: в X11 попап встанет рядом
+  --background    запустить службу со значком в трее, если она не работает, и выйти;
+                  окно — только если значка не будет
   -V, --version   версия
   -h, --help      эта справка
 ";
@@ -64,6 +69,9 @@ enum Command {
         at: Option<(i32, i32)>,
         theme: Option<ThemeMode>,
     },
+    /// Запуск из меню приложений: служба со значком в трее, окно — только
+    /// если значка не будет.
+    Background,
     Help,
     Version,
 }
@@ -72,7 +80,7 @@ enum Command {
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command> {
     let mut it = args.into_iter();
     let (mut page, mut theme, mut at) = (None, None, None);
-    let mut popup = false;
+    let (mut popup, mut background) = (false, false);
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--page" => {
@@ -90,6 +98,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command> {
                 theme = Some(t);
             }
             "--popup" => popup = true,
+            "--background" => background = true,
             "--at" => {
                 let point = it.next().unwrap_or_default();
                 let Some(xy) = parse_point(&point) else {
@@ -101,6 +110,12 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command> {
             "-V" | "--version" => return Ok(Command::Version),
             other => bail!("неизвестный параметр {other}"),
         }
+    }
+    if background {
+        if popup || page.is_some() || theme.is_some() || at.is_some() {
+            bail!("--background — без других параметров");
+        }
+        return Ok(Command::Background);
     }
     if popup {
         if page.is_some() {
@@ -125,6 +140,14 @@ fn main() -> eframe::Result {
     match parse_args(std::env::args().skip(1)) {
         Ok(Command::Window { page, theme }) => run_window(page, theme),
         Ok(Command::Popup { at, theme }) => popup::run(at, theme),
+        Ok(Command::Background) => {
+            // Значка в трее не будет — без окна до программы не добраться.
+            if background::window_needed() {
+                run_window(None, None)
+            } else {
+                Ok(())
+            }
+        }
         Ok(Command::Help) => {
             print!("{USAGE}");
             Ok(())
@@ -283,6 +306,25 @@ mod tests {
             popup(Some((-1280, 12)), None)
         );
         assert_eq!(parse(&["--popup", "-V"]).unwrap(), Command::Version);
+    }
+
+    #[test]
+    fn background_argument() {
+        assert_eq!(parse(&["--background"]).unwrap(), Command::Background);
+        for other in [
+            &["--popup"][..],
+            &["--page", "help"],
+            &["--theme", "dark"],
+            &["--popup", "--at", "1,2"],
+        ] {
+            let mut args = vec!["--background"];
+            args.extend(other);
+            assert_eq!(
+                error(&args),
+                "--background — без других параметров",
+                "{other:?}"
+            );
+        }
     }
 
     #[test]

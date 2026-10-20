@@ -5,13 +5,17 @@ GenericName=Исправление раскладки
 GenericName[en]=Keyboard layout fixer
 Comment=Двойной Shift исправляет раскладку последнего слова или выделенного текста
 Comment[en]=Double Shift fixes the keyboard layout of the last word or selection
-Exec=@BINDIR@/shiftfix-gui
+Exec=@BINDIR@/shiftfix-gui --background
 Icon=shiftfix
 Terminal=false
 Categories=Utility;Settings;
 Keywords=keyboard;layout;switcher;punto;caramba;раскладка;клавиатура;
 StartupWMClass=shiftfix
-Actions=devices;help;
+Actions=window;devices;help;
+
+[Desktop Action window]
+Name=Открыть окно
+Exec=@BINDIR@/shiftfix-gui
 
 [Desktop Action devices]
 Name=Устройства
