@@ -46,7 +46,7 @@ python3 -I tests/install/fake_daemon.py $XDG_RUNTIME_DIR "$version" &
 sleep 7 && import -window root shot.png    # окно поднимается 6–8 секунд
 ```
 
-`import` — из ImageMagick. Вкладки: `home`, `devices`, `settings`, `help`, `log`.
+`import` — из ImageMagick. Вкладки: `home`, `devices`, `settings`, `help`, `log`. Попап у значка в трее — `./target/debug/shiftfix-gui --popup --at 900,700 --theme light`: в X11 он встаёт у этой точки, второй такой запуск его закрывает. `shiftfix-gui --background` с поддельной службой (в её статусе значок показан) выходит без окна.
 
 Автоматической проверки страниц окна нет: правку окна проверяют глазами по снимку экрана, до и после, в обеих темах.
 

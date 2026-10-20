@@ -301,7 +301,9 @@ fn unit_text() -> String {
     service::unit_text(&daemon_binary(), service::graphical_target_active())
 }
 
-fn run_service_action(action: ServiceAction) -> Result<String> {
+/// Действие со службой: через systemd или без него. Его же выполняет
+/// `--background` (запуск из меню приложений).
+pub fn run_service_action(action: ServiceAction) -> Result<String> {
     let systemd =
         paths::in_path("systemctl") && systemctl(&["show-environment"]).is_ok_and(|o| o.ok);
     if !systemd {
