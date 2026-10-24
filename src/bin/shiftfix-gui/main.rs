@@ -6,6 +6,7 @@ mod app;
 mod background;
 mod edit;
 mod format;
+mod hyprland;
 mod instance;
 mod kwin;
 mod link;

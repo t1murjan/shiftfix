@@ -60,6 +60,14 @@ pub fn write_script(dir: &Path, name: &str, body: &str) -> String {
     path.to_string_lossy().into_owned()
 }
 
+/// Временный исполняемый скрипт вместо внешней команды (hyprctl и т.п.):
+/// каталог со скриптом и путь к нему.
+pub fn fake_command(name: &str, body: &str) -> (TempDir, String) {
+    let dir = TempDir::new(name);
+    let path = write_script(&dir, name, body);
+    (dir, path)
+}
+
 /// Пропуск теста, которому не хватает dbus-daemon; с `SHIFTFIX_TEST_STRICT=1`
 /// (так в CI) — падение. Копия `testutil::skip` библиотеки.
 pub fn skip(reason: &str) {
