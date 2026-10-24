@@ -306,43 +306,9 @@ pub fn open_terminal(source: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use std::io::Write;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
-
-    /// Свой временный каталог на тест; удаляется в Drop.
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new() -> TempDir {
-            static N: AtomicUsize = AtomicUsize::new(0);
-            let n = N.fetch_add(1, Ordering::Relaxed);
-            let dir = env::temp_dir().join(format!("shiftfix-update-{}-{n}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(&dir).unwrap();
-            TempDir(dir)
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
-    /// Исполняемый скрипт `dir/name`. Копия `testutil::write_script` библиотеки
-    /// (её тестовый код окну недоступен): файл пишет отдельный `sh`, иначе
-    /// соседний тест, запуская процесс, унаследовал бы открытый на запись файл,
-    /// и запуск скрипта упал бы с ETXTBSY.
-    fn write_script(dir: &Path, name: &str, body: &str) {
-        let written = Command::new("sh")
-            .args(["-c", r#"printf '%s' "$1" > "$0" && chmod 755 "$0""#])
-            .arg(dir.join(name))
-            .arg(format!("#!/bin/sh\n{body}"))
-            .status()
-            .unwrap();
-        assert!(written.success(), "не записать {name}");
-    }
+    use crate::testutil::{TempDir, write_script};
 
     /// git в каталоге теста; без своих и системных настроек git пользователя.
     fn git_ok(dir: &Path, args: &[&str]) {
@@ -413,9 +379,9 @@ anyhow = { version = "1.0.104" }
 
     #[test]
     fn source_dir_needs_install_sh() {
-        let tmp = TempDir::new();
-        let file = tmp.0.join("shiftfix-source");
-        let src = tmp.0.join("my shiftfix");
+        let tmp = TempDir::new("update");
+        let file = tmp.join("shiftfix-source");
+        let src = tmp.join("my shiftfix");
         fs::create_dir_all(&src).unwrap();
         assert_eq!(read_source(&file), None); // файла нет
 
@@ -467,8 +433,8 @@ anyhow = { version = "1.0.104" }
 
     #[test]
     fn terminal_script_updates_in_source_dir() {
-        let tmp = TempDir::new();
-        let src = tmp.0.join("src dir");
+        let tmp = TempDir::new("update");
+        let src = tmp.join("src dir");
         fs::create_dir_all(&src).unwrap();
         // Вместо install.sh — запись папки, в которой его запустили.
         write_script(&src, "install.sh", "pwd > ran\n");
@@ -478,7 +444,7 @@ anyhow = { version = "1.0.104" }
         assert!(command[4].contains("&& ./install.sh") && !command[4].contains("git"));
         let mut sh = Command::new(&command[2])
             .args(&command[3..])
-            .current_dir(&tmp.0)
+            .current_dir(&*tmp)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -529,13 +495,13 @@ anyhow = { version = "1.0.104" }
 
     #[test]
     fn check_with_real_git() {
-        let tmp = TempDir::new();
-        let upstream = tmp.0.join("upstream");
-        let clone = tmp.0.join("clone");
+        let tmp = TempDir::new("update");
+        let upstream = tmp.join("upstream");
+        let clone = tmp.join("clone");
         fs::create_dir_all(&upstream).unwrap();
         git_ok(&upstream, &["init", "-q"]);
         commit_version(&upstream, "0.5.0");
-        git_ok(&tmp.0, &["clone", "-q", "upstream", "clone"]);
+        git_ok(&tmp, &["clone", "-q", "upstream", "clone"]);
 
         assert_eq!(
             check_version(&clone, "0.4.0"),
@@ -551,7 +517,7 @@ anyhow = { version = "1.0.104" }
         );
 
         // Репозиторий недоступен.
-        fs::rename(&upstream, tmp.0.join("gone")).unwrap();
+        fs::rename(&upstream, tmp.join("gone")).unwrap();
         let Outcome::Failed(reason) = check_version(&clone, "0.5.0") else {
             panic!("ожидалась ошибка");
         };
@@ -566,7 +532,7 @@ anyhow = { version = "1.0.104" }
 
         // Не git-клон.
         assert_eq!(
-            check_version(&tmp.0, "0.5.0"),
+            check_version(&tmp, "0.5.0"),
             Outcome::Failed("папка с исходниками — не git-клон".into())
         );
     }
