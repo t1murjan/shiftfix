@@ -9,6 +9,7 @@ mod format;
 mod instance;
 mod link;
 mod pages;
+mod placement;
 mod popup;
 mod portal;
 mod theme;

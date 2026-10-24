@@ -32,6 +32,7 @@ use crate::format::clock;
 use crate::instance::{self, Instance, Start};
 use crate::link::ServiceAction;
 use crate::pages::home;
+use crate::placement;
 use crate::theme::Palette;
 use crate::toast::ToastKind;
 use crate::update::Outcome;
@@ -118,31 +119,16 @@ fn x11_position(at: (i32, i32)) -> Option<Pos2> {
     }
     let (conn, screen) = x11rb::connect(None).ok()?;
     let root = conn.setup().roots.get(screen)?;
-    let screen = vec2(
-        f32::from(root.width_in_pixels),
-        f32::from(root.height_in_pixels),
-    );
+    let screen = [
+        0,
+        0,
+        i32::from(root.width_in_pixels),
+        i32::from(root.height_in_pixels),
+    ];
     // Точка и экран — в пикселях X: при масштабе окон больше 1 попап встанет
     // дальше от значка, но на экране.
-    Some(place(pos2(at.0 as f32, at.1 as f32), SIZE, screen))
-}
-
-/// Левый верхний угол попапа размера `size` у точки `at` на экране `screen`:
-/// под точкой, а если там не помещается (панель внизу) — над ней; по
-/// горизонтали — по центру точки. За край экрана попап не выходит.
-fn place(at: Pos2, size: Vec2, screen: Vec2) -> Pos2 {
-    const GAP: f32 = 8.0;
-    let below = at.y + GAP;
-    let y = if below + size.y <= screen.y {
-        below
-    } else {
-        at.y - GAP - size.y
-    };
-    let x = at.x - size.x / 2.0;
-    pos2(
-        x.clamp(0.0, (screen.x - size.x).max(0.0)),
-        y.clamp(0.0, (screen.y - size.y).max(0.0)),
-    )
+    let (x, y) = placement::popup_position(at, screen, (SIZE.x as i32, SIZE.y as i32));
+    Some(pos2(x as f32, y as f32))
 }
 
 struct Popup {
@@ -554,25 +540,5 @@ mod tests {
         mark_closed(&mark);
         assert!(same_click(since_closed(&mark)), "отметка обновляется");
         fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn popup_stays_on_screen_near_the_click() {
-        let size = vec2(360.0, 420.0);
-        let screen = vec2(1920.0, 1080.0);
-        // Панель внизу, значок справа: над точкой, у правого края.
-        assert_eq!(
-            place(pos2(1850.0, 1060.0), size, screen),
-            pos2(1560.0, 632.0)
-        );
-        // Панель сверху: под точкой, по центру её.
-        assert_eq!(place(pos2(900.0, 12.0), size, screen), pos2(720.0, 20.0));
-        // Значок слева: не левее края.
-        assert_eq!(place(pos2(10.0, 12.0), size, screen), pos2(0.0, 20.0));
-        // Экран меньше попапа: в левом верхнем углу.
-        assert_eq!(
-            place(pos2(100.0, 100.0), size, vec2(300.0, 300.0)),
-            pos2(0.0, 0.0)
-        );
     }
 }
