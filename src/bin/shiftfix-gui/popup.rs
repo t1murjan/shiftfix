@@ -6,9 +6,12 @@
 //! Попап один (`Instance::Popup`): второй запуск закрывает открытый — так
 //! щелчок по значку и открывает, и закрывает его. Сам попап закрывается по
 //! Esc и когда теряет фокус; во втором случае он отмечает время закрытия, и
-//! `--popup` сразу после этого не открывается (см. `same_click`). Где он появится, в Wayland решает композитор
-//! (правила окна для KDE и Hyprland — в README, класс окна `shiftfix-popup`);
-//! в X11 попап встаёт у точки щелчка (`--at`).
+//! `--popup` сразу после этого не открывается (см. `same_click`).
+//!
+//! В X11 попап встаёт у точки щелчка (`--at`). В Wayland окно не может
+//! поставить себя само: в KDE попап просит KWin поставить его у курсора
+//! (`kwin.rs`), в остальных окружениях место выбирает композитор. Где
+//! именно — `placement.rs`.
 
 use std::fs::{self, File};
 use std::path::Path;
@@ -30,6 +33,7 @@ use x11rb::connection::Connection as _;
 use crate::app::{App, Page, State, state_label};
 use crate::format::clock;
 use crate::instance::{self, Instance, Start};
+use crate::kwin;
 use crate::link::ServiceAction;
 use crate::pages::home;
 use crate::placement;
@@ -41,6 +45,10 @@ use crate::widgets::{self, bold};
 /// Размер попапа: без прокрутки помещаются и три раскладки (плашки в две
 /// строки), и строка о новой версии.
 const SIZE: Vec2 = vec2(380.0, 460.0);
+
+/// Класс окна попапа (app_id в Wayland): по нему окно попапа находят
+/// KWin-скрипт и правила окна.
+pub const APP_ID: &str = "shiftfix-popup";
 
 /// Сколько после закрытия по потере фокуса новый `--popup` считается тем же
 /// щелчком по значку: служба запускает его чуть позже, чем панель забирает
@@ -66,15 +74,26 @@ pub fn run(at: Option<(i32, i32)>, forced_theme: Option<ThemeMode>) -> eframe::R
     }
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("shiftfix")
-        .with_app_id("shiftfix-popup")
+        .with_app_id(APP_ID)
         .with_inner_size(SIZE)
         .with_resizable(false)
         .with_decorations(false)
         .with_window_level(egui::WindowLevel::AlwaysOnTop);
-    if let Some(pos) = at.and_then(x11_position) {
-        viewport = viewport.with_position(pos);
+    // Где встать попапу. В X11 он ставит себя сам. В Wayland окно себя не
+    // ставит: в KDE это делает KWin-скрипт — он загружается до создания окна,
+    // чтобы его встретить, — в остальных окружениях место выбирает композитор.
+    let mut kwin_script = None;
+    if !wayland() {
+        if let Some(pos) = at.and_then(x11_position) {
+            viewport = viewport.with_position(pos);
+        }
+    } else if kwin::running() {
+        match kwin::Script::load(&Instance::Popup.path("js")) {
+            Ok(script) => kwin_script = Some(script),
+            Err(err) => log::warn!("KWin не поставит попап у курсора: {err:#}"),
+        }
     }
-    crate::launch(viewport, move |cc, system| {
+    let result = crate::launch(viewport, move |cc, system| {
         let ctx = cc.egui_ctx.clone();
         Instance::Popup.listen(move |line| {
             if line == instance::CLOSE {
@@ -88,7 +107,18 @@ pub fn run(at: Option<(i32, i32)>, forced_theme: Option<ThemeMode>) -> eframe::R
             app,
             had_focus: false,
         })
-    })
+    });
+    if let Some(script) = kwin_script
+        && let Err(err) = script.unload()
+    {
+        log::warn!("KWin: скрипт попапа не выгрузился: {err:#}");
+    }
+    result
+}
+
+/// Окно откроется в Wayland: winit выбирает его, когда задан WAYLAND_DISPLAY.
+fn wayland() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
 }
 
 /// Новый попап — тот же щелчок по значку, что закрыл прежний: тот потерял
@@ -112,11 +142,7 @@ fn since_closed(mark: &Path) -> Option<Duration> {
 }
 
 /// Где поставить попап в X11: у точки щелчка `at`, целиком на экране.
-/// В Wayland положение окна выбирает композитор — `None`.
 fn x11_position(at: (i32, i32)) -> Option<Pos2> {
-    if std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty()) {
-        return None;
-    }
     let (conn, screen) = x11rb::connect(None).ok()?;
     let root = conn.setup().roots.get(screen)?;
     let screen = [

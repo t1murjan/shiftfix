@@ -7,6 +7,7 @@ mod background;
 mod edit;
 mod format;
 mod instance;
+mod kwin;
 mod link;
 mod pages;
 mod placement;
