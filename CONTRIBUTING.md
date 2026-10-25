@@ -82,7 +82,7 @@ diff -r /tmp/journal-before /tmp/journal-after
 
 ## Что проверять на настоящей машине
 
-В контейнере не проверить: ввод через uinput в живом композиторе, значок в трее, PRIMARY в KDE, Hyprland и GNOME, logind, настоящие systemd и udev, тему из XDG Desktop Portal. Если что-то из этого сломалось, первым делом нужны:
+В контейнере не проверить: ввод через uinput в живом композиторе, значок в трее, место попапа в KDE и Hyprland (KWin-скрипт и `hyprctl`), PRIMARY в KDE, Hyprland и GNOME, logind, настоящие systemd и udev, тему из XDG Desktop Portal. Если что-то из этого сломалось, первым делом нужны:
 
 ```sh
 shiftfix --check
