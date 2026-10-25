@@ -132,9 +132,19 @@ fn upstream_version(dir: &Path) -> Result<String, String> {
 /// `git -C dir args`: вывод или первая строка ошибки. Пароль git не спрашивает:
 /// без этого `fetch` из закрытого репозитория открывал бы окно ввода пароля
 /// (ksshaskpass в KDE) при каждом запуске окна — пусть лучше честно не удастся.
+///
+/// GIT_DIR и т.п. из окружения не передаются: с ними git работал бы не с
+/// `dir`, а с их репозиторием. Их задаёт, например, `git rebase -x` в
+/// worktree — так запускают тесты.
 fn git(dir: &Path, args: &[&str], timeout: Duration) -> Result<String, String> {
     let dir = dir.to_string_lossy();
     let mut full = vec![
+        "-u",
+        "GIT_DIR",
+        "-u",
+        "GIT_WORK_TREE",
+        "-u",
+        "GIT_INDEX_FILE",
         "GIT_TERMINAL_PROMPT=0",
         "GIT_ASKPASS=true",
         "SSH_ASKPASS=true",
@@ -310,7 +320,8 @@ mod tests {
     use super::*;
     use crate::testutil::{TempDir, write_script};
 
-    /// git в каталоге теста; без своих и системных настроек git пользователя.
+    /// git в каталоге теста; без своих и системных настроек git пользователя
+    /// и без GIT_DIR и т.п. из окружения (см. `git`).
     fn git_ok(dir: &Path, args: &[&str]) {
         let status = Command::new("git")
             .arg("-C")
@@ -326,6 +337,9 @@ mod tests {
             .args(args)
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
             .stdout(Stdio::null())
             .status()
             .unwrap();
