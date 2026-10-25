@@ -21,17 +21,15 @@ use anyhow::{Context, Result, bail};
 use serde_json::Value;
 use shiftfix::sys::proc;
 
-const HYPRCTL: &str = "hyprctl";
+use crate::popup::APP_ID;
 
-/// Класс окна попапа (`with_app_id` в popup.rs).
-const POPUP_CLASS: &str = "shiftfix-popup";
+const HYPRCTL: &str = "hyprctl";
 
 /// Сколько ждать окно попапа в списке окон Hyprland и как часто спрашивать.
 const WINDOW_WAIT: Duration = Duration::from_secs(2);
 const WINDOW_POLL: Duration = Duration::from_millis(50);
 
 /// Это Hyprland: задана `HYPRLAND_INSTANCE_SIGNATURE`.
-#[allow(dead_code)] // подключает popup.rs, allow снимут вместе с подключением
 pub fn running() -> bool {
     std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some_and(|sig| !sig.is_empty())
 }
@@ -40,7 +38,6 @@ pub fn running() -> bool {
 /// зарезервированных краёв (панель вроде waybar). Всё — в глобальных
 /// координатах Hyprland, в логических пикселях: в них же ждёт точку
 /// `place_popup`.
-#[allow(dead_code)] // подключает popup.rs, allow снимут вместе с подключением
 pub fn cursor_and_area() -> Result<((i32, i32), [i32; 4])> {
     query_cursor_and_area(HYPRCTL)
 }
@@ -52,7 +49,6 @@ pub fn cursor_and_area() -> Result<((i32, i32), [i32; 4])> {
 /// Окно появляется у Hyprland, когда нарисован его первый кадр, и функция ждёт
 /// его до 2 с. Поэтому звать её не из потока окна: пока он ждёт, кадр не
 /// нарисуется.
-#[allow(dead_code)] // подключает popup.rs, allow снимут вместе с подключением
 pub fn place_popup(x: i32, y: i32) -> Result<()> {
     place_window(HYPRCTL, std::process::id(), (x, y), WINDOW_WAIT)
 }
@@ -200,7 +196,7 @@ fn wait_for_window(hyprctl: &str, pid: u32, wait: Duration) -> Result<Window> {
         }
         if Instant::now() >= deadline {
             bail!(
-                "hyprctl clients: окна {POPUP_CLASS} нет и через {} мс",
+                "hyprctl clients: окна {APP_ID} нет и через {} мс",
                 wait.as_millis()
             );
         }
@@ -216,7 +212,7 @@ fn wait_for_window(hyprctl: &str, pid: u32, wait: Duration) -> Result<Window> {
 /// выбирают окно по адресу (`address:0x…`) — ровно это окно, а `class:` —
 /// регулярное выражение по всем окнам.
 fn find_window(clients: &Value, pid: u32) -> Option<Window> {
-    let ours = |c: &&Value| c["class"] == POPUP_CLASS && c["pid"].as_u64() == Some(pid.into());
+    let ours = |c: &&Value| c["class"] == APP_ID && c["pid"].as_u64() == Some(pid.into());
     let client = clients.as_array()?.iter().find(ours)?;
     Some(Window {
         address: client["address"]

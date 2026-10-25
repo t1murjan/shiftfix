@@ -9,20 +9,20 @@
 //! `--popup` сразу после этого не открывается (см. `same_click`).
 //!
 //! В X11 попап встаёт у точки щелчка (`--at`). В Wayland окно не может
-//! поставить себя само: в KDE попап просит KWin поставить его у курсора
-//! (`kwin.rs`), в остальных окружениях место выбирает композитор. Где
-//! именно — `placement.rs`.
+//! поставить себя само: в Hyprland и KDE попап просит композитор поставить
+//! его у курсора (`hyprland.rs`, `kwin.rs`), в остальных окружениях место
+//! выбирает композитор. Где именно — `placement.rs`.
 
 use std::fs::{self, File};
 use std::path::Path;
 use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, SystemTime};
 
 use eframe::egui::text::{LayoutJob, TextFormat};
 use eframe::egui::{
     self, Align, CornerRadius, FontId, Frame, Key, Layout, Margin, Pos2, Response, RichText,
-    ScrollArea, Stroke, StrokeKind, TextWrapMode, Ui, Vec2, ViewportCommand, ViewportId, pos2,
-    vec2,
+    ScrollArea, Stroke, StrokeKind, TextWrapMode, Ui, ViewportCommand, ViewportId, pos2, vec2,
 };
 use egui_phosphor::regular as icons;
 use shiftfix::config::ThemeMode;
@@ -32,6 +32,7 @@ use x11rb::connection::Connection as _;
 
 use crate::app::{App, Page, State, state_label};
 use crate::format::clock;
+use crate::hyprland;
 use crate::instance::{self, Instance, Start};
 use crate::kwin;
 use crate::link::ServiceAction;
@@ -42,12 +43,12 @@ use crate::toast::ToastKind;
 use crate::update::Outcome;
 use crate::widgets::{self, bold};
 
-/// Размер попапа: без прокрутки помещаются и три раскладки (плашки в две
-/// строки), и строка о новой версии.
-const SIZE: Vec2 = vec2(380.0, 460.0);
+/// Размер попапа в логических пикселях: без прокрутки помещаются и три
+/// раскладки (плашки в две строки), и строка о новой версии.
+const SIZE: (i32, i32) = (380, 460);
 
 /// Класс окна попапа (app_id в Wayland): по нему окно попапа находят
-/// KWin-скрипт и правила окна.
+/// KWin-скрипт, `hyprland.rs` и правила окна.
 pub const APP_ID: &str = "shiftfix-popup";
 
 /// Сколько после закрытия по потере фокуса новый `--popup` считается тем же
@@ -75,17 +76,26 @@ pub fn run(at: Option<(i32, i32)>, forced_theme: Option<ThemeMode>) -> eframe::R
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("shiftfix")
         .with_app_id(APP_ID)
-        .with_inner_size(SIZE)
+        .with_inner_size([SIZE.0 as f32, SIZE.1 as f32])
         .with_resizable(false)
         .with_decorations(false)
         .with_window_level(egui::WindowLevel::AlwaysOnTop);
     // Где встать попапу. В X11 он ставит себя сам. В Wayland окно себя не
-    // ставит: в KDE это делает KWin-скрипт — он загружается до создания окна,
-    // чтобы его встретить, — в остальных окружениях место выбирает композитор.
-    let mut kwin_script = None;
+    // ставит: в Hyprland его передвинет hyprctl, когда окно появится, а
+    // курсор узнаём сейчас, пока он у значка; в KDE это делает KWin-скрипт —
+    // он загружается до создания окна, чтобы его встретить. В остальных
+    // окружениях место выбирает композитор.
+    let (mut hyprland_spot, mut kwin_script) = (None, None);
     if !wayland() {
         if let Some(pos) = at.and_then(x11_position) {
             viewport = viewport.with_position(pos);
+        }
+    } else if hyprland::running() {
+        match hyprland::cursor_and_area() {
+            Ok((cursor, area)) => {
+                hyprland_spot = Some(placement::popup_position(cursor, area, SIZE));
+            }
+            Err(err) => log::warn!("Hyprland не поставит попап у курсора: {err:#}"),
         }
     } else if kwin::running() {
         match kwin::Script::load(&Instance::Popup.path("js")) {
@@ -100,6 +110,15 @@ pub fn run(at: Option<(i32, i32)>, forced_theme: Option<ThemeMode>) -> eframe::R
                 ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Close);
             }
         });
+        // Окно создано. Hyprland покажет его в списке окон с первым кадром,
+        // а пока поток окна ждёт, кадр не нарисуется — ждать в своём потоке.
+        if let Some((x, y)) = hyprland_spot {
+            thread::spawn(move || {
+                if let Err(err) = hyprland::place_popup(x, y) {
+                    log::warn!("Hyprland не поставил попап у курсора: {err:#}");
+                }
+            });
+        }
         // Вкладок у попапа нет, и просить открыть вкладку его некому.
         let (_, no_pages) = mpsc::channel();
         let app = App::new(cc, Page::Home, no_pages, forced_theme, system);
@@ -153,7 +172,7 @@ fn x11_position(at: (i32, i32)) -> Option<Pos2> {
     ];
     // Точка и экран — в пикселях X: при масштабе окон больше 1 попап встанет
     // дальше от значка, но на экране.
-    let (x, y) = placement::popup_position(at, screen, (SIZE.x as i32, SIZE.y as i32));
+    let (x, y) = placement::popup_position(at, screen, SIZE);
     Some(pos2(x as f32, y as f32))
 }
 
