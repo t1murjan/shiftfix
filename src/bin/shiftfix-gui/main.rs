@@ -6,11 +6,16 @@ mod app;
 mod background;
 mod edit;
 mod format;
+mod hyprland;
 mod instance;
+mod kwin;
 mod link;
 mod pages;
+mod placement;
 mod popup;
 mod portal;
+#[cfg(test)]
+mod testutil;
 mod theme;
 mod toast;
 mod update;

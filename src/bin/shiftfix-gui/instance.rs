@@ -38,7 +38,8 @@ pub enum Start {
 
 impl Instance {
     /// Файл экземпляра в XDG_RUNTIME_DIR: `lock` — блокировка, `sock` — сокет;
-    /// у попапа ещё `closed` — когда он закрылся, потеряв фокус.
+    /// у попапа ещё `closed` — когда он закрылся, потеряв фокус, и `js` —
+    /// скрипт для KWin, пока тот его не прочитал.
     pub fn path(self, extension: &str) -> PathBuf {
         let name = match self {
             Instance::Window => "shiftfix-gui",

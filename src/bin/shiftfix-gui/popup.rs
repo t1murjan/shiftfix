@@ -6,20 +6,23 @@
 //! Попап один (`Instance::Popup`): второй запуск закрывает открытый — так
 //! щелчок по значку и открывает, и закрывает его. Сам попап закрывается по
 //! Esc и когда теряет фокус; во втором случае он отмечает время закрытия, и
-//! `--popup` сразу после этого не открывается (см. `same_click`). Где он появится, в Wayland решает композитор
-//! (правила окна для KDE и Hyprland — в README, класс окна `shiftfix-popup`);
-//! в X11 попап встаёт у точки щелчка (`--at`).
+//! `--popup` сразу после этого не открывается (см. `same_click`).
+//!
+//! В X11 попап встаёт у точки щелчка (`--at`). В Wayland окно не может
+//! поставить себя само: в Hyprland и KDE попап просит композитор поставить
+//! его у курсора (`hyprland.rs`, `kwin.rs`), в остальных окружениях место
+//! выбирает композитор. Где именно — `placement.rs`.
 
 use std::fs::{self, File};
 use std::path::Path;
 use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, SystemTime};
 
 use eframe::egui::text::{LayoutJob, TextFormat};
 use eframe::egui::{
     self, Align, CornerRadius, FontId, Frame, Key, Layout, Margin, Pos2, Response, RichText,
-    ScrollArea, Stroke, StrokeKind, TextWrapMode, Ui, Vec2, ViewportCommand, ViewportId, pos2,
-    vec2,
+    ScrollArea, Stroke, StrokeKind, TextWrapMode, Ui, ViewportCommand, ViewportId, pos2, vec2,
 };
 use egui_phosphor::regular as icons;
 use shiftfix::config::ThemeMode;
@@ -29,17 +32,24 @@ use x11rb::connection::Connection as _;
 
 use crate::app::{App, Page, State, state_label};
 use crate::format::clock;
+use crate::hyprland;
 use crate::instance::{self, Instance, Start};
+use crate::kwin;
 use crate::link::ServiceAction;
 use crate::pages::home;
+use crate::placement;
 use crate::theme::Palette;
 use crate::toast::ToastKind;
 use crate::update::Outcome;
 use crate::widgets::{self, bold};
 
-/// Размер попапа: без прокрутки помещаются и три раскладки (плашки в две
-/// строки), и строка о новой версии.
-const SIZE: Vec2 = vec2(380.0, 460.0);
+/// Размер попапа в логических пикселях: без прокрутки помещаются и три
+/// раскладки (плашки в две строки), и строка о новой версии.
+const SIZE: (i32, i32) = (380, 460);
+
+/// Класс окна попапа (app_id в Wayland): по нему окно попапа находят
+/// KWin-скрипт, `hyprland.rs` и правила окна.
+pub const APP_ID: &str = "shiftfix-popup";
 
 /// Сколько после закрытия по потере фокуса новый `--popup` считается тем же
 /// щелчком по значку: служба запускает его чуть позже, чем панель забирает
@@ -65,21 +75,50 @@ pub fn run(at: Option<(i32, i32)>, forced_theme: Option<ThemeMode>) -> eframe::R
     }
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("shiftfix")
-        .with_app_id("shiftfix-popup")
-        .with_inner_size(SIZE)
+        .with_app_id(APP_ID)
+        .with_inner_size([SIZE.0 as f32, SIZE.1 as f32])
         .with_resizable(false)
         .with_decorations(false)
         .with_window_level(egui::WindowLevel::AlwaysOnTop);
-    if let Some(pos) = at.and_then(x11_position) {
-        viewport = viewport.with_position(pos);
+    // Где встать попапу. В X11 он ставит себя сам. В Wayland окно себя не
+    // ставит: в Hyprland его передвинет hyprctl, когда окно появится, а
+    // курсор узнаём сейчас, пока он у значка; в KDE это делает KWin-скрипт —
+    // он загружается до создания окна, чтобы его встретить. В остальных
+    // окружениях место выбирает композитор.
+    let (mut hyprland_spot, mut kwin_script) = (None, None);
+    if !wayland() {
+        if let Some(pos) = at.and_then(x11_position) {
+            viewport = viewport.with_position(pos);
+        }
+    } else if hyprland::running() {
+        match hyprland::cursor_and_area() {
+            Ok((cursor, area)) => {
+                hyprland_spot = Some(placement::popup_position(cursor, area, SIZE));
+            }
+            Err(err) => log::warn!("Hyprland не поставит попап у курсора: {err:#}"),
+        }
+    } else if kwin::running() {
+        match kwin::Script::load(&Instance::Popup.path("js")) {
+            Ok(script) => kwin_script = Some(script),
+            Err(err) => log::warn!("KWin не поставит попап у курсора: {err:#}"),
+        }
     }
-    crate::launch(viewport, move |cc, system| {
+    let result = crate::launch(viewport, move |cc, system| {
         let ctx = cc.egui_ctx.clone();
         Instance::Popup.listen(move |line| {
             if line == instance::CLOSE {
                 ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Close);
             }
         });
+        // Окно создано. Hyprland покажет его в списке окон с первым кадром,
+        // а пока поток окна ждёт, кадр не нарисуется — ждать в своём потоке.
+        if let Some((x, y)) = hyprland_spot {
+            thread::spawn(move || {
+                if let Err(err) = hyprland::place_popup(x, y) {
+                    log::warn!("Hyprland не поставил попап у курсора: {err:#}");
+                }
+            });
+        }
         // Вкладок у попапа нет, и просить открыть вкладку его некому.
         let (_, no_pages) = mpsc::channel();
         let app = App::new(cc, Page::Home, no_pages, forced_theme, system);
@@ -87,7 +126,18 @@ pub fn run(at: Option<(i32, i32)>, forced_theme: Option<ThemeMode>) -> eframe::R
             app,
             had_focus: false,
         })
-    })
+    });
+    if let Some(script) = kwin_script
+        && let Err(err) = script.unload()
+    {
+        log::warn!("KWin: скрипт попапа не выгрузился: {err:#}");
+    }
+    result
+}
+
+/// Окно откроется в Wayland: winit выбирает его, когда задан WAYLAND_DISPLAY.
+fn wayland() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
 }
 
 /// Новый попап — тот же щелчок по значку, что закрыл прежний: тот потерял
@@ -111,38 +161,19 @@ fn since_closed(mark: &Path) -> Option<Duration> {
 }
 
 /// Где поставить попап в X11: у точки щелчка `at`, целиком на экране.
-/// В Wayland положение окна выбирает композитор — `None`.
 fn x11_position(at: (i32, i32)) -> Option<Pos2> {
-    if std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty()) {
-        return None;
-    }
     let (conn, screen) = x11rb::connect(None).ok()?;
     let root = conn.setup().roots.get(screen)?;
-    let screen = vec2(
-        f32::from(root.width_in_pixels),
-        f32::from(root.height_in_pixels),
-    );
+    let screen = [
+        0,
+        0,
+        i32::from(root.width_in_pixels),
+        i32::from(root.height_in_pixels),
+    ];
     // Точка и экран — в пикселях X: при масштабе окон больше 1 попап встанет
     // дальше от значка, но на экране.
-    Some(place(pos2(at.0 as f32, at.1 as f32), SIZE, screen))
-}
-
-/// Левый верхний угол попапа размера `size` у точки `at` на экране `screen`:
-/// под точкой, а если там не помещается (панель внизу) — над ней; по
-/// горизонтали — по центру точки. За край экрана попап не выходит.
-fn place(at: Pos2, size: Vec2, screen: Vec2) -> Pos2 {
-    const GAP: f32 = 8.0;
-    let below = at.y + GAP;
-    let y = if below + size.y <= screen.y {
-        below
-    } else {
-        at.y - GAP - size.y
-    };
-    let x = at.x - size.x / 2.0;
-    pos2(
-        x.clamp(0.0, (screen.x - size.x).max(0.0)),
-        y.clamp(0.0, (screen.y - size.y).max(0.0)),
-    )
+    let (x, y) = placement::popup_position(at, screen, SIZE);
+    Some(pos2(x as f32, y as f32))
 }
 
 struct Popup {
@@ -554,25 +585,5 @@ mod tests {
         mark_closed(&mark);
         assert!(same_click(since_closed(&mark)), "отметка обновляется");
         fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn popup_stays_on_screen_near_the_click() {
-        let size = vec2(360.0, 420.0);
-        let screen = vec2(1920.0, 1080.0);
-        // Панель внизу, значок справа: над точкой, у правого края.
-        assert_eq!(
-            place(pos2(1850.0, 1060.0), size, screen),
-            pos2(1560.0, 632.0)
-        );
-        // Панель сверху: под точкой, по центру её.
-        assert_eq!(place(pos2(900.0, 12.0), size, screen), pos2(720.0, 20.0));
-        // Значок слева: не левее края.
-        assert_eq!(place(pos2(10.0, 12.0), size, screen), pos2(0.0, 20.0));
-        // Экран меньше попапа: в левом верхнем углу.
-        assert_eq!(
-            place(pos2(100.0, 100.0), size, vec2(300.0, 300.0)),
-            pos2(0.0, 0.0)
-        );
     }
 }
