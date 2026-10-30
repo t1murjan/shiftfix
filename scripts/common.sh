@@ -54,14 +54,15 @@ init_paths() {
         export XDG_RUNTIME_DIR="/run/user/$MY_UID"
     fi
     RUNTIME="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}/shiftfix-$MY_UID}"
-    # Блокировки и сокеты службы, окна и попапа (имена — в src/) и блокировка install.sh.
+    # Блокировки и сокеты службы и окна (имена — в src/) и блокировка install.sh.
     DAEMON_LOCK="$RUNTIME/shiftfix.lock"
     DAEMON_SOCK="$RUNTIME/shiftfix.sock"
-    GUI_LOCK="$RUNTIME/shiftfix-gui.lock"
-    GUI_SOCK="$RUNTIME/shiftfix-gui.sock"
-    POPUP_LOCK="$RUNTIME/shiftfix-popup.lock"
-    POPUP_SOCK="$RUNTIME/shiftfix-popup.sock"
-    POPUP_CLOSED="$RUNTIME/shiftfix-popup.closed" # когда попап закрылся, потеряв фокус
+    GUI_LOCK="$RUNTIME/shiftfix-popup.lock"
+    GUI_SOCK="$RUNTIME/shiftfix-popup.sock"
+    GUI_CLOSED="$RUNTIME/shiftfix-popup.closed" # когда окно закрылось, потеряв фокус
+    # Большое окно версий до 0.6.0 — только чтобы убрать за ним.
+    OLD_GUI_LOCK="$RUNTIME/shiftfix-gui.lock"
+    OLD_GUI_SOCK="$RUNTIME/shiftfix-gui.sock"
     INSTALL_LOCK="$RUNTIME/shiftfix-install.lock"
 }
 
