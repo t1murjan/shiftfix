@@ -8,14 +8,12 @@ use crate::format::clock;
 use crate::link::ServiceAction;
 use crate::theme::Palette;
 use crate::toast::ToastKind;
-use crate::widgets::{self, card, card_title, page_header};
+use crate::widgets::{self, card, card_title, page_intro};
 
 pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
-    page_header(
+    page_intro(
         ui,
         p,
-        icons::SCROLL,
-        "Журнал",
         "Сообщения службы и проверка того, всё ли готово к работе",
     );
     actions(app, ui, p);
@@ -128,12 +126,13 @@ fn messages(app: &mut App, ui: &mut Ui, p: &Palette) {
     };
     card(ui, p, |ui| {
         ui.horizontal(|ui| {
-            card_title(ui, p, icons::SCROLL, &format!("Сообщения ({source})"));
+            card_title(ui, p, icons::SCROLL, "Сообщения");
             ui.with_layout(
                 eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
                 |ui| {
-                    if widgets::button(ui, p, icons::COPY, "Копировать", false).clicked()
-                    {
+                    let copy = widgets::button(ui, p, icons::COPY, "", false)
+                        .on_hover_text(format!("Копировать (источник — {source})"));
+                    if copy.clicked() {
                         let text: Vec<String> = lines
                             .iter()
                             .map(|(t, l, m)| format!("{t} {l} {m}").trim().to_owned())

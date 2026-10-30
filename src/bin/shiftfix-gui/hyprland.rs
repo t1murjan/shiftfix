@@ -1,18 +1,21 @@
 //! Попап у значка в трее в Hyprland: где курсор и рабочая область монитора
 //! под ним и как поставить окно попапа в нужную точку. Всё — через `hyprctl`.
 //!
-//! В Wayland окно не выбирает себе место само, а правила окна в конфиге
-//! Hyprland пишет пользователь (README). Поэтому попап, когда его окно
-//! появилось, просит Hyprland сделать окно плавающим, передвинуть его и
-//! закрепить.
+//! В Wayland окно не выбирает себе место само. Поэтому попап до создания окна
+//! добавляет в Hyprland правило окна — открыть окно попапа плавающим,
+//! закреплённым и сразу в нужной точке (`expect_popup`), — а когда окно
+//! появилось, на всякий случай ставит его туда же командами (`place_popup`):
+//! если правило не принялось, окно хотя бы переедет к значку. Конфиг
+//! пользователя не меняется: правило живёт до перезагрузки конфига Hyprland.
 //!
-//! Команды `hyprctl dispatch` пишутся по-разному. С `hyprland.conf` (и во всех
-//! версиях до 0.55) — `dispatch setfloating address:0x…`; с `hyprland.lua`
-//! (0.55 и новее) `dispatch` — это `hl.dispatch(…)`, и команды пишутся на Lua:
-//! `dispatch hl.dsp.window.float({ … })`. Какой конфиг у пользователя, отдельно
-//! не спрашиваем: сначала команды для `hyprland.conf`, не вышло — для Lua.
-//! Чужие команды Hyprland не выполняет: Lua не разберёт `setfloating …`, а
-//! с `hyprland.conf` нет диспетчера `hl.dsp…`.
+//! Правила и команды пишутся по-разному. С `hyprland.lua` (0.55 и новее) —
+//! на Lua: правило — `eval hl.window_rule({ … })`, команда —
+//! `dispatch hl.dsp.window.float({ … })`. С `hyprland.conf` правило —
+//! `keyword windowrule match:class …, float on` (0.53 и новее) или
+//! `keyword windowrulev2 float, class:…` (до 0.53), команда —
+//! `dispatch setfloating address:0x…`. Какой конфиг и версия у пользователя,
+//! отдельно не спрашиваем: пробуем по очереди, пока Hyprland не ответит «ok».
+//! Чужой синтаксис Hyprland не выполняет, а отвечает ошибкой.
 
 use std::thread;
 use std::time::{Duration, Instant};
@@ -53,6 +56,14 @@ pub fn place_popup(x: i32, y: i32) -> Result<()> {
     place_window(HYPRCTL, std::process::id(), (x, y), WINDOW_WAIT)
 }
 
+/// Добавить в Hyprland правило: окно попапа открывается плавающим,
+/// закреплённым и левым верхним углом в `(x, y)` (глобальные координаты, как
+/// у `cursor_and_area`). Звать до создания окна: правило действует на окна,
+/// которые открываются после него.
+pub fn expect_popup(x: i32, y: i32) -> Result<()> {
+    add_popup_rule(HYPRCTL, (x, y))
+}
+
 /// `cursor_and_area` с этим `hyprctl` (в тестах — поддельный).
 fn query_cursor_and_area(hyprctl: &str) -> Result<((i32, i32), [i32; 4])> {
     let cursor = parse_cursor(&hyprctl_json(hyprctl, "cursorpos")?)
@@ -61,6 +72,46 @@ fn query_cursor_and_area(hyprctl: &str) -> Result<((i32, i32), [i32; 4])> {
     let monitor =
         monitor_under(&monitors, cursor).context("hyprctl monitors: монитор не найден")?;
     Ok((cursor, monitor.work_area()))
+}
+
+/// `expect_popup` с этим `hyprctl`.
+fn add_popup_rule(hyprctl: &str, (x, y): (i32, i32)) -> Result<()> {
+    // В правиле место — от левого верхнего угла монитора.
+    let monitors = parse_monitors(&hyprctl_json(hyprctl, "monitors")?);
+    let monitor =
+        monitor_under(&monitors, (x, y)).context("hyprctl monitors: монитор не найден")?;
+    let at = (x - monitor.x, y - monitor.y);
+    let mut replies = Vec::new();
+    for commands in rule_commands(at) {
+        let reply = run_batch(hyprctl, &commands)?;
+        if all_ok(&reply, commands.len()) {
+            return Ok(());
+        }
+        replies.push(reply.split_whitespace().collect::<Vec<_>>().join(" "));
+    }
+    bail!("hyprctl не принял правило попапа: {}", replies.join(" | "))
+}
+
+/// Правило окна попапа на языках конфига Hyprland, от нового к старому:
+/// `hyprland.lua`, `hyprland.conf` 0.53 и новее, `hyprland.conf` до 0.53.
+/// `at` — место на мониторе.
+///
+/// В Lua у правила есть имя, и новое правило с тем же именем заменяет
+/// прежнее. В `hyprland.conf` правило без имени (с именем `keyword` его не
+/// добавит): правила копятся до перезагрузки конфига, и действует последнее.
+fn rule_commands((x, y): (i32, i32)) -> [Vec<String>; 3] {
+    let class = format!("^{APP_ID}$");
+    let lua = format!(
+        r#"eval hl.window_rule({{ name = "{APP_ID}", match = {{ class = "{class}" }}, float = true, pin = true, move = {{ {x}, {y} }} }})"#
+    );
+    let conf = format!("keyword windowrule match:class {class}, float on, pin on, move {x} {y}");
+    let old_conf = [
+        "float".to_owned(),
+        "pin".to_owned(),
+        format!("move {x} {y}"),
+    ]
+    .map(|effect| format!("keyword windowrulev2 {effect}, class:{class}"));
+    [vec![lua], vec![conf], old_conf.to_vec()]
 }
 
 /// `place_popup` с этим `hyprctl` для окна процесса `pid`; окно ждать до `wait`.
@@ -223,7 +274,8 @@ fn find_window(clients: &Value, pid: u32) -> Option<Window> {
     })
 }
 
-/// Как пишутся команды `hyprctl dispatch` (см. начало файла).
+/// Как пишутся команды `hyprctl dispatch` (см. начало файла): правило окна
+/// выше, `rule_commands`, пишется на трёх языках, команды — на двух.
 #[derive(Clone, Copy)]
 enum Syntax {
     /// `hyprland.conf` и все версии до 0.55.
@@ -368,6 +420,75 @@ mod tests {
                 "dispatch setfloating address:0x5a",
                 "dispatch movewindowpixel exact 0 0,address:0x5a",
             ]
+        );
+    }
+
+    #[test]
+    fn popup_rule_for_each_config() {
+        let [lua, conf, old_conf] = rule_commands((1532, 40));
+        assert_eq!(
+            lua,
+            [concat!(
+                r#"eval hl.window_rule({ name = "shiftfix-popup", "#,
+                r#"match = { class = "^shiftfix-popup$" }, "#,
+                "float = true, pin = true, move = { 1532, 40 } })",
+            )]
+        );
+        assert_eq!(
+            conf,
+            ["keyword windowrule match:class ^shiftfix-popup$, float on, pin on, move 1532 40"]
+        );
+        assert_eq!(
+            old_conf,
+            [
+                "keyword windowrulev2 float, class:^shiftfix-popup$",
+                "keyword windowrulev2 pin, class:^shiftfix-popup$",
+                "keyword windowrulev2 move 1532 40, class:^shiftfix-popup$",
+            ]
+        );
+    }
+
+    #[test]
+    fn popup_rule_until_hyprland_accepts() {
+        // hyprland.conf 0.53+: eval только с Lua, правило 0.53 принимается.
+        // Точка на втором мониторе — в правиле от его угла.
+        let (dir, hyprctl) = fake_command(
+            "hyprctl",
+            r#"printf '%s\n' "$*" >> "$(dirname "$0")/calls"
+case "$1 $2" in
+"-j monitors") echo '[
+  {"x": 0, "y": 0, "width": 1920, "height": 1080, "scale": 1, "reserved": [0, 0, 0, 0]},
+  {"x": 1920, "y": 0, "width": 2560, "height": 1440, "scale": 1, "reserved": [0, 32, 0, 0]}]' ;;
+"--batch eval"*) echo 'eval is only supported with the lua config manager' ;;
+"--batch keyword windowrule "*) echo ok ;;
+*) echo 'unexpected' ;;
+esac"#,
+        );
+        add_popup_rule(&hyprctl, (3452, 40)).unwrap();
+        let calls = fs::read_to_string(dir.join("calls")).unwrap();
+        let calls: Vec<_> = calls.lines().collect();
+        assert_eq!(calls.len(), 3, "{calls:?}");
+        assert!(
+            calls[1].starts_with("--batch eval hl.window_rule("),
+            "{calls:?}"
+        );
+        assert_eq!(
+            calls[2],
+            "--batch keyword windowrule match:class ^shiftfix-popup$, float on, pin on, move 1532 40"
+        );
+
+        // Ни один язык не подошёл — в ошибке ответы на все три.
+        let (_dir, hyprctl) = fake_command(
+            "hyprctl",
+            r#"case "$1" in
+-j) echo '[{"x": 0, "y": 0, "width": 800, "height": 600, "scale": 1}]' ;;
+--batch) echo 'no' ;;
+esac"#,
+        );
+        let err = add_popup_rule(&hyprctl, (10, 10)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "hyprctl не принял правило попапа: no | no | no"
         );
     }
 

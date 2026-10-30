@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use eframe::egui::text::{LayoutJob, TextFormat};
 use eframe::egui::{
-    self, Align, Color32, CornerRadius, FontFamily, FontId, Frame, Layout, Margin, Mesh, Pos2,
-    Rect, Response, RichText, Sense, Shape, Stroke, StrokeKind, Ui, Vec2, vec2,
+    self, Align, Color32, CornerRadius, FontFamily, FontId, Frame, Layout, Margin, Pos2, Rect,
+    Response, RichText, Sense, Stroke, StrokeKind, Ui, vec2,
 };
 
 use crate::theme::{self, BOLD, ICONS, Palette};
@@ -44,15 +44,9 @@ pub fn bold(text: impl Into<String>, size: f32) -> RichText {
         .size(size)
 }
 
-/// Заголовок страницы с подзаголовком.
-pub fn page_header(ui: &mut Ui, p: &Palette, icon: &str, title: &str, subtitle: &str) {
-    ui.horizontal(|ui| {
-        ui.label(self::icon(icon, 26.0).color(p.accent));
-        ui.label(bold(title, 26.0).color(p.text));
-    });
-    if !subtitle.is_empty() {
-        ui.label(RichText::new(subtitle).color(p.weak));
-    }
+/// Пояснение под названием вкладки (само название — над вкладкой, `app.rs`).
+pub fn page_intro(ui: &mut Ui, p: &Palette, text: &str) {
+    ui.add(egui::Label::new(RichText::new(text).size(13.0).color(p.weak)).wrap());
     ui.add_space(10.0);
 }
 
@@ -131,6 +125,10 @@ pub fn segment<T: Copy + PartialEq>(
         .inner_margin(Margin::same(3))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
+            ui.spacing_mut().button_padding.x = 4.0;
+            // Кнопки поровну на всю ширину: в узком окне иначе не помещаются.
+            let gaps = 2.0 * (items.len() as f32 - 1.0);
+            let width = (ui.available_width() - gaps) / items.len() as f32;
             ui.horizontal(|ui| {
                 // Справа налево (в правой колонке строки) — с конца, чтобы
                 // порядок на экране был тот же.
@@ -142,7 +140,7 @@ pub fn segment<T: Copy + PartialEq>(
                 for &(value, glyph, text) in order {
                     let selected = value == current;
                     let color = if selected { p.accent } else { p.text };
-                    let button = egui::Button::new(icon_job(glyph, text, 14.0, color))
+                    let button = egui::Button::new(icon_job(glyph, text, 13.5, color))
                         .fill(if selected {
                             selected_fill(p)
                         } else {
@@ -150,7 +148,7 @@ pub fn segment<T: Copy + PartialEq>(
                         })
                         .stroke(Stroke::NONE)
                         .corner_radius(CornerRadius::same(8))
-                        .min_size(vec2(0.0, 28.0));
+                        .min_size(vec2(width, 28.0));
                     if ui.add(button).clicked() {
                         picked = Some(value);
                     }
@@ -288,7 +286,7 @@ pub fn palette_tile(
 
 /// Строка «подпись слева — переключатель справа».
 pub fn toggle_row(ui: &mut Ui, p: &Palette, on: &mut bool, title: &str, hint: &str) -> Response {
-    labeled_row(ui, p, title, hint, 64.0, |ui| toggle(ui, on, 24.0, p))
+    labeled_row(ui, p, title, hint, 48.0, |ui| toggle(ui, on, 24.0, p))
 }
 
 /// Изображение клавиши: «Shift», «Ctrl».
@@ -369,51 +367,6 @@ pub fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
     )
 }
 
-/// Скруглённый прямоугольник с диагональным градиентом и мягким краем.
-pub fn gradient_rect(ui: &Ui, rect: Rect, radius: f32, from: Color32, to: Color32) {
-    let r = radius.min(rect.width() / 2.0).min(rect.height() / 2.0);
-    let corners = [
-        (Pos2::new(rect.right() - r, rect.top() + r), -90.0_f32),
-        (Pos2::new(rect.right() - r, rect.bottom() - r), 0.0),
-        (Pos2::new(rect.left() + r, rect.bottom() - r), 90.0),
-        (Pos2::new(rect.left() + r, rect.top() + r), 180.0),
-    ];
-    let mut outline: Vec<(Pos2, Vec2)> = Vec::new();
-    for (center, start) in corners {
-        for i in 0..=10 {
-            let angle = (start + 90.0 * i as f32 / 10.0).to_radians();
-            let normal = vec2(angle.cos(), angle.sin());
-            outline.push((center + normal * r, normal));
-        }
-    }
-    let color_at = |pos: Pos2| {
-        let t = 0.75 * (pos.x - rect.left()) / rect.width()
-            + 0.25 * (pos.y - rect.top()) / rect.height();
-        lerp_color(from, to, t)
-    };
-    let mut mesh = Mesh::default();
-    mesh.colored_vertex(rect.center(), color_at(rect.center()));
-    for (pos, _) in &outline {
-        mesh.colored_vertex(*pos, color_at(*pos));
-    }
-    let n = outline.len() as u32;
-    for i in 0..n {
-        mesh.add_triangle(0, 1 + i, 1 + (i + 1) % n);
-    }
-    // Полупиксельная «бахрома» снаружи — сглаживание края.
-    let feather = 1.0 / ui.ctx().pixels_per_point();
-    for (pos, normal) in &outline {
-        mesh.colored_vertex(*pos + *normal * feather, color_at(*pos).gamma_multiply(0.0));
-    }
-    for i in 0..n {
-        let (a, b) = (1 + i, 1 + (i + 1) % n);
-        let (c, d) = (1 + n + i, 1 + n + (i + 1) % n);
-        mesh.add_triangle(a, b, d);
-        mesh.add_triangle(a, d, c);
-    }
-    ui.painter().add(Shape::mesh(mesh));
-}
-
 /// Крупная кнопка с иконкой; `primary` — залитая акцентным цветом.
 pub fn button(ui: &mut Ui, p: &Palette, icon: &str, text: &str, primary: bool) -> Response {
     let label = icon_job(icon, text, 15.0, if primary { p.on_accent } else { p.text });
@@ -436,21 +389,23 @@ pub fn empty_state(ui: &mut Ui, p: &Palette, icon: &str, text: &str) {
     });
 }
 
-/// Строка настройки: название и пояснение слева, элемент управления справа.
-/// `right` — сколько места оставить элементу.
-pub fn setting_row(
-    ui: &mut Ui,
-    p: &Palette,
-    title: &str,
-    hint: &str,
-    right: f32,
-    add: impl FnOnce(&mut Ui),
-) {
-    labeled_row(ui, p, title, hint, right, add);
-    ui.add_space(4.0);
+/// Строка настройки: название, пояснение и под ними элемент управления —
+/// рядом в узком окне не помещается.
+pub fn setting_row(ui: &mut Ui, p: &Palette, title: &str, hint: &str, add: impl FnOnce(&mut Ui)) {
+    ui.label(RichText::new(title).color(p.text));
+    if !hint.is_empty() {
+        ui.add(egui::Label::new(RichText::new(hint).size(12.5).color(p.weak)).wrap());
+    }
+    ui.add_space(2.0);
+    ui.horizontal(|ui| {
+        // Ползунок — на всю строку, кроме поля с числом справа от него.
+        ui.spacing_mut().slider_width = (ui.available_width() - 110.0).max(120.0);
+        add(ui);
+    });
+    ui.add_space(8.0);
 }
 
-/// Общее у строк настроек: колонка с названием и пояснением, справа — `add`.
+/// Строка с переключателем: название и пояснение слева, переключатель справа.
 fn labeled_row<R>(
     ui: &mut Ui,
     p: &Palette,
@@ -460,10 +415,10 @@ fn labeled_row<R>(
     add: impl FnOnce(&mut Ui) -> R,
 ) -> R {
     ui.horizontal(|ui| {
-        let left = (ui.available_width() - right - 16.0).max(180.0);
+        let left = ui.available_width() - right - 12.0;
         ui.allocate_ui_with_layout(vec2(left, 0.0), Layout::top_down(Align::Min), |ui| {
             ui.set_width(left);
-            ui.label(RichText::new(title).color(p.text));
+            ui.add(egui::Label::new(RichText::new(title).color(p.text)).wrap());
             if !hint.is_empty() {
                 ui.add(egui::Label::new(RichText::new(hint).size(12.5).color(p.weak)).wrap());
             }

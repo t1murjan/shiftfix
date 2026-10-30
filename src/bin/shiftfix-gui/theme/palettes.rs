@@ -14,7 +14,6 @@ pub struct Palette {
     pub text: Color32,
     pub weak: Color32,
     pub accent: Color32,
-    pub accent2: Color32,
     /// Текст и иконки на заливке акцентом: чёрный или белый — что контрастнее.
     pub on_accent: Color32,
     pub positive: Color32,
@@ -32,12 +31,6 @@ pub struct Palette {
     pub key_edge: Color32,
     /// Точка активности устройства в покое.
     pub dot_idle: Color32,
-    /// Градиент заголовка «Главной»: служба на паузе.
-    pub paused_from: Color32,
-    pub paused_to: Color32,
-    /// Градиент заголовка «Главной»: служба остановлена или не установлена.
-    pub stopped_from: Color32,
-    pub stopped_to: Color32,
 }
 
 /// Встроенная палитра: светлый и тёмный вариант.
@@ -71,7 +64,6 @@ const BREEZE: PaletteDef = PaletteDef {
         text: rgb(0x232629),
         weak: rgb(0x6e7680),
         accent: rgb(0x1d99f3),
-        accent2: rgb(0x7c5ce0),
         on_accent: BLACK,
         positive: rgb(0x27ae60),
         warning: rgb(0xd56a00),
@@ -83,10 +75,6 @@ const BREEZE: PaletteDef = PaletteDef {
         key_face: rgb(0xfbfbfc),
         key_edge: rgb(0xc5cad0),
         dot_idle: rgb(0xcfd3d8),
-        paused_from: rgb(0x8a939d),
-        paused_to: rgb(0x5f6772),
-        stopped_from: rgb(0xe06b5b),
-        stopped_to: rgb(0xb84a8f),
     },
     dark: Palette {
         dark: true,
@@ -98,7 +86,6 @@ const BREEZE: PaletteDef = PaletteDef {
         text: rgb(0xfcfcfc),
         weak: rgb(0xa1a9b1),
         accent: rgb(0x3daee9),
-        accent2: rgb(0x7c5ce0),
         on_accent: BLACK,
         positive: rgb(0x3dd47f),
         warning: rgb(0xf67400),
@@ -110,10 +97,6 @@ const BREEZE: PaletteDef = PaletteDef {
         key_face: rgb(0x35393e),
         key_edge: rgb(0x16181a),
         dot_idle: rgb(0x454a50),
-        paused_from: rgb(0x8a939d),
-        paused_to: rgb(0x5f6772),
-        stopped_from: rgb(0xe06b5b),
-        stopped_to: rgb(0xb84a8f),
     },
 };
 
@@ -131,7 +114,6 @@ const NORD: PaletteDef = PaletteDef {
         text: rgb(0x2e3440),
         weak: rgb(0x5e6779),
         accent: rgb(0x5e81ac),
-        accent2: rgb(0xb48ead),
         on_accent: BLACK,
         positive: rgb(0x5f8a49),
         warning: rgb(0xb5633f),
@@ -143,10 +125,6 @@ const NORD: PaletteDef = PaletteDef {
         key_face: rgb(0xf9fafc),
         key_edge: rgb(0xc0c8d4),
         dot_idle: rgb(0xc8cfda),
-        paused_from: rgb(0x7b88a1),
-        paused_to: rgb(0x4c566a),
-        stopped_from: rgb(0xd08770),
-        stopped_to: rgb(0xbf616a),
     },
     dark: Palette {
         dark: true,
@@ -158,7 +136,6 @@ const NORD: PaletteDef = PaletteDef {
         text: rgb(0xeceff4),
         weak: rgb(0xa3abb9),
         accent: rgb(0x88c0d0),
-        accent2: rgb(0xb48ead),
         on_accent: BLACK,
         positive: rgb(0xa3be8c),
         warning: rgb(0xebcb8b),
@@ -170,10 +147,6 @@ const NORD: PaletteDef = PaletteDef {
         key_face: rgb(0x464e60),
         key_edge: rgb(0x242933),
         dot_idle: rgb(0x566075),
-        paused_from: rgb(0x7b88a1),
-        paused_to: rgb(0x4c566a),
-        stopped_from: rgb(0xd08770),
-        stopped_to: rgb(0xbf616a),
     },
 };
 
@@ -191,7 +164,6 @@ const CATPPUCCIN: PaletteDef = PaletteDef {
         text: rgb(0x4c4f69),
         weak: rgb(0x6c6f85),
         accent: rgb(0x8839ef),
-        accent2: rgb(0x1e66f5),
         on_accent: WHITE,
         positive: rgb(0x40a02b),
         warning: rgb(0xfe640b),
@@ -203,10 +175,6 @@ const CATPPUCCIN: PaletteDef = PaletteDef {
         key_face: rgb(0xf7f8fa),
         key_edge: rgb(0xbcc0cc),
         dot_idle: rgb(0xc6cad5),
-        paused_from: rgb(0x8c8fa1),
-        paused_to: rgb(0x5c5f77),
-        stopped_from: rgb(0xd20f39),
-        stopped_to: rgb(0xfe640b),
     },
     dark: Palette {
         dark: true,
@@ -218,7 +186,6 @@ const CATPPUCCIN: PaletteDef = PaletteDef {
         text: rgb(0xcdd6f4),
         weak: rgb(0xa6adc8),
         accent: rgb(0xcba6f7),
-        accent2: rgb(0x89b4fa),
         on_accent: BLACK,
         positive: rgb(0xa6e3a1),
         warning: rgb(0xfab387),
@@ -230,10 +197,6 @@ const CATPPUCCIN: PaletteDef = PaletteDef {
         key_face: rgb(0x45475a),
         key_edge: rgb(0x11111b),
         dot_idle: rgb(0x585b70),
-        paused_from: rgb(0x7f849c),
-        paused_to: rgb(0x585b70),
-        stopped_from: rgb(0xf38ba8),
-        stopped_to: rgb(0xfab387),
     },
 };
 
@@ -251,7 +214,6 @@ const GRUVBOX: PaletteDef = PaletteDef {
         text: rgb(0x3c3836),
         weak: rgb(0x7c6f64),
         accent: rgb(0xd65d0e),
-        accent2: rgb(0xd79921),
         on_accent: BLACK,
         positive: rgb(0x79740e),
         warning: rgb(0xb57614),
@@ -263,10 +225,6 @@ const GRUVBOX: PaletteDef = PaletteDef {
         key_face: rgb(0xf9f5d7),
         key_edge: rgb(0xbdae93),
         dot_idle: rgb(0xd5c4a1),
-        paused_from: rgb(0xa89984),
-        paused_to: rgb(0x7c6f64),
-        stopped_from: rgb(0xcc241d),
-        stopped_to: rgb(0xb16286),
     },
     dark: Palette {
         dark: true,
@@ -278,7 +236,6 @@ const GRUVBOX: PaletteDef = PaletteDef {
         text: rgb(0xebdbb2),
         weak: rgb(0xa89984),
         accent: rgb(0xfe8019),
-        accent2: rgb(0xfabd2f),
         on_accent: BLACK,
         positive: rgb(0xb8bb26),
         warning: rgb(0xfabd2f),
@@ -290,10 +247,6 @@ const GRUVBOX: PaletteDef = PaletteDef {
         key_face: rgb(0x504945),
         key_edge: rgb(0x1d2021),
         dot_idle: rgb(0x665c54),
-        paused_from: rgb(0x928374),
-        paused_to: rgb(0x665c54),
-        stopped_from: rgb(0xfb4934),
-        stopped_to: rgb(0xd3869b),
     },
 };
 

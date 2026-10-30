@@ -9,7 +9,7 @@ use crate::format::shown_path;
 use crate::link::ServiceAction;
 use crate::theme::Palette;
 use crate::toast::ToastKind;
-use crate::widgets::{self, card, card_title, page_header, setting_row, toggle_row};
+use crate::widgets::{self, card, card_title, page_intro, setting_row, toggle_row};
 
 const PASTE_KEYS: [(&str, &str); 3] = [
     ("KEY_LEFTCTRL+KEY_V", "Ctrl+V — почти везде"),
@@ -36,7 +36,7 @@ fn slider_row(
     title: &str,
     hint: &str,
 ) {
-    setting_row(ui, p, title, hint, 380.0, |ui| {
+    setting_row(ui, p, title, hint, |ui| {
         ui.add(Slider::new(value, range).suffix(" мс").step_by(5.0));
     });
 }
@@ -80,20 +80,12 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
     interface(ui, p, &mut app.settings.current);
     ui.add_space(12.0);
     autostart(app, ui, p);
-    ui.add_space(18.0);
-    save_bar(app, ui, p);
 }
 
 /// Заголовок и предупреждения: служба читает другой файл, в файле ошибка.
 fn header(app: &mut App, ui: &mut Ui, p: &Palette) {
     let shown = shown_path(app.settings.path());
-    page_header(
-        ui,
-        p,
-        icons::SLIDERS_HORIZONTAL,
-        "Настройки",
-        &format!("Сохраняются в {shown}"),
-    );
+    page_intro(ui, p, &format!("Сохраняются в {shown}"));
     if let Some(other) = app.service_config() {
         let text = format!(
             "Служба запущена с другим конфигом — {}: изменения здесь на неё не подействуют.",
@@ -162,7 +154,6 @@ fn typing(ui: &mut Ui, p: &Palette, s: &mut Settings) {
             p,
             "Самое длинное слово",
             "Длиннее не исправляется — защита в играх, где «слово» — это WASD.",
-            380.0,
             |ui| {
                 ui.add(Slider::new(&mut s.max_word_len, 10..=200).suffix(" симв."));
             },
@@ -187,7 +178,6 @@ fn selection(ui: &mut Ui, p: &Palette, s: &mut Settings) {
                 p,
                 "Как заменять",
                 "Вставка надёжнее. Набор обходится без буфера обмена, но переводы строк и символы, которых нет на клавиатуре, всё равно вставляются через него.",
-                220.0,
                 |ui| {
                     for method in [SelectionMethod::Type, SelectionMethod::Paste] {
                         ui.radio_value(
@@ -199,7 +189,7 @@ fn selection(ui: &mut Ui, p: &Palette, s: &mut Settings) {
                 },
             );
             // Нужны и при наборе: текст, который клавишами не набрать, вставляется.
-            setting_row(ui, p, "Сочетание вставки", "", 280.0, |ui| {
+            setting_row(ui, p, "Сочетание вставки", "", |ui| {
                 combo(ui, "paste_keys", &mut s.paste_keys, &PASTE_KEYS);
             });
             toggle_row(
@@ -221,7 +211,6 @@ fn layout_switch(ui: &mut Ui, p: &Palette, s: &mut Settings) {
             p,
             "Чем переключать",
             "«Автоматически» сам найдёт KDE, GNOME, Hyprland, Sway или X11.",
-            280.0,
             |ui| {
                 let backends = BackendKind::ALL.map(|b| (b.as_str(), b.title()));
                 combo(ui, "backend", &mut s.backend, &backends);
@@ -233,7 +222,6 @@ fn layout_switch(ui: &mut Ui, p: &Palette, s: &mut Settings) {
                 p,
                 "Ваше сочетание переключения",
                 "Должно совпадать с настройкой системы.",
-                280.0,
                 |ui| {
                     combo(ui, "hotkey", &mut s.switch_hotkey, &HOTKEYS);
                 },
@@ -243,7 +231,6 @@ fn layout_switch(ui: &mut Ui, p: &Palette, s: &mut Settings) {
                 p,
                 "Раскладки по порядку",
                 "Через запятую, например: us, ru",
-                220.0,
                 |ui| {
                     // Поле показывает набранный текст, пока он даёт тот же
                     // список: иначе запятая в конце пропадала бы на следующем
@@ -313,46 +300,45 @@ fn autostart(app: &mut App, ui: &mut Ui, p: &Palette) {
     });
 }
 
-/// «Сохранить», «Отменить», «По умолчанию» и ошибка в значениях.
-fn save_bar(app: &mut App, ui: &mut Ui, p: &Palette) {
+/// Под вкладкой, всегда на виду: «Сохранить», «Отменить», «По умолчанию»
+/// и ошибка в значениях.
+pub fn save_bar(app: &mut App, ui: &mut Ui, p: &Palette) {
     let dirty = app.settings.dirty();
+    let valid = Config::from_settings(&app.settings.current);
+    if let Err(err) = &valid {
+        widgets::notice(ui, icons::WARNING, p.negative, &format!("{err:#}"));
+        ui.add_space(4.0);
+    }
     ui.horizontal(|ui| {
-        let valid = Config::from_settings(&app.settings.current);
-        if let Err(err) = &valid {
-            ui.label(widgets::icon(icons::WARNING, 16.0).color(p.negative));
-            ui.label(RichText::new(format!("{err:#}")).color(p.negative));
+        let locked = app.settings.error().is_some();
+        let mut save = ui
+            .add_enabled_ui(dirty && valid.is_ok() && !locked, |ui| {
+                widgets::button(ui, p, icons::FLOPPY_DISK, "Сохранить", true)
+            })
+            .inner;
+        if locked {
+            save = save.on_disabled_hover_text(LOCKED);
+        }
+        if save.clicked() {
+            app.save_settings("Настройки сохранены");
+        }
+        let revert = ui
+            .add_enabled_ui(dirty, |ui| {
+                widgets::button(ui, p, icons::ARROW_COUNTER_CLOCKWISE, "Отменить", false)
+            })
+            .inner;
+        if revert.clicked() {
+            app.settings.revert();
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let locked = app.settings.error().is_some();
-            let mut save = ui
-                .add_enabled_ui(dirty && valid.is_ok() && !locked, |ui| {
-                    widgets::button(ui, p, icons::FLOPPY_DISK, "Сохранить", true)
-                })
-                .inner;
-            if locked {
-                save = save.on_disabled_hover_text(LOCKED);
-            }
-            if save.clicked() {
-                app.save_settings("Настройки сохранены");
-            }
-            if ui
-                .add_enabled_ui(dirty, |ui| {
-                    widgets::button(ui, p, icons::ARROW_COUNTER_CLOCKWISE, "Отменить", false)
-                })
-                .inner
-                .clicked()
-            {
-                app.settings.revert();
-            }
-            if widgets::button(ui, p, icons::BROOM, "По умолчанию", false).clicked() {
+            let defaults = widgets::button(ui, p, icons::BROOM, "", false)
+                .on_hover_text("Значения по умолчанию");
+            if defaults.clicked() {
                 app.settings.reset_to_defaults();
                 app.toast(
                     ToastKind::Info,
                     "Значения по умолчанию — нажмите «Сохранить»",
                 );
-            }
-            if dirty {
-                ui.label(RichText::new("есть несохранённые изменения").color(p.warning));
             }
         });
     });

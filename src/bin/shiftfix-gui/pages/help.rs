@@ -1,6 +1,6 @@
 //! Инструкция.
 
-use eframe::egui::{Align, Color32, CornerRadius, Grid, Pos2, RichText, Sense, Ui, vec2};
+use eframe::egui::{Color32, CornerRadius, Grid, Pos2, RichText, Sense, Ui, vec2};
 use egui_phosphor::regular as icons;
 
 use crate::app::{App, Page, VERSION};
@@ -8,7 +8,7 @@ use crate::format::{shown_path, versions_differ};
 use crate::link::ServiceAction;
 use crate::theme::Palette;
 use crate::update::{self, Outcome};
-use crate::widgets::{self, bold, card, card_title, keycap, page_header};
+use crate::widgets::{self, bold, card, card_title, keycap, page_intro};
 
 fn number(ui: &mut Ui, p: &Palette, n: usize) {
     let (rect, _) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::hover());
@@ -95,11 +95,9 @@ fn example(ui: &mut Ui, p: &Palette, before: &str, after: &str) {
 }
 
 pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
-    page_header(
+    page_intro(
         ui,
         p,
-        icons::BOOK_OPEN_TEXT,
-        "Инструкция",
         "Как пользоваться shiftfix и что делать, если что-то не работает",
     );
     short(ui, p);
@@ -108,7 +106,7 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
     ui.add_space(12.0);
     selection(ui, p);
     ui.add_space(12.0);
-    pause(app, ui, p);
+    pause(ui, p);
     ui.add_space(12.0);
     devices(app, ui, p);
     ui.add_space(12.0);
@@ -118,10 +116,7 @@ pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
     ui.add_space(12.0);
     commands(ui, p);
     ui.add_space(12.0);
-    let about_card = ui.scope(|ui| about(app, ui, p)).response;
-    if std::mem::take(&mut app.about_focus) {
-        about_card.scroll_to_me(Some(Align::TOP));
-    }
+    about(app, ui, p);
 }
 
 fn short(ui: &mut Ui, p: &Palette) {
@@ -204,19 +199,15 @@ fn selection(ui: &mut Ui, p: &Palette) {
     });
 }
 
-fn pause(app: &mut App, ui: &mut Ui, p: &Palette) {
+fn pause(ui: &mut Ui, p: &Palette) {
     card(ui, p, |ui| {
         card_title(ui, p, icons::PAUSE, "Пауза — например, в играх");
         for line in [
-            "Переключатель на главной странице.",
+            "Переключатель вверху окна.",
             "Значок в трее: щелчок колесом мыши или пункт меню «Исправлять раскладку».",
             "Команда shiftfix --toggle — её удобно повесить на горячую клавишу в настройках системы.",
         ] {
             bullet(ui, p, line);
-        }
-        ui.add_space(4.0);
-        if widgets::button(ui, p, icons::HOUSE, "На главную", false).clicked() {
-            app.page = Page::Home;
         }
     });
 }

@@ -187,7 +187,6 @@ fn breeze_as_before() {
     assert_eq!(b.dark.button, rgb(0x31353a));
     assert_eq!(b.light.card, WHITE);
     assert_eq!(b.light.accent, rgb(0x1d99f3));
-    assert_eq!(b.light.accent2, rgb(0x7c5ce0));
     assert_eq!(b.light.button, rgb(0xe8eaed));
     let p = resolve(&ThemeSettings::default(), &System::default(), None);
     assert_eq!(p, b.dark);
@@ -200,8 +199,6 @@ fn resolve_own_accent() {
     let p = resolve(&t, &System::default(), None);
     assert!(!p.dark);
     assert_eq!(p.accent, rgb(0xff8800));
-    assert_ne!(p.accent2, p.accent);
-    assert_ne!(p.accent2, breeze.light.accent2);
     assert_eq!(p.on_accent, on_accent(p.accent));
     assert_eq!(p.bg, breeze.light.bg);
     // Акцент тёмного варианта светлый не трогает.

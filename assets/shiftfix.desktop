@@ -10,7 +10,7 @@ Icon=shiftfix
 Terminal=false
 Categories=Utility;Settings;
 Keywords=keyboard;layout;switcher;punto;caramba;раскладка;клавиатура;
-StartupWMClass=shiftfix
+StartupWMClass=shiftfix-popup
 Actions=window;devices;help;
 
 [Desktop Action window]
