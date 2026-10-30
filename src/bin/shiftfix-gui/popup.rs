@@ -81,10 +81,10 @@ pub fn run(at: Option<(i32, i32)>, forced_theme: Option<ThemeMode>) -> eframe::R
         .with_decorations(false)
         .with_window_level(egui::WindowLevel::AlwaysOnTop);
     // Где встать попапу. В X11 он ставит себя сам. В Wayland окно себя не
-    // ставит: в Hyprland его передвинет hyprctl, когда окно появится, а
-    // курсор узнаём сейчас, пока он у значка; в KDE это делает KWin-скрипт —
-    // он загружается до создания окна, чтобы его встретить. В остальных
-    // окружениях место выбирает композитор.
+    // ставит, и до создания окна попап просит композитор открыть его у
+    // курсора, пока тот у значка: в Hyprland — правилом окна (а когда окно
+    // появится, ещё и передвинет его туда же), в KDE — KWin-скриптом. В
+    // остальных окружениях место выбирает композитор.
     let (mut hyprland_spot, mut kwin_script) = (None, None);
     if !wayland() {
         if let Some(pos) = at.and_then(x11_position) {
@@ -93,7 +93,11 @@ pub fn run(at: Option<(i32, i32)>, forced_theme: Option<ThemeMode>) -> eframe::R
     } else if hyprland::running() {
         match hyprland::cursor_and_area() {
             Ok((cursor, area)) => {
-                hyprland_spot = Some(placement::popup_position(cursor, area, SIZE));
+                let (x, y) = placement::popup_position(cursor, area, SIZE);
+                if let Err(err) = hyprland::expect_popup(x, y) {
+                    log::warn!("Hyprland откроет попап по-своему и потом передвинет: {err:#}");
+                }
+                hyprland_spot = Some((x, y));
             }
             Err(err) => log::warn!("Hyprland не поставит попап у курсора: {err:#}"),
         }
@@ -110,7 +114,8 @@ pub fn run(at: Option<(i32, i32)>, forced_theme: Option<ThemeMode>) -> eframe::R
                 ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Close);
             }
         });
-        // Окно создано. Hyprland покажет его в списке окон с первым кадром,
+        // Окно создано. Если правило окна не сработало, hyprctl передвинет
+        // его к значку. Hyprland покажет окно в списке окон с первым кадром,
         // а пока поток окна ждёт, кадр не нарисуется — ждать в своём потоке.
         if let Some((x, y)) = hyprland_spot {
             thread::spawn(move || {
