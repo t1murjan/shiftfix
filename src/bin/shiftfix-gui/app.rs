@@ -1,12 +1,12 @@
-//! Окно: боковая панель, страницы, всплывающие сообщения.
+//! Окно: полоса вкладок, вкладки, всплывающие сообщения.
 
 use std::fs;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
 use eframe::egui::{
-    self, Align, Align2, Color32, CornerRadius, Frame, Image, Layout, Margin, RichText, ScrollArea,
-    Sense, Stroke, TextureHandle, TextureOptions, Ui, load::SizedTexture, vec2,
+    self, Align, Align2, Color32, CornerRadius, Frame, Image, Layout, Margin, ScrollArea, Sense,
+    Stroke, StrokeKind, TextureHandle, TextureOptions, Ui, load::SizedTexture, vec2,
 };
 use egui_phosphor::regular as icons;
 use shiftfix::config::{self, ThemeMode, ThemeSettings};
@@ -14,12 +14,11 @@ use shiftfix::devices::{DeviceInfo, Role};
 use shiftfix::ipc::{Request, Status};
 
 use crate::edit::SettingsEdit;
-use crate::format::versions_differ;
 use crate::link::{Check, Link, ServiceAction, Snapshot};
 use crate::pages;
 use crate::theme::{self, Palette};
 use crate::toast::{Toast, ToastKind, Toasts};
-use crate::update::{self, Update};
+use crate::update::{self, Outcome, Update};
 use crate::widgets::{self, bold};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,7 +78,7 @@ impl Page {
 /// Версия окна; у службы своя — в `Status.version`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Что сейчас со службой — для заголовка и боковой панели.
+/// Что сейчас со службой — для строки над вкладкой.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum State {
     Working,
@@ -102,8 +101,6 @@ pub struct App {
     logo: TextureHandle,
     /// Тема окна: портал, применённая палитра, отложенная запись.
     pub theme: theme::ThemeState,
-    /// Прокрутить «Инструкцию» к блоку «О программе» (клик по версии).
-    pub about_focus: bool,
     /// Вкладки из `--page` повторных запусков, пока окно открыто.
     raised: Receiver<Page>,
 }
@@ -142,7 +139,6 @@ impl App {
             check: Check::default(),
             update,
             logo,
-            about_focus: false,
             raised,
         }
     }
@@ -152,7 +148,7 @@ impl App {
         self.theme.mode(&self.settings.current.theme)
     }
 
-    /// Выбор режима в окне (боковая панель и «Оформление»): отменяет `--theme`,
+    /// Выбор режима в окне (кнопка в полосе вкладок и «Оформление»): отменяет `--theme`,
     /// вкладка «Оформления» снова показывает вариант на экране.
     pub fn set_mode(&mut self, mode: ThemeMode) {
         self.theme.mode_chosen();
@@ -288,100 +284,150 @@ impl App {
 
     // ─── отрисовка ───
 
-    fn sidebar(&mut self, ui: &mut Ui, p: &Palette) {
-        self.brand(ui, p);
-        ui.add_space(22.0);
-        for page in Page::ALL {
-            if nav_item(ui, p, page.icon(), page.title(), self.page == page).clicked() {
-                self.page = page;
-            }
-            ui.add_space(2.0);
+    /// Кадр окна: полоса вкладок слева, над вкладкой — её название,
+    /// состояние службы и выключатель, ниже — сама вкладка.
+    pub fn show(&mut self, ui: &mut Ui) {
+        if let Some(page) = self.raised.try_iter().last() {
+            self.page = page;
         }
-        // Низ панели раскладывается снизу вверх: режим темы, над ним версия
-        // и состояние службы.
-        ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-            self.theme_buttons(ui, p);
-            ui.add_space(6.0);
-            self.version_link(ui, p);
-            ui.add_space(4.0);
-            let (text, color) = state_label(self.state(), p);
-            widgets::pill(ui, text, color, color.gamma_multiply(0.14));
+        let p = self.begin_frame(ui.ctx());
+        self.link.show_devices(self.page == Page::Devices);
+        egui::Panel::left("tabs")
+            .exact_size(58.0)
+            .resizable(false)
+            .show_separator_line(false)
+            .frame(
+                Frame::NONE
+                    .fill(p.sidebar)
+                    .inner_margin(Margin::symmetric(0, 12)),
+            )
+            .show(ui, |ui| self.tabs(ui, &p));
+        egui::Panel::top("title")
+            .resizable(false)
+            .show_separator_line(false)
+            .frame(Frame::NONE.fill(p.bg).inner_margin(Margin {
+                left: 16,
+                right: 16,
+                top: 14,
+                bottom: 8,
+            }))
+            .show(ui, |ui| self.title_bar(ui, &p));
+        // Несохранённые настройки пропадут, когда окно закроется, поэтому
+        // «Сохранить» всегда на виду, а не в конце длинной вкладки.
+        if self.page == Page::Settings {
+            egui::Panel::bottom("save")
+                .resizable(false)
+                .show_separator_line(true)
+                .frame(
+                    Frame::NONE
+                        .fill(p.bg)
+                        .inner_margin(Margin::symmetric(16, 10)),
+                )
+                .show(ui, |ui| pages::settings::save_bar(self, ui, &p));
+        }
+        egui::CentralPanel::default()
+            .frame(Frame::NONE.fill(p.bg))
+            .show(ui, |ui| {
+                ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        Frame::NONE
+                            .inner_margin(Margin {
+                                left: 16,
+                                right: 16,
+                                top: 4,
+                                bottom: 16,
+                            })
+                            .show(ui, |ui| match self.page {
+                                Page::Home => pages::home::show(self, ui, &p),
+                                Page::Devices => pages::devices::show(self, ui, &p),
+                                Page::Settings => pages::settings::show(self, ui, &p),
+                                Page::Help => pages::help::show(self, ui, &p),
+                                Page::Log => pages::log::show(self, ui, &p),
+                            });
+                    });
+            });
+        let ctx = ui.ctx().clone();
+        // Рамка: без неё окно без заголовка сливается с окнами под ним.
+        ui.painter().rect_stroke(
+            ctx.content_rect(),
+            CornerRadius::ZERO,
+            Stroke::new(1.0, p.card_border),
+            StrokeKind::Inside,
+        );
+        self.show_toasts(&ctx, &p);
+    }
+
+    /// Окно закрывается: недописанную тему — в файл.
+    pub fn on_exit(&mut self) {
+        if self.theme.unsaved() {
+            self.save_theme();
+        }
+    }
+
+    /// Полоса слева: значок, вкладки значками (название — в подсказке) и
+    /// внизу режим темы. Точка на «Главной» — вышла новая версия.
+    fn tabs(&mut self, ui: &mut Ui, p: &Palette) {
+        let newer = matches!(self.update.state().outcome, Some(Outcome::Newer(_)));
+        ui.vertical_centered(|ui| {
+            ui.add(self.logo(34.0));
+            ui.add_space(14.0);
+            for page in Page::ALL {
+                let dot = page == Page::Home && newer;
+                let tab = tab_button(ui, p, page.icon(), self.page == page, dot);
+                if tab.on_hover_text(page.title()).clicked() {
+                    self.page = page;
+                }
+                ui.add_space(4.0);
+            }
+        });
+        ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
+            self.theme_button(ui, p);
         });
     }
 
-    /// Значок и название программы над вкладками.
-    fn brand(&self, ui: &mut Ui, p: &Palette) {
+    /// Режим темы одной кнопкой: щелчок — следующий режим.
+    fn theme_button(&mut self, ui: &mut Ui, p: &Palette) {
+        let (icon, hint, next) = match self.theme_mode() {
+            ThemeMode::System => (icons::CIRCLE_HALF, "Тема как в системе", ThemeMode::Light),
+            ThemeMode::Light => (icons::SUN, "Светлая тема", ThemeMode::Dark),
+            ThemeMode::Dark => (icons::MOON, "Тёмная тема", ThemeMode::System),
+        };
+        let button = egui::Button::new(widgets::icon(icon, 18.0).color(p.weak))
+            .fill(Color32::TRANSPARENT)
+            .stroke(Stroke::NONE)
+            .corner_radius(CornerRadius::same(10))
+            .min_size(vec2(40.0, 36.0));
+        let hint = format!("{hint} — щёлкните, чтобы сменить");
+        if ui.add(button).on_hover_text(hint).clicked() {
+            self.set_mode(next);
+        }
+    }
+
+    /// Над вкладкой: её название (у «Главной» — название программы),
+    /// состояние службы и выключатель, пока служба отвечает.
+    fn title_bar(&mut self, ui: &mut Ui, p: &Palette) {
+        let title = match self.page {
+            Page::Home => "shiftfix",
+            page => page.title(),
+        };
+        let state = self.state();
         ui.horizontal(|ui| {
-            ui.add(self.logo(42.0));
-            ui.vertical(|ui| {
-                ui.add_space(2.0);
-                ui.label(bold("shiftfix", 21.0).color(p.text));
-                ui.label(
-                    RichText::new("исправление раскладки")
-                        .size(12.5)
-                        .color(p.weak),
-                );
+            ui.label(bold(title, 19.0).color(p.text));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if matches!(state, State::Working | State::Paused) {
+                    let mut on = state == State::Working;
+                    let toggle = widgets::toggle(ui, &mut on, 22.0, p)
+                        .on_hover_text("Включить или поставить на паузу");
+                    if toggle.changed() {
+                        self.link.send(Request::SetEnabled { enabled: on }, None);
+                    }
+                    ui.add_space(4.0);
+                }
+                let (text, color) = state_label(state, p);
+                widgets::pill(ui, text, color, color.gamma_multiply(0.14));
             });
         });
-    }
-
-    /// Режим темы — тремя значками.
-    fn theme_buttons(&mut self, ui: &mut Ui, p: &Palette) {
-        ui.horizontal(|ui| {
-            let current = self.theme_mode();
-            for (mode, icon, hint) in [
-                (ThemeMode::System, icons::CIRCLE_HALF, "Тема как в системе"),
-                (ThemeMode::Light, icons::SUN, "Светлая тема"),
-                (ThemeMode::Dark, icons::MOON, "Тёмная тема"),
-            ] {
-                let selected = current == mode;
-                let text =
-                    widgets::icon(icon, 16.0).color(if selected { p.accent } else { p.weak });
-                let button = egui::Button::new(text)
-                    .fill(if selected {
-                        p.accent.gamma_multiply(0.16)
-                    } else {
-                        Color32::TRANSPARENT
-                    })
-                    .stroke(Stroke::NONE)
-                    .corner_radius(CornerRadius::same(8))
-                    .min_size(vec2(34.0, 30.0));
-                if ui.add(button).on_hover_text(hint).clicked() {
-                    self.set_mode(mode);
-                }
-            }
-        });
-    }
-
-    /// Версия службы (или окна, пока служба не отвечает); щелчок открывает
-    /// «О программе». Версии различаются — подсвечена.
-    fn version_link(&mut self, ui: &mut Ui, p: &Palette) {
-        let version = self.status().map_or_else(
-            || format!("версия {VERSION}"),
-            |s| format!("служба {} · pid {}", s.version, s.pid),
-        );
-        let differ = self
-            .status()
-            .is_some_and(|s| versions_differ(VERSION, &s.version));
-        let (color, hint) = if differ {
-            (
-                p.warning,
-                "Версии окна и службы различаются — подробнее в «О программе»",
-            )
-        } else {
-            (p.weak, "О программе")
-        };
-        let label =
-            egui::Label::new(RichText::new(version).size(12.0).color(color)).sense(Sense::click());
-        let clicked = ui
-            .add(label)
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text(hint)
-            .clicked();
-        if clicked {
-            self.page = Page::Help;
-            self.about_focus = true;
-        }
     }
 }
 
@@ -394,9 +440,9 @@ pub fn state_label(state: State, p: &Palette) -> (&'static str, Color32) {
     }
 }
 
-fn nav_item(ui: &mut Ui, p: &Palette, icon: &str, title: &str, selected: bool) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
-    let t = ui.ctx().animate_bool_responsive(response.id, selected);
+/// Вкладка в полосе слева: значок; `dot` — точка в углу.
+fn tab_button(ui: &mut Ui, p: &Palette, icon: &str, selected: bool, dot: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::click());
     if selected || response.hovered() {
         let fill = if selected {
             widgets::selected_fill(p)
@@ -405,81 +451,18 @@ fn nav_item(ui: &mut Ui, p: &Palette, icon: &str, title: &str, selected: bool) -
         };
         ui.painter().rect_filled(rect, CornerRadius::same(10), fill);
     }
-    if t > 0.0 {
-        let bar = egui::Rect::from_min_size(rect.left_top() + vec2(0.0, 10.0), vec2(3.5, 20.0 * t));
-        ui.painter()
-            .rect_filled(bar, CornerRadius::same(2), p.accent);
-    }
-    let color = if selected { p.accent } else { p.text };
     ui.painter().text(
-        rect.left_center() + vec2(16.0, 0.0),
-        Align2::LEFT_CENTER,
+        rect.center(),
+        Align2::CENTER_CENTER,
         icon,
-        widgets::icon_font(19.0),
-        color,
+        widgets::icon_font(20.0),
+        if selected { p.accent } else { p.weak },
     );
-    ui.painter().text(
-        rect.left_center() + vec2(46.0, 0.0),
-        Align2::LEFT_CENTER,
-        title,
-        egui::FontId::proportional(15.5),
-        if selected { p.accent } else { p.text },
-    );
+    if dot {
+        let center = rect.right_top() + vec2(-9.0, 9.0);
+        ui.painter().circle_filled(center, 4.0, p.accent);
+    }
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
-}
-
-impl eframe::App for App {
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
-        if let Some(page) = self.raised.try_iter().last() {
-            self.page = page;
-        }
-        let p = self.begin_frame(ui.ctx());
-        self.link.show_devices(self.page == Page::Devices);
-        egui::Panel::left("nav")
-            .exact_size(236.0)
-            .resizable(false)
-            .show_separator_line(false)
-            .frame(Frame::NONE.fill(p.sidebar).inner_margin(Margin {
-                left: 14,
-                right: 14,
-                top: 20,
-                bottom: 16,
-            }))
-            .show(ui, |ui| self.sidebar(ui, &p));
-        egui::CentralPanel::default()
-            .frame(Frame::NONE.fill(p.bg))
-            .show(ui, |ui| {
-                ScrollArea::vertical()
-                    .auto_shrink([false; 2])
-                    .show(ui, |ui| {
-                        Frame::NONE
-                            .inner_margin(Margin {
-                                left: 34,
-                                right: 34,
-                                top: 28,
-                                bottom: 34,
-                            })
-                            .show(ui, |ui| {
-                                ui.set_max_width(ui.available_width().min(940.0));
-                                match self.page {
-                                    Page::Home => pages::home::show(self, ui, &p),
-                                    Page::Devices => pages::devices::show(self, ui, &p),
-                                    Page::Settings => pages::settings::show(self, ui, &p),
-                                    Page::Help => pages::help::show(self, ui, &p),
-                                    Page::Log => pages::log::show(self, ui, &p),
-                                }
-                            });
-                    });
-            });
-        let ctx = ui.ctx().clone();
-        self.show_toasts(&ctx, &p);
-    }
-
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        if self.theme.unsaved() {
-            self.save_theme();
-        }
-    }
 }
 
 #[cfg(test)]

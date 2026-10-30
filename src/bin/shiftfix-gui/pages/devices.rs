@@ -1,14 +1,12 @@
 //! Устройства: что слушает shiftfix, активность и ручная поправка роли.
 
-use eframe::egui::{
-    self, Align, Color32, CornerRadius, Frame, Layout, Margin, RichText, Stroke, Ui,
-};
+use eframe::egui::{self, Color32, CornerRadius, Frame, Margin, RichText, Stroke, Ui};
 use egui_phosphor::regular as icons;
 use shiftfix::devices::{DeviceInfo, Role};
 
 use crate::app::App;
 use crate::theme::Palette;
-use crate::widgets::{self, card, card_title, page_header};
+use crate::widgets::{self, card, card_title, page_intro};
 
 pub fn role_icon(role: Role) -> &'static str {
     match role {
@@ -23,11 +21,9 @@ pub fn role_icon(role: Role) -> &'static str {
 }
 
 pub fn show(app: &mut App, ui: &mut Ui, p: &Palette) {
-    page_header(
+    page_intro(
         ui,
         p,
-        icons::KEYBOARD,
-        "Устройства",
         "Клавиатуры shiftfix слушает, а клики мыши, тачпада и касания экрана сбрасывают запомненное слово.",
     );
     tip(ui, p);
@@ -171,7 +167,7 @@ fn device_row(ui: &mut Ui, p: &Palette, dev: &DeviceInfo, editable: bool) -> Opt
         ui.label(widgets::icon(role_icon(dev.role), 20.0).color(icon_color));
         ui.vertical(|ui| {
             let name = if dev.name.is_empty() { "(без имени)" } else { &dev.name };
-            ui.label(RichText::new(name).color(p.text).strong());
+            ui.add(egui::Label::new(RichText::new(name).color(p.text).strong()).wrap());
             let mut details = vec![dev.key.split(' ').next().unwrap_or_default().to_owned(), dev.path.clone()];
             if dev.virtual_device {
                 details.push("виртуальное".into());
@@ -180,33 +176,35 @@ fn device_row(ui: &mut Ui, p: &Palette, dev: &DeviceInfo, editable: bool) -> Opt
                 details.push("роль задана вручную".into());
             }
             ui.label(RichText::new(details.join(" · ")).size(12.0).color(p.weak));
-        });
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let auto_label = format!("Авто: {}", dev.detected.title().to_lowercase());
-            let selected = if dev.overridden { dev.role.title().to_owned() } else { auto_label.clone() };
-            ui.add_enabled_ui(editable, |ui| {
-                egui::ComboBox::from_id_salt(("role", &dev.key, &dev.path))
-                    .selected_text(selected)
-                    .width(210.0)
-                    .show_ui(ui, |ui| {
-                        if ui.selectable_label(!dev.overridden, auto_label).clicked() && dev.overridden {
-                            picked = Some(None);
-                        }
-                        ui.separator();
-                        for role in Role::CHOICES {
-                            let label = widgets::icon_job(role_icon(role), role.title(), 14.5, p.text);
-                            let current = dev.overridden && dev.role == role;
-                            if ui.selectable_label(current, label).clicked() && !current {
-                                picked = Some(Some(role));
+            ui.add_space(2.0);
+            // Роль — под именем: рядом с ним в узком окне не помещается.
+            ui.horizontal(|ui| {
+                let auto_label = format!("Авто: {}", dev.detected.title().to_lowercase());
+                let selected = if dev.overridden { dev.role.title().to_owned() } else { auto_label.clone() };
+                ui.add_enabled_ui(editable, |ui| {
+                    egui::ComboBox::from_id_salt(("role", &dev.key, &dev.path))
+                        .selected_text(selected)
+                        .width(200.0)
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_label(!dev.overridden, auto_label).clicked() && dev.overridden {
+                                picked = Some(None);
                             }
-                        }
-                    });
+                            ui.separator();
+                            for role in Role::CHOICES {
+                                let label = widgets::icon_job(role_icon(role), role.title(), 14.5, p.text);
+                                let current = dev.overridden && dev.role == role;
+                                if ui.selectable_label(current, label).clicked() && !current {
+                                    picked = Some(Some(role));
+                                }
+                            }
+                        });
+                });
+                if dev.role == Role::Keyboard && !dev.overridden && dev.virtual_device {
+                    ui.label(widgets::icon(icons::ROBOT, 17.0).color(Color32::GRAY)).on_hover_text(
+                        "Виртуальная клавиатура (keyd, kanata, remapper…). Если она дублирует настоящую — выберите «Не слушать».",
+                    );
+                }
             });
-            if dev.role == Role::Keyboard && !dev.overridden && dev.virtual_device {
-                ui.label(widgets::icon(icons::ROBOT, 17.0).color(Color32::GRAY)).on_hover_text(
-                    "Виртуальная клавиатура (keyd, kanata, remapper…). Если она дублирует настоящую — выберите «Не слушать».",
-                );
-            }
         });
     });
     picked

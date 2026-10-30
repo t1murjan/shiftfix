@@ -1,8 +1,7 @@
-//! Один экземпляр окна и один — попапа: у каждого своя блокировка и свой
-//! сокет в XDG_RUNTIME_DIR. Второй запуск окна просит открытое окно
-//! показаться и открыть вкладку (строка `show` и имя вкладки), второй запуск
-//! попапа — закрыться (`close`): так щелчок по значку в трее и открывает, и
-//! закрывает попап.
+//! Окно одно: блокировка и сокет в XDG_RUNTIME_DIR. Второй запуск просит
+//! открытое окно показаться и открыть вкладку (строка `show` и имя вкладки)
+//! или, если это щелчок по значку в трее (`--popup`), закрыться (`close`):
+//! так щелчок по значку и открывает, и закрывает окно.
 
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
@@ -16,14 +15,12 @@ use shiftfix::sys::{lock, paths};
 
 use crate::app::Page;
 
-/// Просьба к попапу закрыться.
+/// Просьба к окну закрыться.
 pub const CLOSE: &str = "close";
 
 #[derive(Clone, Copy)]
 pub enum Instance {
-    /// Окно с вкладками (`shiftfix-gui`).
-    Window,
-    /// Попап у значка в трее (`shiftfix-gui --popup`).
+    /// Окно у значка в трее с вкладками.
     Popup,
 }
 
@@ -38,14 +35,10 @@ pub enum Start {
 
 impl Instance {
     /// Файл экземпляра в XDG_RUNTIME_DIR: `lock` — блокировка, `sock` — сокет;
-    /// у попапа ещё `closed` — когда он закрылся, потеряв фокус, и `js` —
-    /// скрипт для KWin, пока тот его не прочитал.
+    /// ещё `closed` — когда окно закрылось, потеряв фокус, и `js` — скрипт
+    /// для KWin, пока тот его не прочитал.
     pub fn path(self, extension: &str) -> PathBuf {
-        let name = match self {
-            Instance::Window => "shiftfix-gui",
-            Instance::Popup => "shiftfix-popup",
-        };
-        paths::runtime_dir().join(format!("{name}.{extension}"))
+        paths::runtime_dir().join(format!("shiftfix-popup.{extension}"))
     }
 
     /// Взять блокировку экземпляра.

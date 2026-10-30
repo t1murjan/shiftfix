@@ -3,7 +3,7 @@
 use eframe::egui::color_picker::{self, Alpha};
 use eframe::egui::{
     self, Align, CornerRadius, Frame, Id, Layout, Margin, RichText, Stroke, StrokeKind, TextStyle,
-    Ui,
+    Ui, vec2,
 };
 use egui_phosphor::regular as icons;
 use shiftfix::config::ThemeMode;
@@ -130,7 +130,6 @@ fn mode_row(app: &mut App, ui: &mut Ui, p: &Palette, mode: ThemeMode) {
         p,
         "Тема",
         "Применяется и сохраняется сразу.",
-        330.0,
         |ui| {
             if let Some(mode) = widgets::segment(ui, p, mode, &MODES) {
                 app.set_mode(mode);
@@ -266,7 +265,8 @@ fn reset_button(app: &mut App, ui: &mut Ui, p: &Palette, variant: Variant) {
     let t = app.settings.current.theme.clone();
     let mut reset = t.clone();
     theme::reset_variant(&mut reset, variant);
-    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+    let row = vec2(ui.available_width(), 0.0);
+    ui.allocate_ui_with_layout(row, Layout::right_to_left(Align::Center), |ui| {
         let clicked = ui
             .add_enabled_ui(reset != t, |ui| {
                 widgets::button(ui, p, icons::ARROW_COUNTER_CLOCKWISE, "Сбросить", false)

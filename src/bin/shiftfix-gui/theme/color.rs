@@ -24,7 +24,7 @@ pub fn on_accent(c: Color32) -> Color32 {
 
 /// Чёрный или белый для надписей на градиенте `from → to`: у кого худший
 /// из двух контрастов выше.
-pub fn best_on(from: Color32, to: Color32) -> Color32 {
+fn best_on(from: Color32, to: Color32) -> Color32 {
     let worst = |ink| contrast(ink, from).min(contrast(ink, to));
     if worst(BLACK) >= worst(WHITE) {
         BLACK
@@ -47,19 +47,6 @@ pub fn parse_hex(s: &str) -> Option<Color32> {
 /// Цвет в виде «#rrggbb» — так он записывается в config.toml.
 pub fn format_hex(c: Color32) -> String {
     format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b())
-}
-
-/// Сдвиг оттенка второго цвета градиента от своего акцента: как у Breeze,
-/// где после голубого идёт фиолетовый (около 54°).
-const ACCENT2_HUE_SHIFT: f32 = 0.15;
-
-/// Второй цвет градиента для своего или системного акцента: тот же цвет
-/// (HSV в гамма-пространстве) со сдвигом оттенка.
-pub(super) fn shifted_hue(c: Color32) -> Color32 {
-    let (h, s, v) = ecolor::hsv_from_rgb([c.r(), c.g(), c.b()].map(|x| f32::from(x) / 255.0));
-    let [r, g, b] = ecolor::rgb_from_hsv(((h + ACCENT2_HUE_SHIFT).fract(), s, v));
-    let u8_of = |x: f32| (x * 255.0).round().clamp(0.0, 255.0) as u8;
-    Color32::from_rgb(u8_of(r), u8_of(g), u8_of(b))
 }
 
 /// Ниже этого контраста с фоном карточек акцентные значки, заголовки и
@@ -168,15 +155,5 @@ mod tests {
         for c in [orange, BLACK, WHITE, rgb(0x0a0b0c), rgb(0x3daee9)] {
             assert_eq!(parse_hex(&format_hex(c)), Some(c));
         }
-    }
-
-    #[test]
-    fn accent2_is_shifted_hue() {
-        // От голубого Breeze — в сторону фиолетового, яркость та же.
-        let a2 = shifted_hue(rgb(0x3daee9));
-        assert!(a2.b() > a2.r() && a2.r() > a2.g(), "{a2:?}");
-        assert_eq!(a2.b(), 0xe9);
-        // У серого оттенка нет — второй цвет тот же.
-        assert_eq!(shifted_hue(rgb(0x808080)), rgb(0x808080));
     }
 }

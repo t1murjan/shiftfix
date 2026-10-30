@@ -16,7 +16,7 @@ use shiftfix::config::{ThemeMode, ThemeSettings};
 
 use palettes::lookup;
 
-pub use color::{accent_readable, best_on, format_hex, knob_on, on_accent, parse_hex};
+pub use color::{accent_readable, format_hex, knob_on, on_accent, parse_hex};
 pub use legacy::migrate_legacy;
 pub use palettes::{PALETTES, Palette, PaletteDef, find};
 pub use state::ThemeState;
@@ -117,7 +117,6 @@ pub fn variant_palette(t: &ThemeSettings, sys: &System, mode: ThemeMode, v: Vari
     let system_accent = sys.accent.filter(|_| system_accent_active(t, sys, mode));
     if let Some(accent) = system_accent.or_else(|| parse_hex(v.accent(t))) {
         p.accent = accent;
-        p.accent2 = color::shifted_hue(accent);
     }
     p.on_accent = on_accent(p.accent);
     p

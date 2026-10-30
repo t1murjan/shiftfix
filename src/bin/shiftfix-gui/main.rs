@@ -1,6 +1,6 @@
-//! `shiftfix-gui` — графическая оболочка: окно (состояние службы, устройства,
-//! настройки, инструкция и журнал), попап у значка в трее (`--popup`) и
-//! запуск из меню приложений без окна (`--background`).
+//! `shiftfix-gui` — графическая оболочка: маленькое окно у значка в трее с
+//! вкладками (состояние службы, устройства, настройки, инструкция и журнал)
+//! и запуск из меню приложений без окна (`--background`).
 
 mod app;
 mod background;
@@ -23,27 +23,24 @@ mod widgets;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver};
 
 use anyhow::{Result, bail};
 use eframe::egui;
 use shiftfix::config::ThemeMode;
 use shiftfix::sys::proc;
 
-use instance::{Instance, Start};
-
 const USAGE: &str = "\
 shiftfix-gui — настройки и состояние shiftfix
 
 Использование:
   shiftfix-gui [--page home|devices|settings|help|log] [--theme system|light|dark]
-  shiftfix-gui --popup [--at X,Y] [--theme system|light|dark]
+  shiftfix-gui --popup [--at X,Y] [--page …] [--theme …]
   shiftfix-gui --background
 
   --page          открыть вкладку
   --theme         режим оформления только на этот запуск (в настройки не пишется)
-  --popup         попап у значка в трее; такой же запуск при открытом попапе закрывает его
-  --at X,Y        где щёлкнули по значку: в X11 попап встанет рядом
+  --popup         щелчок по значку в трее: такой же запуск при открытом окне закрывает его
+  --at X,Y        где щёлкнули по значку: в X11 окно встанет рядом
   --background    запустить службу со значком в трее, если она не работает, и выйти;
                   окно — только если значка не будет
   -V, --version   версия
@@ -63,17 +60,8 @@ fn report(text: &str, critical: bool) {
 
 #[derive(Debug, PartialEq, Eq)]
 enum Command {
-    /// Окно: вкладка из `--page`, режим оформления из `--theme`.
-    Window {
-        page: Option<app::Page>,
-        theme: Option<ThemeMode>,
-    },
-    /// Попап у значка в трее: где щёлкнули по значку (`--at X,Y`) и режим
-    /// оформления.
-    Popup {
-        at: Option<(i32, i32)>,
-        theme: Option<ThemeMode>,
-    },
+    /// Окно: вкладка, место и режим оформления.
+    Open(popup::Open),
     /// Запуск из меню приложений: служба со значком в трее, окно — только
     /// если значка не будет.
     Background,
@@ -122,16 +110,15 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command> {
         }
         return Ok(Command::Background);
     }
-    if popup {
-        if page.is_some() {
-            bail!("у попапа нет вкладок: --page без --popup");
-        }
-        return Ok(Command::Popup { at, theme });
-    }
-    if at.is_some() {
+    if at.is_some() && !popup {
         bail!("--at — только с --popup");
     }
-    Ok(Command::Window { page, theme })
+    Ok(Command::Open(popup::Open {
+        page,
+        at,
+        toggle: popup,
+        theme,
+    }))
 }
 
 /// «X,Y» — точка щелчка по значку в трее.
@@ -143,12 +130,11 @@ fn parse_point(text: &str) -> Option<(i32, i32)> {
 fn main() -> eframe::Result {
     shiftfix::logbuf::init(false);
     match parse_args(std::env::args().skip(1)) {
-        Ok(Command::Window { page, theme }) => run_window(page, theme),
-        Ok(Command::Popup { at, theme }) => popup::run(at, theme),
+        Ok(Command::Open(open)) => popup::run(open),
         Ok(Command::Background) => {
             // Значка в трее не будет — без окна до программы не добраться.
             if background::window_needed() {
-                run_window(None, None)
+                popup::run(popup::Open::default())
             } else {
                 Ok(())
             }
@@ -167,51 +153,6 @@ fn main() -> eframe::Result {
             std::process::exit(2);
         }
     }
-}
-
-/// Окно с вкладками. Второе окно рядом с первым только путает: настройки
-/// сохранялись бы наперегонки, — поэтому второй запуск просит открытое окно
-/// показаться и открыть вкладку из `--page`.
-fn run_window(page: Option<app::Page>, forced_theme: Option<ThemeMode>) -> eframe::Result {
-    let _lock = match Instance::Window.start() {
-        Start::First(lock) => lock,
-        Start::Second => {
-            if !Instance::Window.send(&instance::raise_line(page)) {
-                report("окно shiftfix уже открыто", false);
-            }
-            return Ok(());
-        }
-    };
-    let viewport = egui::ViewportBuilder::default()
-        .with_title("shiftfix")
-        .with_app_id("shiftfix")
-        .with_inner_size([1000.0, 720.0])
-        .with_min_inner_size([780.0, 540.0]);
-    launch(viewport, move |cc, system| {
-        let raised = listen_for_raise(cc.egui_ctx.clone());
-        let page = page.unwrap_or(app::Page::Home);
-        Box::new(app::App::new(cc, page, raised, forced_theme, system))
-    })
-}
-
-/// Показывать окно, когда его открывают ещё раз (значок в трее, ярлык в меню).
-/// Вкладки, которые при этом просят открыть, приходят в возвращённый канал.
-fn listen_for_raise(ctx: egui::Context) -> Receiver<app::Page> {
-    let (pages, raised) = mpsc::channel();
-    Instance::Window.listen(move |line| {
-        let Some(page) = instance::parse_raise(line) else {
-            return;
-        };
-        if let Some(page) = page {
-            let _ = pages.send(page);
-        }
-        // В Wayland композитор может вместо этого подсветить окно на панели.
-        let root = egui::ViewportId::ROOT;
-        ctx.send_viewport_cmd_to(root, egui::ViewportCommand::Minimized(false));
-        ctx.send_viewport_cmd_to(root, egui::ViewportCommand::Focus);
-        ctx.request_repaint();
-    });
-    raised
 }
 
 /// Открыть окно `viewport` со значком, шрифтами, стилем и темой системы;
@@ -277,7 +218,14 @@ mod tests {
 
     #[test]
     fn arguments() {
-        let run = |page, theme| Command::Window { page, theme };
+        let run = |page, theme| {
+            Command::Open(popup::Open {
+                page,
+                at: None,
+                toggle: false,
+                theme,
+            })
+        };
         assert_eq!(parse(&[]).unwrap(), run(None, None));
         assert_eq!(
             parse(&["--page", "help", "--theme", "light"]).unwrap(),
@@ -299,7 +247,14 @@ mod tests {
 
     #[test]
     fn popup_arguments() {
-        let popup = |at, theme| Command::Popup { at, theme };
+        let popup = |at, theme| {
+            Command::Open(popup::Open {
+                page: None,
+                at,
+                toggle: true,
+                theme,
+            })
+        };
         assert_eq!(parse(&["--popup"]).unwrap(), popup(None, None));
         assert_eq!(
             parse(&["--popup", "--at", "1850,1050", "--theme", "dark"]).unwrap(),
@@ -311,6 +266,16 @@ mod tests {
             popup(Some((-1280, 12)), None)
         );
         assert_eq!(parse(&["--popup", "-V"]).unwrap(), Command::Version);
+        // Щелчок по значку может сразу открыть вкладку.
+        assert_eq!(
+            parse(&["--popup", "--page", "help"]).unwrap(),
+            Command::Open(popup::Open {
+                page: Some(app::Page::Help),
+                at: None,
+                toggle: true,
+                theme: None,
+            })
+        );
     }
 
     #[test]
@@ -348,10 +313,6 @@ mod tests {
         );
         assert_eq!(error(&["--popup", "--at"]), "--at: нужно X,Y, а не «»");
         assert_eq!(error(&["--at", "1,2"]), "--at — только с --popup");
-        assert_eq!(
-            error(&["--popup", "--page", "help"]),
-            "у попапа нет вкладок: --page без --popup"
-        );
         assert_eq!(
             error(&["--bogus", "--help"]),
             "неизвестный параметр --bogus"
