@@ -45,7 +45,7 @@ fn gui_version_without_window() {
         .env_remove("WAYLAND_DISPLAY")
         .output()
         .unwrap();
-    let lock_created = runtime.join("shiftfix-gui.lock").exists();
+    let lock_created = runtime.join("shiftfix-popup.lock").exists();
     std::fs::remove_dir_all(&runtime).unwrap();
     assert!(out.status.success(), "{out:?}");
     let version = env!("CARGO_PKG_VERSION");
