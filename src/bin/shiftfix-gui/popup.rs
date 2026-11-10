@@ -21,7 +21,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
-use eframe::egui::{self, Key, Pos2, Ui, ViewportCommand, ViewportId, pos2};
+use eframe::egui::{self, Event, Key, Pos2, Ui, ViewportCommand, ViewportId, pos2};
 use shiftfix::config::ThemeMode;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, Window};
@@ -38,6 +38,10 @@ pub const SIZE: (i32, i32) = (440, 540);
 /// Класс окна (app_id в Wayland): по нему окно находят KWin-скрипт,
 /// `hyprland.rs` и правила окна.
 pub const APP_ID: &str = "shiftfix-popup";
+
+/// Во сколько раз прокрутка быстрее, чем у egui по умолчанию: колесо мыши у
+/// него сдвигает вкладку на 40 пикселей за щелчок, а вкладки длинные.
+const SCROLL_SPEED: f32 = 2.5;
 
 /// Сколько после закрытия по потере фокуса новый `--popup` считается тем же
 /// щелчком по значку: служба запускает его чуть позже, чем панель забирает
@@ -264,11 +268,48 @@ impl eframe::App for Popup {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.app.on_exit();
     }
+
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        faster_scroll(&mut raw_input.events);
+    }
+}
+
+/// Ускорить прокрутку в `SCROLL_SPEED` раз: и колесом мыши, и тачпадом.
+fn faster_scroll(events: &mut [Event]) {
+    for event in events {
+        if let Event::MouseWheel { delta, .. } = event {
+            *delta *= SCROLL_SPEED;
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scroll_is_faster_other_events_untouched() {
+        let wheel = |delta| Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta,
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut events = vec![
+            wheel(egui::vec2(0.0, -1.0)),
+            Event::Text("ы".into()),
+            wheel(egui::vec2(2.0, 4.0)),
+        ];
+        faster_scroll(&mut events);
+        assert_eq!(
+            events,
+            [
+                wheel(egui::vec2(0.0, -2.5)),
+                Event::Text("ы".into()),
+                wheel(egui::vec2(5.0, 10.0)),
+            ]
+        );
+    }
 
     #[test]
     fn click_that_closed_popup_does_not_reopen_it() {
