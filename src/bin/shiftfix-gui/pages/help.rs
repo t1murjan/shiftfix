@@ -394,7 +394,7 @@ fn about(app: &mut App, ui: &mut Ui, p: &Palette) {
                 widgets::button(ui, p, icons::ARROWS_CLOCKWISE, "Проверить", false)
             });
             if check.inner.clicked() {
-                app.update.check(ui.ctx());
+                app.update.check(ui.ctx(), update::Fetch::Always);
             }
             let newer = matches!(update.outcome, Some(Outcome::Newer(_)));
             let run = ui.add_enabled_ui(update.source.is_some(), |ui| {

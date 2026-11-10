@@ -1,6 +1,10 @@
 //! Обновление из папки с исходниками, откуда ставил install.sh: проверка новой
 //! версии (`git fetch` и версия в `Cargo.toml` ветки upstream) и запуск
 //! `git pull --ff-only && ./install.sh` в окне терминала.
+//!
+//! Окно открывают каждым щелчком по значку, поэтому само оно ходит в сеть не
+//! чаще, чем раз в `FETCH_EVERY`: между этим версия берётся из того, что уже
+//! скачано. Кнопка «Проверить» ходит в сеть всегда.
 
 use std::env;
 use std::fs;
@@ -9,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use eframe::egui;
 use shiftfix::sys::{paths, proc};
@@ -21,6 +25,18 @@ use crate::format::shown_path;
 const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 /// Сколько ждать остальные команды git: они не ходят в сеть.
 const LOCAL_TIMEOUT: Duration = Duration::from_secs(5);
+/// Как часто окно само делает `git fetch`.
+const FETCH_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// Ходить ли за новой версией в сеть.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fetch {
+    /// Только если последний `git fetch` в папке с исходниками был давно —
+    /// так проверяет окно при запуске.
+    IfStale,
+    /// Всегда — кнопка «Проверить».
+    Always,
+}
 
 /// Подсказка у кнопки «Обновить».
 pub const BUTTON_HINT: &str = "Откроет терминал: git pull и ./install.sh в папке с исходниками. \
@@ -54,7 +70,7 @@ pub struct Update(Arc<Mutex<State>>);
 
 impl Update {
     /// Перечитать папку с исходниками и проверить в фоне, нет ли новой версии.
-    pub fn check(&self, ctx: &egui::Context) {
+    pub fn check(&self, ctx: &egui::Context, fetch: Fetch) {
         let source = read_source(&source_file());
         self.set(State {
             running: source.is_some(),
@@ -64,7 +80,7 @@ impl Update {
         let Some(dir) = source else { return };
         let (update, ctx) = (self.clone(), ctx.clone());
         thread::spawn(move || {
-            let outcome = check_version(&dir, VERSION);
+            let outcome = check_version(&dir, VERSION, fetch);
             update.set(State {
                 running: false,
                 source: Some(dir),
@@ -104,16 +120,17 @@ fn read_source(file: &Path) -> Option<PathBuf> {
 }
 
 /// Есть ли в upstream версия новее `current`.
-fn check_version(dir: &Path, current: &str) -> Outcome {
-    match upstream_version(dir) {
+fn check_version(dir: &Path, current: &str, fetch: Fetch) -> Outcome {
+    match upstream_version(dir, fetch) {
         Ok(version) if newer(&version, current) => Outcome::Newer(version),
         Ok(_) => Outcome::Latest,
         Err(reason) => Outcome::Failed(reason),
     }
 }
 
-/// Версия в Cargo.toml ветки upstream после `git fetch`; ошибка — причина для показа.
-fn upstream_version(dir: &Path) -> Result<String, String> {
+/// Версия в Cargo.toml ветки upstream, перед этим — `git fetch`, если его
+/// просят или он был давно; ошибка — причина для показа.
+fn upstream_version(dir: &Path, fetch: Fetch) -> Result<String, String> {
     if !dir.join(".git").exists() {
         return Err("папка с исходниками — не git-клон".into());
     }
@@ -122,11 +139,32 @@ fn upstream_version(dir: &Path) -> Result<String, String> {
     }
     git(dir, &["rev-parse", "@{u}"], LOCAL_TIMEOUT)
         .map_err(|_| "у текущей ветки в папке с исходниками нет upstream".to_owned())?;
-    git(dir, &["fetch", "--quiet"], FETCH_TIMEOUT)
-        .map_err(|err| format!("нет связи с репозиторием ({err})"))?;
+    if fetch == Fetch::Always || !fetched_within(dir, FETCH_EVERY) {
+        git(dir, &["fetch", "--quiet"], FETCH_TIMEOUT)
+            .map_err(|err| format!("нет связи с репозиторием ({err})"))?;
+    }
     let cargo_toml = git(dir, &["show", "@{u}:Cargo.toml"], LOCAL_TIMEOUT)
         .map_err(|err| format!("Cargo.toml из upstream не читается ({err})"))?;
     package_version(&cargo_toml).ok_or_else(|| "в Cargo.toml из upstream нет версии".to_owned())
+}
+
+/// Последний `git fetch` (или `pull`) в `dir` был не раньше, чем `age` назад:
+/// git при каждом из них переписывает файл FETCH_HEAD. Файла нет (после
+/// `git clone`) или время не читается — считаем, что давно.
+fn fetched_within(dir: &Path, age: Duration) -> bool {
+    let Ok(path) = git(
+        dir,
+        &["rev-parse", "--git-path", "FETCH_HEAD"],
+        LOCAL_TIMEOUT,
+    ) else {
+        return false;
+    };
+    let fetched = fs::metadata(dir.join(path.trim())).and_then(|m| m.modified());
+    fetched.is_ok_and(|at| {
+        SystemTime::now()
+            .duration_since(at)
+            .is_ok_and(|ago| ago < age)
+    })
 }
 
 /// `git -C dir args`: вывод или первая строка ошибки. Пароль git не спрашивает:
@@ -518,21 +556,24 @@ anyhow = { version = "1.0.104" }
         git_ok(&tmp, &["clone", "-q", "upstream", "clone"]);
 
         assert_eq!(
-            check_version(&clone, "0.4.0"),
+            check_version(&clone, "0.4.0", Fetch::Always),
             Outcome::Newer("0.5.0".into())
         );
-        assert_eq!(check_version(&clone, "0.5.0"), Outcome::Latest);
+        assert_eq!(
+            check_version(&clone, "0.5.0", Fetch::Always),
+            Outcome::Latest
+        );
 
         // Новая версия в upstream видна после fetch, без pull.
         commit_version(&upstream, "0.6.0");
         assert_eq!(
-            check_version(&clone, "0.5.0"),
+            check_version(&clone, "0.5.0", Fetch::Always),
             Outcome::Newer("0.6.0".into())
         );
 
         // Репозиторий недоступен.
         fs::rename(&upstream, tmp.join("gone")).unwrap();
-        let Outcome::Failed(reason) = check_version(&clone, "0.5.0") else {
+        let Outcome::Failed(reason) = check_version(&clone, "0.5.0", Fetch::Always) else {
             panic!("ожидалась ошибка");
         };
         assert!(reason.starts_with("нет связи с репозиторием ("), "{reason}");
@@ -540,14 +581,52 @@ anyhow = { version = "1.0.104" }
         // Ветка без upstream.
         git_ok(&clone, &["checkout", "-q", "-b", "local"]);
         assert_eq!(
-            check_version(&clone, "0.5.0"),
+            check_version(&clone, "0.5.0", Fetch::Always),
             Outcome::Failed("у текущей ветки в папке с исходниками нет upstream".into())
         );
 
         // Не git-клон.
         assert_eq!(
-            check_version(&tmp, "0.5.0"),
+            check_version(&tmp, "0.5.0", Fetch::Always),
             Outcome::Failed("папка с исходниками — не git-клон".into())
         );
+    }
+
+    #[test]
+    fn window_fetches_only_when_last_fetch_is_old() {
+        let tmp = TempDir::new("update-stale");
+        let upstream = tmp.join("upstream");
+        let clone = tmp.join("clone");
+        fs::create_dir_all(&upstream).unwrap();
+        git_ok(&upstream, &["init", "-q"]);
+        commit_version(&upstream, "0.5.0");
+        git_ok(&tmp, &["clone", "-q", "upstream", "clone"]);
+        let check = |fetch| check_version(&clone, "0.5.0", fetch);
+
+        // После clone FETCH_HEAD ещё нет: окно идёт в сеть.
+        assert!(!fetched_within(&clone, FETCH_EVERY));
+        commit_version(&upstream, "0.6.0");
+        assert_eq!(check(Fetch::IfStale), Outcome::Newer("0.6.0".into()));
+        assert!(fetched_within(&clone, FETCH_EVERY));
+
+        // Только что ходили: окно берёт версию из скачанного, кнопка — из сети.
+        commit_version(&upstream, "0.7.0");
+        assert_eq!(check(Fetch::IfStale), Outcome::Newer("0.6.0".into()));
+        assert_eq!(check(Fetch::Always), Outcome::Newer("0.7.0".into()));
+
+        // Последний fetch был давно — окно снова идёт в сеть.
+        commit_version(&upstream, "0.8.0");
+        let long_ago = SystemTime::now() - FETCH_EVERY - Duration::from_secs(60);
+        let fetch_head = fs::File::options()
+            .write(true)
+            .open(clone.join(".git/FETCH_HEAD"))
+            .unwrap();
+        fetch_head.set_modified(long_ago).unwrap();
+        assert!(!fetched_within(&clone, FETCH_EVERY));
+        assert_eq!(check(Fetch::IfStale), Outcome::Newer("0.8.0".into()));
+
+        // Без сети окно между проверками не ошибается, а показывает скачанное.
+        fs::rename(&upstream, tmp.join("gone")).unwrap();
+        assert_eq!(check(Fetch::IfStale), Outcome::Newer("0.8.0".into()));
     }
 }

@@ -18,7 +18,7 @@ use crate::link::{Check, Link, ServiceAction, Snapshot};
 use crate::pages;
 use crate::theme::{self, Palette};
 use crate::toast::{Toast, ToastKind, Toasts};
-use crate::update::{self, Outcome, Update};
+use crate::update::{self, Fetch, Outcome, Update};
 use crate::widgets::{self, bold};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,7 +127,7 @@ impl App {
         }
         settings.set_theme(theme);
         let update = Update::default();
-        update.check(ctx);
+        update.check(ctx, Fetch::IfStale);
         App {
             page,
             link,
