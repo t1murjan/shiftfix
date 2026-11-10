@@ -144,6 +144,13 @@ pub(crate) fn hyprland_signature() -> Option<String> {
     })
 }
 
+/// Hyprland запущен: его сокет отвечает. Одной переменной
+/// `HYPRLAND_INSTANCE_SIGNATURE` мало — она остаётся в окружении systemd
+/// после выхода из Hyprland, например, в KDE.
+pub fn hyprland_running() -> bool {
+    hyprland_signature().is_some()
+}
+
 /// Живой сокет IPC Sway.
 pub(crate) fn sway_socket() -> Option<String> {
     static SLOT: Slot<Option<String>> = Mutex::new(None);

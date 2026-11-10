@@ -60,7 +60,9 @@ fn bullet(ui: &mut Ui, p: &Palette, s: &str) {
 
 /// Команда и что она делает.
 fn command(ui: &mut Ui, p: &Palette, cmd: &str, what: &str) {
-    ui.horizontal(|ui| {
+    // С переносом: в узком окне длинная команда с пояснением в строку не
+    // помещается, а строка шире карточки растягивает её за край окна.
+    ui.horizontal_wrapped(|ui| {
         ui.label(RichText::new(cmd).monospace().color(p.text));
         ui.label(RichText::new(format!("— {what}")).color(p.weak));
     });
@@ -341,21 +343,18 @@ fn about(app: &mut App, ui: &mut Ui, p: &Palette) {
                 ui.end_row();
 
                 ui.label(RichText::new("Настройки").color(p.weak));
-                ui.label(
-                    RichText::new(shown_path(app.settings.path()))
-                        .monospace()
-                        .color(p.text),
-                );
+                // Пути переносятся: целиком в строку не помещаются.
+                let config = RichText::new(shown_path(app.settings.path()))
+                    .monospace()
+                    .color(p.text);
+                ui.add(eframe::egui::Label::new(config).wrap());
                 ui.end_row();
 
                 ui.label(RichText::new("Исходники").color(p.weak));
                 match &update.source {
-                    // Длинный путь обрезается, целиком он — в подсказке.
                     Some(dir) => {
-                        let path = shown_path(dir);
-                        let text = RichText::new(&path).monospace().color(p.text);
-                        ui.add(eframe::egui::Label::new(text).truncate())
-                            .on_hover_text(path)
+                        let text = RichText::new(shown_path(dir)).monospace().color(p.text);
+                        ui.add(eframe::egui::Label::new(text).wrap())
                     }
                     None => ui.label(RichText::new("—").color(p.weak)),
                 };
@@ -395,7 +394,7 @@ fn about(app: &mut App, ui: &mut Ui, p: &Palette) {
                 widgets::button(ui, p, icons::ARROWS_CLOCKWISE, "Проверить", false)
             });
             if check.inner.clicked() {
-                app.update.check(ui.ctx());
+                app.update.check(ui.ctx(), update::Fetch::Always);
             }
             let newer = matches!(update.outcome, Some(Outcome::Newer(_)));
             let run = ui.add_enabled_ui(update.source.is_some(), |ui| {

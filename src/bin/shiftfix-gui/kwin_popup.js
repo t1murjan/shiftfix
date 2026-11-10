@@ -20,9 +20,7 @@ function place(window) {
         ? cursor.y - GAP - window.height
         : cursor.y + GAP;
     const left = cursor.x - window.width / 2;
-    // Только копия прежней геометрии: объект {x, y, width, height}, собранный
-    // с нуля, KWin 5.26–6.x молча не применяет (нет преобразования в QRectF),
-    // и окно остаётся посреди экрана.
+    // Копия прежней геометрии с новым x и y: размер окна не меняется.
     const geometry = Object.assign({}, window.frameGeometry);
     geometry.x = within(left, area.x, area.width, window.width);
     geometry.y = within(top, area.y, area.height, window.height);

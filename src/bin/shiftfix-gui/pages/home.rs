@@ -1,9 +1,11 @@
 //! Главная: состояние службы, раскладки, устройства, выделенный текст, новая
 //! версия, последние исправления и поле для пробы.
 
+use eframe::egui::epaint::RectShape;
+use eframe::egui::layers::ShapeIdx;
 use eframe::egui::{
-    self, Align, CornerRadius, FontId, Frame, Layout, Margin, Response, RichText, Stroke, TextEdit,
-    Ui, vec2,
+    self, Align, CornerRadius, FontId, Frame, Layout, Margin, Rect, RichText, Shape, Stroke,
+    StrokeKind, TextEdit, Ui, pos2, vec2,
 };
 use egui_phosphor::regular as icons;
 use shiftfix::devices::Role;
@@ -146,18 +148,34 @@ fn new_version(app: &mut App, ui: &mut Ui, p: &Palette, version: &str) {
 /// подсказке при наведении.
 fn tiles(ui: &mut Ui, p: &Palette, s: &Status) {
     ui.columns(3, |cols| {
-        layouts_tile(&mut cols[0], p, s);
-        devices_tile(&mut cols[1], p, s);
-        selection_tile(&mut cols[2], p, s);
+        let tiles = [
+            layouts_tile(&mut cols[0], p, s),
+            devices_tile(&mut cols[1], p, s),
+            selection_tile(&mut cols[2], p, s),
+        ];
+        // Фон — когда известна самая высокая плитка (три раскладки и больше
+        // занимают две строки): все плитки одной высоты.
+        let bottom = tiles.iter().map(|t| t.rect.bottom()).fold(0.0, f32::max);
+        for (col, tile) in cols.iter().zip(tiles) {
+            let rect = Rect::from_min_max(tile.rect.min, pos2(tile.rect.right(), bottom));
+            let frame = RectShape::new(
+                rect,
+                CornerRadius::same(10),
+                p.card,
+                Stroke::new(1.0, p.card_border),
+                StrokeKind::Inside,
+            );
+            col.painter().set(tile.background, frame);
+        }
     });
 }
 
-fn layouts_tile(ui: &mut Ui, p: &Palette, s: &Status) {
+fn layouts_tile(ui: &mut Ui, p: &Palette, s: &Status) -> Tile {
     let hint = match &s.layouts.error {
         Some(err) if s.layouts.codes.is_empty() => err.clone(),
         _ => format!("Раскладку переключает {}", s.layouts.backend),
     };
-    tile(ui, p, icons::TRANSLATE, "раскладки", |ui| {
+    tile(ui, p, icons::TRANSLATE, "раскладки", &hint, |ui| {
         if s.layouts.codes.is_empty() {
             ui.label(bold("?", 16.0).color(p.warning));
             return;
@@ -169,10 +187,9 @@ fn layouts_tile(ui: &mut Ui, p: &Palette, s: &Status) {
             }
         });
     })
-    .on_hover_text(hint);
 }
 
-fn devices_tile(ui: &mut Ui, p: &Palette, s: &Status) {
+fn devices_tile(ui: &mut Ui, p: &Palette, s: &Status) -> Tile {
     let (keyboards, pointers) = device_counts(s);
     let (color, hint) = if keyboards == 0 {
         (
@@ -185,13 +202,12 @@ fn devices_tile(ui: &mut Ui, p: &Palette, s: &Status) {
             "Клавиатуры и указатели: мыши, тачпады, экраны, перья",
         )
     };
-    tile(ui, p, icons::KEYBOARD, "клав · указ", |ui| {
+    tile(ui, p, icons::KEYBOARD, "клав · указ", hint, |ui| {
         ui.label(bold(format!("{keyboards} · {pointers}"), 16.0).color(color));
     })
-    .on_hover_text(hint);
 }
 
-fn selection_tile(ui: &mut Ui, p: &Palette, s: &Status) {
+fn selection_tile(ui: &mut Ui, p: &Palette, s: &Status) -> Tile {
     let (text, color, hint) = if s.selection {
         let hint = match &s.selection_via {
             Some(via) => format!("Выделенный текст исправляется через {via}"),
@@ -203,24 +219,29 @@ fn selection_tile(ui: &mut Ui, p: &Palette, s: &Status) {
         let hint = hint.unwrap_or_else(|| "Выделенный текст не исправляется".to_owned());
         ("выкл", p.warning, hint)
     };
-    tile(ui, p, icons::SELECTION, "выделение", |ui| {
+    tile(ui, p, icons::SELECTION, "выделение", &hint, |ui| {
         ui.label(bold(text, 16.0).color(color));
     })
-    .on_hover_text(hint);
 }
 
-/// Плитка: значок, значение (`add`) и подпись под ним.
+/// Плитка без фона: её место и место под фон — фон рисует `tiles`.
+struct Tile {
+    background: ShapeIdx,
+    rect: Rect,
+}
+
+/// Плитка: значок, значение (`add`) и подпись под ним; `hint` — подсказка
+/// при наведении.
 fn tile(
     ui: &mut Ui,
     p: &Palette,
     icon: &str,
     caption: &str,
+    hint: &str,
     add: impl FnOnce(&mut Ui),
-) -> Response {
-    Frame::NONE
-        .fill(p.card)
-        .stroke(Stroke::new(1.0, p.card_border))
-        .corner_radius(CornerRadius::same(10))
+) -> Tile {
+    let background = ui.painter().add(Shape::Noop);
+    let response = Frame::NONE
         .inner_margin(Margin::same(10))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -232,7 +253,10 @@ fn tile(
             ui.allocate_ui_with_layout(row, Layout::left_to_right(Align::Center), add);
             ui.label(RichText::new(caption).size(12.0).color(p.weak));
         })
-        .response
+        .response;
+    let rect = response.rect;
+    response.on_hover_text(hint);
+    Tile { background, rect }
 }
 
 /// Последние исправления, новые сверху.

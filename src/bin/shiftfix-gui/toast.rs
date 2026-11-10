@@ -108,8 +108,9 @@ impl Toasts {
             .retain(|t| t.age() < if t.waiting() { WAIT_MAX } else { LIFE });
     }
 
-    /// Нарисовать в правом нижнем углу; старые сообщения гаснут сами.
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette) {
+    /// Нарисовать в правом нижнем углу, на `lift` выше низа окна (над
+    /// полосой кнопок, если она есть); старые сообщения гаснут сами.
+    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, lift: f32) {
         self.expire();
         if self.list.is_empty() {
             return;
@@ -117,7 +118,7 @@ impl Toasts {
         // Не шире окна (попап узкий): отступы от краёв по 20 и внутри по 16.
         let width = 380.0_f32.min(ctx.content_rect().width() - 72.0);
         egui::Area::new(egui::Id::new("toasts"))
-            .anchor(Align2::RIGHT_BOTTOM, vec2(-20.0, -20.0))
+            .anchor(Align2::RIGHT_BOTTOM, vec2(-20.0, -20.0 - lift))
             .order(Order::Foreground)
             .interactable(false)
             .show(ctx, |ui| {

@@ -18,7 +18,7 @@ use crate::link::{Check, Link, ServiceAction, Snapshot};
 use crate::pages;
 use crate::theme::{self, Palette};
 use crate::toast::{Toast, ToastKind, Toasts};
-use crate::update::{self, Outcome, Update};
+use crate::update::{self, Fetch, Outcome, Update};
 use crate::widgets::{self, bold};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,7 +127,7 @@ impl App {
         }
         settings.set_theme(theme);
         let update = Update::default();
-        update.check(ctx);
+        update.check(ctx, Fetch::IfStale);
         App {
             page,
             link,
@@ -183,11 +183,6 @@ impl App {
             self.save_theme();
         }
         p
-    }
-
-    /// Всплывающие сообщения поверх кадра.
-    pub fn show_toasts(&mut self, ctx: &egui::Context, p: &Palette) {
-        self.toasts.show(ctx, p);
     }
 
     /// Значок программы размером `size`.
@@ -314,8 +309,9 @@ impl App {
             .show(ui, |ui| self.title_bar(ui, &p));
         // Несохранённые настройки пропадут, когда окно закроется, поэтому
         // «Сохранить» всегда на виду, а не в конце длинной вкладки.
+        let mut save_bar_height = 0.0;
         if self.page == Page::Settings {
-            egui::Panel::bottom("save")
+            let save_bar = egui::Panel::bottom("save")
                 .resizable(false)
                 .show_separator_line(true)
                 .frame(
@@ -324,6 +320,7 @@ impl App {
                         .inner_margin(Margin::symmetric(16, 10)),
                 )
                 .show(ui, |ui| pages::settings::save_bar(self, ui, &p));
+            save_bar_height = save_bar.response.rect.height();
         }
         egui::CentralPanel::default()
             .frame(Frame::NONE.fill(p.bg))
@@ -355,7 +352,8 @@ impl App {
             Stroke::new(1.0, p.card_border),
             StrokeKind::Inside,
         );
-        self.show_toasts(&ctx, &p);
+        // Сообщения — над кнопками «Настроек», а не поверх них.
+        self.toasts.show(&ctx, &p, save_bar_height);
     }
 
     /// Окно закрывается: недописанную тему — в файл.
