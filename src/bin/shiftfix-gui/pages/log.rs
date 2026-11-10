@@ -1,6 +1,7 @@
 //! Журнал службы и проверка системы.
 
-use eframe::egui::{RichText, ScrollArea, Ui};
+use eframe::egui::text::{LayoutJob, TextFormat};
+use eframe::egui::{Label, RichText, ScrollArea, TextStyle, Ui};
 use egui_phosphor::regular as icons;
 
 use crate::app::App;
@@ -160,12 +161,17 @@ fn messages(app: &mut App, ui: &mut Ui, p: &Palette) {
                         "DEBUG" => p.weak,
                         _ => p.text,
                     };
-                    ui.horizontal_wrapped(|ui| {
-                        if !time.is_empty() {
-                            ui.label(RichText::new(time).monospace().color(p.weak));
-                        }
-                        ui.label(RichText::new(text).monospace().color(color));
-                    });
+                    // Одной надписью: время и текст, разложенные в строку по
+                    // отдельности, длинное слово без пробелов (путь) при
+                    // переносе сдвигает за край карточки.
+                    let font = TextStyle::Monospace.resolve(ui.style());
+                    let mut line = LayoutJob::default();
+                    if !time.is_empty() {
+                        line.append(time, 0.0, TextFormat::simple(font.clone(), p.weak));
+                        line.append(" ", 0.0, TextFormat::simple(font.clone(), p.weak));
+                    }
+                    line.append(text, 0.0, TextFormat::simple(font, color));
+                    ui.add(Label::new(line).wrap());
                 }
             });
     });
