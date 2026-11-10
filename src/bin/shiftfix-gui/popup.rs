@@ -23,7 +23,8 @@ use std::time::{Duration, SystemTime};
 
 use eframe::egui::{self, Key, Pos2, Ui, ViewportCommand, ViewportId, pos2};
 use shiftfix::config::ThemeMode;
-use x11rb::connection::Connection as _;
+use x11rb::connection::Connection;
+use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, Window};
 
 use crate::app::{App, Page};
 use crate::hyprland;
@@ -188,7 +189,8 @@ fn since_closed(mark: &Path) -> Option<Duration> {
     SystemTime::now().duration_since(closed).ok()
 }
 
-/// Где поставить попап в X11: у точки щелчка `at`, целиком на экране.
+/// Где поставить окно в X11: у точки щелчка `at`, целиком на экране и, если
+/// оконный менеджер сообщает рабочую область, не заходя на панели.
 fn x11_position(at: (i32, i32)) -> Option<Pos2> {
     let (conn, screen) = x11rb::connect(None).ok()?;
     let root = conn.setup().roots.get(screen)?;
@@ -198,10 +200,33 @@ fn x11_position(at: (i32, i32)) -> Option<Pos2> {
         i32::from(root.width_in_pixels),
         i32::from(root.height_in_pixels),
     ];
-    // Точка и экран — в пикселях X: при масштабе окон больше 1 попап встанет
+    let area = x11_work_area(&conn, root.root).unwrap_or(screen);
+    // Точка и область — в пикселях X: при масштабе окон больше 1 окно встанет
     // дальше от значка, но на экране.
-    let (x, y) = placement::popup_position(at, screen, SIZE);
+    let (x, y) = placement::popup_position(at, area, SIZE);
     Some(pos2(x as f32, y as f32))
+}
+
+/// Рабочая область текущего рабочего стола без панелей: x, y, ширина, высота
+/// (`_NET_WORKAREA`, по четыре числа на рабочий стол). `None` — оконный
+/// менеджер её не сообщает.
+fn x11_work_area(conn: &impl Connection, root: Window) -> Option<[i32; 4]> {
+    let cardinals = |name: &[u8], count: u32| -> Option<Vec<u32>> {
+        let atom = conn.intern_atom(true, name).ok()?.reply().ok()?.atom;
+        let property = conn
+            .get_property(false, root, atom, AtomEnum::CARDINAL, 0, count)
+            .ok()?
+            .reply()
+            .ok()?;
+        Some(property.value32()?.collect())
+    };
+    let desktop = cardinals(b"_NET_CURRENT_DESKTOP", 1)
+        .and_then(|v| v.first().copied())
+        .unwrap_or(0);
+    let areas = cardinals(b"_NET_WORKAREA", desktop.checked_add(1)?.checked_mul(4)?)?;
+    let area = areas.as_chunks::<4>().0.get(desktop as usize)?;
+    let [x, y, width, height] = area.map(|v| v as i32);
+    (width > 0 && height > 0).then_some([x, y, width, height])
 }
 
 struct Popup {
