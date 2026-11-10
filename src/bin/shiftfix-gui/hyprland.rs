@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
-use shiftfix::sys::proc;
+use shiftfix::sys::{env, proc};
 
 use crate::popup::APP_ID;
 
@@ -32,9 +32,10 @@ const HYPRCTL: &str = "hyprctl";
 const WINDOW_WAIT: Duration = Duration::from_secs(2);
 const WINDOW_POLL: Duration = Duration::from_millis(50);
 
-/// Это Hyprland: задана `HYPRLAND_INSTANCE_SIGNATURE`.
+/// Это Hyprland: он запущен и отвечает (а не только оставил свою переменную
+/// в окружении прошлого сеанса).
 pub fn running() -> bool {
-    std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some_and(|sig| !sig.is_empty())
+    env::hyprland_running()
 }
 
 /// Курсор и рабочая область монитора под ним — `[x, y, ширина, высота]` без
